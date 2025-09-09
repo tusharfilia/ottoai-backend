@@ -1,0 +1,36 @@
+# fly.toml app configuration file generated for tv-mvp-test on 2025-03-24T16:43:23-07:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'tv-mvp-test'
+primary_region = 'phx'
+
+[build]
+  dockerfile = 'Dockerfile.test'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+  [deploy]
+  # release_command = "alembic upgrade head"
+  # if want to delete everything:
+  # release_command = "python /app/scripts/delete_all_tables.py && alembic upgrade head"
+  # then run 
+  # release_command = "python /app/scripts/reset_db.py && alembic upgrade head"
+  # then run 'python rebuild_migrations.py' in scripts
+  # then upgrade head
+   release_command = "alembic upgrade head"
+
+[scheduled_tasks]

@@ -1,0 +1,630 @@
+{
+  "Call": {
+    "tablename": "calls",
+    "columns": {
+      "call_id": {
+        "type": "Integer",
+        "constraints": [
+          "PRIMARY KEY"
+        ]
+      },
+      "missed_call": {
+        "type": "Boolean",
+        "constraints": [
+          "DEFAULT FALSE"
+        ]
+      },
+      "address": {
+        "type": "String",
+        "constraints": []
+      },
+      "name": {
+        "type": "String",
+        "constraints": []
+      },
+      "quote_date": {
+        "type": "DateTime",
+        "constraints": []
+      },
+      "booked": {
+        "type": "Boolean",
+        "constraints": [
+          "DEFAULT FALSE"
+        ]
+      },
+      "phone_number": {
+        "type": "String",
+        "constraints": []
+      },
+      "transcript": {
+        "type": "String",
+        "constraints": []
+      },
+      "homeowner_followup_transcript": {
+        "type": "String",
+        "constraints": []
+      },
+      "in_person_transcript": {
+        "type": "Text",
+        "constraints": []
+      },
+      "mobile_transcript": {
+        "type": "Text",
+        "constraints": []
+      },
+      "mobile_calls_count": {
+        "type": "Integer",
+        "constraints": [
+          "DEFAULT 0"
+        ]
+      },
+      "mobile_texts_count": {
+        "type": "Integer",
+        "constraints": [
+          "DEFAULT 0"
+        ]
+      },
+      "assigned_rep_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "bought": {
+        "type": "Boolean",
+        "constraints": [
+          "DEFAULT FALSE"
+        ]
+      },
+      "price_if_bought": {
+        "type": "Float",
+        "constraints": []
+      },
+      "company_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "reason_for_lost_sale": {
+        "type": "String",
+        "constraints": []
+      },
+      "reason_not_bought_homeowner": {
+        "type": "String",
+        "constraints": []
+      },
+      "created_at": {
+        "type": "DateTime",
+        "constraints": [
+          "DEFAULT <function>"
+        ]
+      },
+      "updated_at": {
+        "type": "DateTime",
+        "constraints": [
+          "DEFAULT <function>"
+        ]
+      },
+      "bland_call_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "homeowner_followup_call_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "transcript_discrepancies": {
+        "type": "String",
+        "constraints": []
+      },
+      "problem": {
+        "type": "String",
+        "constraints": []
+      },
+      "still_deciding": {
+        "type": "Boolean",
+        "constraints": [
+          "DEFAULT FALSE"
+        ]
+      },
+      "reason_for_deciding": {
+        "type": "String",
+        "constraints": []
+      },
+      "cancelled": {
+        "type": "Boolean",
+        "constraints": [
+          "DEFAULT FALSE"
+        ]
+      },
+      "reason_for_cancellation": {
+        "type": "String",
+        "constraints": []
+      },
+      "rescheduled": {
+        "type": "Boolean",
+        "constraints": [
+          "DEFAULT FALSE"
+        ]
+      },
+      "text_messages": {
+        "type": "Text",
+        "constraints": []
+      },
+      "status": {
+        "type": "String",
+        "constraints": []
+      },
+      "call_sid": {
+        "type": "String",
+        "constraints": []
+      },
+      "last_call_status": {
+        "type": "String",
+        "constraints": []
+      },
+      "last_call_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "last_call_duration": {
+        "type": "Integer",
+        "constraints": []
+      },
+      "geofence": {
+        "type": "JSON",
+        "constraints": []
+      },
+      "geofence_entry_1_ts": {
+        "type": "DateTime",
+        "constraints": []
+      },
+      "geofence_exit_1_ts": {
+        "type": "DateTime",
+        "constraints": []
+      },
+      "geofence_time_1_m": {
+        "type": "Integer",
+        "constraints": []
+      },
+      "geofence_entry_2_ts": {
+        "type": "DateTime",
+        "constraints": []
+      },
+      "geofence_exit_2_ts": {
+        "type": "DateTime",
+        "constraints": []
+      },
+      "geofence_time_2_m": {
+        "type": "Integer",
+        "constraints": []
+      },
+      "geofence_multiple_entries": {
+        "type": "Boolean",
+        "constraints": [
+          "DEFAULT FALSE"
+        ]
+      },
+      "geofence_entry_count": {
+        "type": "Integer",
+        "constraints": [
+          "DEFAULT 0"
+        ]
+      },
+      "recording_started_ts": {
+        "type": "DateTime",
+        "constraints": []
+      },
+      "recording_stopped_ts": {
+        "type": "DateTime",
+        "constraints": []
+      },
+      "recording_duration_s": {
+        "type": "Integer",
+        "constraints": []
+      },
+      "time_to_start_recording_s": {
+        "type": "Integer",
+        "constraints": []
+      },
+      "battery_at_geofence_entry": {
+        "type": "Integer",
+        "constraints": []
+      },
+      "charging_at_geofence_entry": {
+        "type": "Boolean",
+        "constraints": []
+      },
+      "battery_at_recording_start": {
+        "type": "Integer",
+        "constraints": []
+      },
+      "charging_at_recording_start": {
+        "type": "Boolean",
+        "constraints": []
+      }
+    }
+  },
+  "Company": {
+    "tablename": "companies",
+    "columns": {
+      "id": {
+        "type": "String",
+        "constraints": [
+          "PRIMARY KEY"
+        ]
+      },
+      "name": {
+        "type": "String",
+        "constraints": [
+          "UNIQUE"
+        ]
+      },
+      "address": {
+        "type": "String",
+        "constraints": []
+      },
+      "phone_number": {
+        "type": "String",
+        "constraints": []
+      },
+      "created_at": {
+        "type": "DateTime",
+        "constraints": [
+          "DEFAULT <function>"
+        ]
+      },
+      "updated_at": {
+        "type": "DateTime",
+        "constraints": [
+          "DEFAULT <function>"
+        ]
+      },
+      "callrail_api_key": {
+        "type": "String",
+        "constraints": []
+      },
+      "callrail_account_id": {
+        "type": "String",
+        "constraints": []
+      }
+    }
+  },
+  "SalesManager": {
+    "tablename": "sales_managers",
+    "columns": {
+      "user_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "company_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "expo_push_token": {
+        "type": "String",
+        "constraints": []
+      }
+    }
+  },
+  "SalesRep": {
+    "tablename": "sales_reps",
+    "columns": {
+      "user_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "company_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "manager_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "active_geofences": {
+        "type": "JSON",
+        "constraints": []
+      },
+      "expo_push_token": {
+        "type": "String",
+        "constraints": []
+      }
+    }
+  },
+  "ScheduledCall": {
+    "tablename": "scheduled_calls",
+    "columns": {
+      "id": {
+        "type": "Integer",
+        "constraints": [
+          "PRIMARY KEY"
+        ]
+      },
+      "call_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "company_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "scheduled_time": {
+        "type": "DateTime",
+        "constraints": [
+          "NOT NULL"
+        ]
+      },
+      "call_type": {
+        "type": "String",
+        "constraints": [
+          "NOT NULL"
+        ]
+      },
+      "status": {
+        "type": "String",
+        "constraints": []
+      },
+      "is_completed": {
+        "type": "Boolean",
+        "constraints": [
+          "DEFAULT FALSE"
+        ]
+      },
+      "bland_call_id": {
+        "type": "String",
+        "constraints": []
+      },
+      "created_at": {
+        "type": "DateTime",
+        "constraints": [
+          "DEFAULT <function>"
+        ]
+      }
+    }
+  },
+  "Service": {
+    "tablename": "services",
+    "columns": {
+      "id": {
+        "type": "Integer",
+        "constraints": [
+          "PRIMARY KEY"
+        ]
+      },
+      "name": {
+        "type": "String",
+        "constraints": [
+          "UNIQUE"
+        ]
+      },
+      "description": {
+        "type": "String",
+        "constraints": []
+      },
+      "base_price": {
+        "type": "Float",
+        "constraints": []
+      },
+      "company_id": {
+        "type": "Integer",
+        "constraints": []
+      }
+    }
+  },
+  "TranscriptAnalysis": {
+    "tablename": "transcript_analyses",
+    "columns": {
+      "analysis_id": {
+        "type": "Integer",
+        "constraints": [
+          "PRIMARY KEY"
+        ]
+      },
+      "call_id": {
+        "type": "Integer",
+        "constraints": []
+      },
+      "created_at": {
+        "type": "DateTime",
+        "constraints": [
+          "DEFAULT <function>"
+        ]
+      },
+      "updated_at": {
+        "type": "DateTime",
+        "constraints": [
+          "DEFAULT <function>"
+        ]
+      },
+      "greeting": {
+        "type": "JSON",
+        "constraints": []
+      },
+      "customer_decision": {
+        "type": "JSON",
+        "constraints": []
+      },
+      "quoted_price": {
+        "type": "JSON",
+        "constraints": []
+      },
+      "company_mentions": {
+        "type": "JSON",
+        "constraints": []
+      },
+      "farewell": {
+        "type": "JSON",
+        "constraints": []
+      },
+      "rep_greeting_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "rep_greeting_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "rep_introduction_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "rep_introduction_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "company_mention_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "company_mention_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "company_mention_count": {
+        "type": "Integer",
+        "constraints": [
+          "DEFAULT 0"
+        ]
+      },
+      "price_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "price_quote_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "price_amount": {
+        "type": "String",
+        "constraints": []
+      },
+      "payment_discussion_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "payment_discussion_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "discount_mention_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "discount_mention_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "customer_decision_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "customer_decision_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "customer_decision_status": {
+        "type": "String",
+        "constraints": []
+      },
+      "agreement_mention_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "agreement_mention_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "goodbye_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "goodbye_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "follow_up_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "follow_up_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "follow_up_date": {
+        "type": "String",
+        "constraints": []
+      },
+      "document_sending_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "document_sending_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "document_type": {
+        "type": "String",
+        "constraints": []
+      },
+      "paperwork_mention_quote": {
+        "type": "Text",
+        "constraints": []
+      },
+      "paperwork_mention_timestamp": {
+        "type": "String",
+        "constraints": []
+      },
+      "raw_analysis": {
+        "type": "JSON",
+        "constraints": []
+      },
+      "model_version": {
+        "type": "String",
+        "constraints": []
+      },
+      "analysis_version": {
+        "type": "Integer",
+        "constraints": [
+          "DEFAULT 1"
+        ]
+      }
+    }
+  },
+  "User": {
+    "tablename": "users",
+    "columns": {
+      "id": {
+        "type": "String",
+        "constraints": [
+          "PRIMARY KEY"
+        ]
+      },
+      "email": {
+        "type": "String",
+        "constraints": [
+          "UNIQUE"
+        ]
+      },
+      "username": {
+        "type": "String",
+        "constraints": [
+          "UNIQUE"
+        ]
+      },
+      "name": {
+        "type": "String",
+        "constraints": []
+      },
+      "phone_number": {
+        "type": "String",
+        "constraints": []
+      },
+      "role": {
+        "type": "String",
+        "constraints": []
+      },
+      "company_id": {
+        "type": "String",
+        "constraints": []
+      }
+    }
+  }
+}

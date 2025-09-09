@@ -1,0 +1,18 @@
+Migration Documentation
+======================
+
+Tables Created (8):
+- calls
+- companies
+- sales_managers
+- sales_reps
+- scheduled_calls
+- services
+- transcript_analyses
+- users
+
+Indexes Created (4):
+- companies.name
+- services.name
+- users.email
+- users.username

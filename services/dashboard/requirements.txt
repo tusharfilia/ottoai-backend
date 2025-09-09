@@ -1,0 +1,21 @@
+fastapi==0.100.0
+uvicorn==0.22.0
+sqlalchemy==2.0.17
+passlib==1.7.4
+psycopg2-binary==2.9.6
+alembic==1.11.1
+httpx==0.24.1  # For async HTTP requests to Clerk API
+svix==1.15.0
+PyJWT==2.6.0
+python-jose[cryptography]==3.3.0  # More comprehensive JWT library with RSA support
+cryptography==41.0.5  # Required for PyJWT to handle RSA
+python-dotenv==1.0.0
+openai==1.1.1
+python-multipart==0.0.6
+requests==2.31.0  # Explicitly include requests
+schedule==1.2.1  # For BlandAI scheduling functionality
+twilio==8.5.0  # For Twilio SMS and phone call integration
+pydantic==2.0.3  # Required by FastAPI
+python-dateutil==2.8.2  # For better date handling
+deepgram-sdk==2.*
+pytz==2023.3  # For timezone handling
