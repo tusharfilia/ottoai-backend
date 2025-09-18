@@ -8,45 +8,75 @@ import requests
 from app.services.bland_ai import BlandAI
 from app.utils.date_calculator import DateCalculator
 from app.routes.dependencies import client, bland_ai, date_calculator
+from app.middleware.rate_limiter import limits
+from app.services.idempotency import with_idempotency
 
 router = APIRouter()
 
 @router.post("/pre-call")
+@limits(tenant="30/minute")  # Stricter limit for CallRail webhooks
 async def pre_call_webhook(request: Request, db: Session = Depends(get_db)):
     # Get query parameters
     params = dict(request.query_params)
     print(params)
     
-    # For CallRail webhooks, we can determine company by the tracking number
-    tracking_number = params.get("trackingnum")
+    # Extract tenant_id from middleware
+    tenant_id = getattr(request.state, 'tenant_id', None)
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Missing tenant context")
+    
+    # Derive external_id from CallRail payload - use call ID if available
+    external_id = params.get("call_id") or f"pre-call-{params.get('trackingnum')}-{params.get('callernum')}"
+    
+    def process_webhook():
+        # For CallRail webhooks, we can determine company by the tracking number
+        tracking_number = params.get("trackingnum")
 
-    company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
-    if not company_record:
-        raise HTTPException(status_code=404, detail=f"No company found for tracking number {tracking_number}")
+        company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+        if not company_record:
+            raise HTTPException(status_code=404, detail=f"No company found for tracking number {tracking_number}")
+        
+        print(f"Company found: {company_record.name} with ID: {company_record.id}")
+        
+        new_call = call.Call(
+            phone_number=params.get("callernum"),  # Changed from customer_phone_number to callernum
+            company_id=company_record.id,
+            created_at=datetime.utcnow(),
+            missed_call=params.get("answered", "true").lower() != "true",
+        )
+        db.add(new_call)
+        db.commit()
+        print(f"New call created: {new_call.call_id}")
+        return {"status": "success", "call_id": new_call.call_id}
     
-    print(f"Company found: {company_record.name} with ID: {company_record.id}")
-    
-    new_call = call.Call(
-        phone_number=params.get("callernum"),  # Changed from customer_phone_number to callernum
-        company_id=company_record.id,
-        created_at=datetime.utcnow(),
-        missed_call=params.get("answered", "true").lower() != "true",
+    # Apply idempotency protection
+    return with_idempotency(
+        provider="callrail",
+        external_id=external_id,
+        tenant_id=tenant_id,
+        process_fn=process_webhook,
+        trace_id=getattr(request.state, 'trace_id', None)
     )
-    db.add(new_call)
-    db.commit()
-    print(f"New call created: {new_call.call_id}")
-    return {"status": "success", "call_id": new_call.call_id}
 
 
 @router.post("/call-complete")
+@limits(tenant="30/minute")  # Stricter limit for CallRail webhooks
 async def call_complete_webhook(call_data: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     print("================= CALL COMPLETE WEBHOOK ==================")
     print(call_data)
-    # Use tracking number to identify relevant company 
-    tracking_number = call_data.get("trackingnum")
-    company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
-    if not company_record:
-        raise HTTPException(status_code=404, detail=f"No company found for tracking number {tracking_number}")
+    
+    # Extract tenant_id from middleware (for webhooks, we may need to derive from call_data)
+    tenant_id = "webhook_tenant"  # TODO: Implement proper tenant resolution for webhooks
+    
+    # Derive external_id from CallRail payload - use call ID from payload
+    external_id = call_data.get("call", {}).get("id") or f"call-complete-{call_data.get('trackingnum')}-{call_data.get('customer_phone_number')}"
+    
+    def process_webhook():
+        # Use tracking number to identify relevant company 
+        tracking_number = call_data.get("trackingnum")
+        company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+        if not company_record:
+            raise HTTPException(status_code=404, detail=f"No company found for tracking number {tracking_number}")
     
     # Use company_id to filter for the correct record (same customer may have called multiple companies)
     call_record = db.query(call.Call)\
@@ -324,12 +354,21 @@ async def call_complete_webhook(call_data: dict, background_tasks: BackgroundTas
     print(f"Cancelled: {call_record.cancelled}")
     print(f"Rescheduled: {call_record.rescheduled}")
     print(f"Missed Call: {call_record.missed_call}")
-    print(f"Still Deciding: {call_record.still_deciding}")
-    print(f"Bought: {call_record.bought}")
-    print(f"Assigned Rep ID: {call_record.assigned_rep_id}")
-    print(f"========================")
+        print(f"Still Deciding: {call_record.still_deciding}")
+        print(f"Bought: {call_record.bought}")
+        print(f"Assigned Rep ID: {call_record.assigned_rep_id}")
+        print(f"========================")
+        
+        return {"status": "processed", "call_id": call_record.call_id}
     
-    return {"status": "success"}
+    # Apply idempotency protection
+    return with_idempotency(
+        provider="callrail",
+        external_id=external_id,
+        tenant_id=tenant_id,
+        process_fn=process_webhook,
+        trace_id=getattr(request.state, 'trace_id', None)
+    )
 
 
 @router.post("/call-modified")
@@ -338,10 +377,17 @@ async def call_modified_webhook(request: Request, background_tasks: BackgroundTa
     print(f"=================== CALL MODIFIED WEBHOOK ===================")
     print(f"Call modified params: {params}")
     
-    # If params are empty, just return success (all data already processed in call-complete)
-    if not params:
-        print("No parameters provided in call-modified webhook - this is normal")
-        return {"status": "success", "message": "No parameters provided"}
+    # Extract tenant_id from middleware
+    tenant_id = "webhook_tenant"  # TODO: Implement proper tenant resolution for webhooks
+    
+    # Derive external_id from CallRail payload
+    external_id = f"call-modified-{params.get('trackingnum')}-{params.get('customer_phone_number')}"
+    
+    def process_webhook():
+        # If params are empty, just return success (all data already processed in call-complete)
+        if not params:
+            print("No parameters provided in call-modified webhook - this is normal")
+            return {"status": "processed", "message": "No parameters provided"}
     
     # Use tracking number to identify relevant company (same as call-complete)
     tracking_number = params.get("trackingnum")
@@ -487,5 +533,14 @@ async def call_modified_webhook(request: Request, background_tasks: BackgroundTa
                 # Log the error but don't fail the request
                 print(f"Error processing transcript with LLM: {str(e)}")
 
-    db.commit()
-    return {"status": "success"} 
+        db.commit()
+        return {"status": "processed", "message": "Call modified successfully"}
+    
+    # Apply idempotency protection
+    return with_idempotency(
+        provider="callrail",
+        external_id=external_id,
+        tenant_id=tenant_id,
+        process_fn=process_webhook,
+        trace_id=getattr(request.state, 'trace_id', None)
+    ) 

@@ -25,11 +25,10 @@ async def clerk_request(method, url, json_data=None):
     import httpx
     from httpx import RequestError
     
-    clerk_api_key = os.environ.get("CLERK_SECRET_KEY")
-    if not clerk_api_key:
-        raise ValueError("CLERK_SECRET_KEY environment variable not set")
+    from app.config import settings
+    clerk_api_key = settings.CLERK_SECRET_KEY
     
-    clerk_base_url = "https://api.clerk.dev/v1"
+    clerk_base_url = settings.CLERK_API_URL
     headers = {
         "Authorization": f"Bearer {clerk_api_key}",
         "Content-Type": "application/json"

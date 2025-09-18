@@ -19,3 +19,14 @@ pydantic==2.0.3  # Required by FastAPI
 python-dateutil==2.8.2  # For better date handling
 deepgram-sdk==2.*
 pytz==2023.3  # For timezone handling
+celery==5.3.1  # For background tasks and scheduled cleanup
+redis==4.6.0  # For Celery broker and rate limiting
+prometheus-client==0.17.1  # For metrics collection
+opentelemetry-api==1.20.0  # OpenTelemetry API
+opentelemetry-sdk==1.20.0  # OpenTelemetry SDK
+opentelemetry-exporter-otlp==1.20.0  # OTLP exporter
+opentelemetry-exporter-console==1.20.0  # Console exporter for development
+opentelemetry-instrumentation-fastapi==0.41b0  # FastAPI instrumentation
+opentelemetry-instrumentation-celery==0.41b0  # Celery instrumentation
+opentelemetry-instrumentation-requests==0.41b0  # Requests instrumentation
+opentelemetry-instrumentation-sqlalchemy==0.41b0  # SQLAlchemy instrumentation

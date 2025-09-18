@@ -1,10 +1,15 @@
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.schema import CreateTable
+from fastapi import Request, Depends
+from typing import Generator
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Import centralized configuration
+from app.config import settings
+
+DATABASE_URL = settings.DATABASE_URL
 DEBUG_SQL = os.getenv("DEBUG_SQL", "false").lower() == "true"
 
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
@@ -15,8 +20,51 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
-# Dependency
-def get_db():
+
+class TenantScopedSession(Session):
+    """Database session that automatically scopes queries by tenant_id."""
+    
+    def __init__(self, tenant_id: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tenant_id = tenant_id
+    
+    def query(self, *entities, **kwargs):
+        """Override query to automatically add tenant filtering."""
+        query = super().query(*entities, **kwargs)
+        
+        # Add tenant filtering for models that have company_id
+        for entity in entities:
+            if hasattr(entity, 'company_id'):
+                query = query.filter(entity.company_id == self.tenant_id)
+        
+        return query
+
+
+# Dependency for getting database session with tenant context
+def get_db(request: Request) -> Generator[Session, None, None]:
+    """Get database session with tenant context."""
+    # Get tenant_id from request state (set by middleware)
+    tenant_id = getattr(request.state, 'tenant_id', None)
+    
+    if not tenant_id:
+        # For endpoints that don't require tenant context (like health checks)
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+    else:
+        # Create tenant-scoped session
+        db = TenantScopedSession(tenant_id, bind=engine)
+        try:
+            yield db
+        finally:
+            db.close()
+
+
+# Legacy dependency for backward compatibility (use with caution)
+def get_db_legacy() -> Generator[Session, None, None]:
+    """Legacy database dependency without tenant scoping."""
     db = SessionLocal()
     try:
         yield db

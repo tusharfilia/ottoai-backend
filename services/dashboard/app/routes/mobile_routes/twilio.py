@@ -15,6 +15,7 @@ from twilio.request_validator import RequestValidator
 import json
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.twiml.voice_response import VoiceResponse, Dial
+from app.services.idempotency import with_idempotency
 
 # Configure logging
 logging.basicConfig(
@@ -27,9 +28,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Twilio credentials from environment variables
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_PHONE_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
+from app.config import settings
+
+TWILIO_ACCOUNT_SID = settings.TWILIO_ACCOUNT_SID
+TWILIO_AUTH_TOKEN = settings.TWILIO_AUTH_TOKEN
+TWILIO_PHONE_NUMBER = settings.TWILIO_FROM_NUMBER
 
 # Initialize Twilio client
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -200,15 +203,25 @@ async def call_status_callback(
     db: Session = Depends(get_db)
 ):
     """Receives and records call status updates from Twilio"""
-    try:
-        # Get form data from the request
-        form = await request.form()
-        
-        # Extract relevant details
-        call_sid = form.get('CallSid', '')
-        call_status = form.get('CallStatus', '')
-        call_duration = form.get('CallDuration', '0')
-        
+    # Get form data from the request
+    form = await request.form()
+    
+    # Extract relevant details
+    call_sid = form.get('CallSid', '')
+    call_status = form.get('CallStatus', '')
+    call_duration = form.get('CallDuration', '0')
+    
+    # Extract tenant_id from middleware (for webhooks, we may need to derive from call_sid)
+    tenant_id = getattr(request.state, 'tenant_id', None)
+    if not tenant_id:
+        # For webhooks, we might need to derive tenant from call_sid or use a default
+        # This is a limitation - webhooks don't have JWT tokens
+        tenant_id = "webhook_tenant"  # TODO: Implement proper tenant resolution for webhooks
+    
+    # Derive external_id from Twilio payload - use CallSid for call status
+    external_id = call_sid
+    
+    def process_webhook():
         # Find the call record by call_sid
         call_record = db.query(call.Call).filter_by(call_sid=call_sid).first()
         
@@ -223,14 +236,21 @@ async def call_status_callback(
                 
             db.commit()
             logger.info(f"Call status updated for call_id {call_record.call_id}: {call_status}")
+            return {"status": "updated", "call_id": call_record.call_id}
         else:
             logger.warning(f"No call record found for call_sid: {call_sid}")
-            
-        return Response(status_code=200)
-        
-    except Exception as e:
-        logger.exception("Error in call status callback")
-        return Response(status_code=500)
+            return {"status": "not_found", "call_sid": call_sid}
+    
+    # Apply idempotency protection
+    response_data, status_code = with_idempotency(
+        provider="twilio",
+        external_id=external_id,
+        tenant_id=tenant_id,
+        process_fn=process_webhook,
+        trace_id=getattr(request.state, 'trace_id', None)
+    )
+    
+    return Response(status_code=status_code)
 
 @router.post("/twilio-recording-callback")
 async def recording_callback(
@@ -238,31 +258,39 @@ async def recording_callback(
     db: Session = Depends(get_db)
 ):
     """Receives recording status and URL from Twilio and processes the transcript using Deepgram"""
-    try:
-        # Get form data from the request
-        form = await request.form()
-        form_dict = dict(form)
-        
-        # Log the callback data
-        logger.info(f"Received Twilio recording callback: {form_dict}")
-        
-        # Extract relevant details
-        recording_sid = form.get('RecordingSid', '')
-        recording_status = form.get('RecordingStatus', '')
-        recording_url = form.get('RecordingUrl', '')
-        call_sid = form.get('CallSid', '')
-        recording_duration = form.get('RecordingDuration', '0')
-        
+    # Get form data from the request
+    form = await request.form()
+    form_dict = dict(form)
+    
+    # Log the callback data
+    logger.info(f"Received Twilio recording callback: {form_dict}")
+    
+    # Extract relevant details
+    recording_sid = form.get('RecordingSid', '')
+    recording_status = form.get('RecordingStatus', '')
+    recording_url = form.get('RecordingUrl', '')
+    call_sid = form.get('CallSid', '')
+    recording_duration = form.get('RecordingDuration', '0')
+    
+    # Extract tenant_id from middleware
+    tenant_id = getattr(request.state, 'tenant_id', None)
+    if not tenant_id:
+        tenant_id = "webhook_tenant"  # TODO: Implement proper tenant resolution for webhooks
+    
+    # Derive external_id from Twilio payload - use RecordingSid for recording callbacks
+    external_id = recording_sid or f"recording-{call_sid}"
+    
+    def process_webhook():
         # Only process completed recordings
         if recording_status != 'completed' or not recording_url:
             logger.info(f"Recording not completed or no URL provided. Status: {recording_status}")
-            return Response(status_code=200)
+            return {"status": "skipped", "reason": "not_completed"}
         
         # Find the call record by call_sid
         call_record = db.query(call.Call).filter_by(call_sid=call_sid).first()
         if not call_record:
             logger.warning(f"No call record found for call_sid: {call_sid}")
-            return Response(status_code=200)
+            return {"status": "not_found", "call_sid": call_sid}
 
         # Format time and duration for display
         call_timestamp = datetime.utcnow().isoformat()
@@ -300,9 +328,7 @@ async def recording_callback(
             return Response(status_code=200)
         
         # Get the Deepgram API key from environment
-        DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
-        if not DEEPGRAM_API_KEY:
-            logger.error("DEEPGRAM_API_KEY not found in environment variables")
+        DEEPGRAM_API_KEY = settings.DEEPGRAM_API_KEY
             
             # Save recording info without transcript
             formatted_transcript = {
@@ -341,7 +367,7 @@ async def recording_callback(
             }
             
             # Send recording to Deepgram
-            deepgram_url = "https://api.deepgram.com/v1/listen"
+            deepgram_url = f"{settings.DEEPGRAM_API_BASE_URL}/v1/listen"
             deepgram_response = requests.post(
                 deepgram_url,
                 headers=headers,
@@ -400,6 +426,7 @@ async def recording_callback(
             db.commit()
             
             logger.info(f"Successfully saved transcript for call_id: {call_record.call_id}")
+            return {"status": "processed", "call_id": call_record.call_id}
             
         except Exception as transcript_error:
             logger.exception(f"Error during transcription process: {transcript_error}")
@@ -418,12 +445,19 @@ async def recording_callback(
             current_transcript.append(formatted_transcript)
             call_record.mobile_transcript = json.dumps(current_transcript)
             db.commit()
-        
-        return Response(status_code=200)
-        
-    except Exception as e:
-        logger.exception(f"Error in recording callback: {e}")
-        return Response(status_code=500)
+            
+            return {"status": "error", "call_id": call_record.call_id, "error": str(transcript_error)}
+    
+    # Apply idempotency protection
+    response_data, status_code = with_idempotency(
+        provider="twilio",
+        external_id=external_id,
+        tenant_id=tenant_id,
+        process_fn=process_webhook,
+        trace_id=getattr(request.state, 'trace_id', None)
+    )
+    
+    return Response(status_code=status_code)
 
 @router.post("/twilio-webhook")
 async def handle_incoming_message(
@@ -431,23 +465,32 @@ async def handle_incoming_message(
     db: Session = Depends(get_db)
 ):
     """Handles incoming messages from Twilio webhook"""
-    try:
-        # Validate the request is from Twilio
-        url = str(request.url)
-        form = await request.form()
-        form_dict = dict(form)
-        signature = request.headers.get("X-Twilio-Signature", "")
-        
-        validator = RequestValidator(TWILIO_AUTH_TOKEN)
-        is_valid = validator.validate(url, form_dict, signature)
-        if not is_valid:
-            logger.warning("Invalid Twilio signature")
-            return Response(status_code=403)
+    # Validate the request is from Twilio
+    url = str(request.url)
+    form = await request.form()
+    form_dict = dict(form)
+    signature = request.headers.get("X-Twilio-Signature", "")
+    
+    validator = RequestValidator(TWILIO_AUTH_TOKEN)
+    is_valid = validator.validate(url, form_dict, signature)
+    if not is_valid:
+        logger.warning("Invalid Twilio signature")
+        return Response(status_code=403)
 
-        # Extract message details
-        from_number = form.get('From', '')
-        message_body = form.get('Body', '')
-        message_sid = form.get('MessageSid', '')
+    # Extract message details
+    from_number = form.get('From', '')
+    message_body = form.get('Body', '')
+    message_sid = form.get('MessageSid', '')
+    
+    # Extract tenant_id from middleware
+    tenant_id = getattr(request.state, 'tenant_id', None)
+    if not tenant_id:
+        tenant_id = "webhook_tenant"  # TODO: Implement proper tenant resolution for webhooks
+    
+    # Derive external_id from Twilio payload - use MessageSid for SMS webhooks
+    external_id = message_sid
+    
+    def process_webhook():
         
         # Try different phone number formats
         phone_formats = [
@@ -482,17 +525,23 @@ async def handle_incoming_message(
             
             db.commit()
             logger.info(f"Message saved for call_id: {call_record.call_id}")
+            return {"status": "processed", "call_id": call_record.call_id}
         else:
             logger.warning(f"No call found for number: {from_number}")
-
-        # Return empty TwiML response
-        response = MessagingResponse()
-        return Response(content=str(response), media_type="application/xml")
-        
-    except Exception as e:
-        logger.exception("Error in webhook handler")
-        response = MessagingResponse()
-        return Response(content=str(response), media_type="application/xml")
+            return {"status": "not_found", "from_number": from_number}
+    
+    # Apply idempotency protection
+    response_data, status_code = with_idempotency(
+        provider="twilio",
+        external_id=external_id,
+        tenant_id=tenant_id,
+        process_fn=process_webhook,
+        trace_id=getattr(request.state, 'trace_id', None)
+    )
+    
+    # Return empty TwiML response (Twilio expects this format)
+    response = MessagingResponse()
+    return Response(content=str(response), media_type="application/xml")
 
 @router.get("/messages/{call_id}")
 async def get_messages(

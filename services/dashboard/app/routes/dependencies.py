@@ -18,14 +18,15 @@ bland_ai = BlandAI()
 date_calculator = DateCalculator()
 
 
-# Get Clerk API key from environment variable - ensure this is set in production
-CLERK_SECRET_KEY = os.environ.get("CLERK_SECRET_KEY")
-CLERK_PUBLISHABLE_KEY = os.environ.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")
-CLERK_API_URL = "https://api.clerk.com/v1"
+# Import centralized configuration
+from app.config import settings
 
-# For Clerk, we need to set the Frontend API URL
-CLERK_FRONTEND_API = "https://elegant-bluebird-22.clerk.accounts.dev"
-CLERK_JWKS_URL = f"{CLERK_FRONTEND_API}/.well-known/jwks.json"
+# Get Clerk configuration from centralized settings
+CLERK_SECRET_KEY = settings.CLERK_SECRET_KEY
+CLERK_PUBLISHABLE_KEY = settings.CLERK_PUBLISHABLE_KEY
+CLERK_API_URL = settings.CLERK_API_URL
+CLERK_FRONTEND_API = settings.CLERK_FRONTEND_ORIGIN
+CLERK_JWKS_URL = settings.clerk_jwks_url
 
 logger.info(f"CLERK_PUBLISHABLE_KEY environment variable: {'SET' if CLERK_PUBLISHABLE_KEY else 'NOT SET'}")
 if CLERK_PUBLISHABLE_KEY:

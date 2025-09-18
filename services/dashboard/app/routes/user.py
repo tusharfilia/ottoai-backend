@@ -7,12 +7,15 @@ import os
 import httpx
 import logging
 from typing import Optional
+from app.services.idempotency import with_idempotency
 
 router = APIRouter(prefix="/user", tags=["user"])
 
 # API key for Clerk integration
-CLERK_SECRET_KEY = os.environ.get("CLERK_SECRET_KEY", "your_clerk_secret_key")
-CLERK_API_BASE_URL = "https://api.clerk.dev/v1"
+from app.config import settings
+
+CLERK_SECRET_KEY = settings.CLERK_SECRET_KEY
+CLERK_API_BASE_URL = settings.CLERK_API_URL
 
 # Helper function to make authenticated requests to Clerk
 async def clerk_request(method, url, json=None):
@@ -349,7 +352,7 @@ async def get_user_by_username(username: str, db: Session = Depends(get_db)):
 async def handle_clerk_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Handle webhooks from Clerk"""
     # Verify webhook signature
-    webhook_secret = os.environ.get("CLERK_WEBHOOK_SECRET")
+    webhook_secret = settings.CLERK_WEBHOOK_SECRET
     signature = request.headers.get("svix-signature")
     
     if not webhook_secret or not signature:
@@ -361,6 +364,14 @@ async def handle_clerk_webhook(request: Request, background_tasks: BackgroundTas
     payload = await request.json()
     event_type = payload.get("type")
     data = payload.get("data", {})
+    
+    # Extract tenant_id from payload (organization context)
+    tenant_id = data.get("organization_id") or "default_tenant"
+    
+    # Derive external_id from Clerk payload - prefer event_id, then data.id
+    external_id = payload.get("event_id") or data.get("id") or f"{event_type}-{data.get('id', 'unknown')}"
+    
+    def process_webhook():
     
     if event_type == "user.created":
         # A user was created in Clerk - we should create/link in our DB
@@ -485,8 +496,19 @@ async def handle_clerk_webhook(request: Request, background_tasks: BackgroundTas
             # Option 2: Just remove clerk_org_id reference
             company_record.clerk_org_id = None
             db.commit()
+        
+        return {"status": "processed", "event_type": event_type, "data_id": data.get("id")}
     
-    return {"success": True}
+    # Apply idempotency protection
+    response_data, status_code = with_idempotency(
+        provider="clerk",
+        external_id=external_id,
+        tenant_id=tenant_id,
+        process_fn=process_webhook,
+        trace_id=getattr(request.state, 'trace_id', None)
+    )
+    
+    return response_data
 
 # Route to sync a user from our database to Clerk
 @router.post("/{user_id}/sync-to-clerk")

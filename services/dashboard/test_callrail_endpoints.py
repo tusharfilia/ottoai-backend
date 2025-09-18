@@ -2,8 +2,8 @@
 Script to test CallRail endpoints for manually setting API key and account ID.
 
 Usage:
-1. Make sure you have the company ID
-2. Update the variables at the top of the script
+1. Set environment variables: CALLRAIL_API_KEY_TEST, CALLRAIL_ACCOUNT_ID_TEST
+2. Make sure you have the company ID
 3. Run this script with Python
 
 python test_callrail_endpoints.py
@@ -11,12 +11,21 @@ python test_callrail_endpoints.py
 
 import requests
 import json
+import os
+import sys
 
-# Update these variables
+# Load test credentials from environment
 API_BASE_URL = "https://tv-mvp-test.fly.dev"
 COMPANY_ID = "org_2vNbGs3yx3ZFNGrAeSiRSJh184F"
-CALLRAIL_API_KEY = "24dc8d59e4de1ccc694961ae252fa257"
-CALLRAIL_ACCOUNT_ID = "307-566-904"
+CALLRAIL_API_KEY = os.getenv("CALLRAIL_API_KEY_TEST")
+CALLRAIL_ACCOUNT_ID = os.getenv("CALLRAIL_ACCOUNT_ID_TEST")
+
+# Check if test credentials are available
+if not CALLRAIL_API_KEY or not CALLRAIL_ACCOUNT_ID:
+    print("❌ Test credentials not found in environment variables.")
+    print("Please set CALLRAIL_API_KEY_TEST and CALLRAIL_ACCOUNT_ID_TEST environment variables.")
+    print("Skipping test...")
+    sys.exit(0)
 
 # Headers for the request
 headers = {

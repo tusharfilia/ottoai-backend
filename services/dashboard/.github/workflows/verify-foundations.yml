@@ -1,0 +1,122 @@
+name: Verify Foundations
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+jobs:
+  verify-foundations:
+    runs-on: ubuntu-latest
+    
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements_test.txt
+
+    - name: Set up test environment
+      run: |
+        cp .env.example .env
+        # Set test environment variables
+        echo "DATABASE_URL=sqlite:///./test.db" >> .env
+        echo "CLERK_SECRET_KEY=sk_test_fake_key_for_testing" >> .env
+        echo "CLERK_PUBLISHABLE_KEY=pk_test_fake_key_for_testing" >> .env
+        echo "TWILIO_ACCOUNT_SID=ACfake_account_sid" >> .env
+        echo "TWILIO_AUTH_TOKEN=fake_auth_token" >> .env
+        echo "CALLRAIL_API_KEY=fake_callrail_key" >> .env
+        echo "CALLRAIL_ACCOUNT_ID=fake_account_id" >> .env
+        echo "DEEPGRAM_API_KEY=fake_deepgram_key" >> .env
+        echo "OPENAI_API_KEY=sk-fake_openai_key" >> .env
+        echo "BLAND_API_KEY=fake_bland_key" >> .env
+        echo "ALLOWED_ORIGINS=http://localhost:3000,https://test.example.com,exp://*" >> .env
+        echo "REDIS_URL=redis://localhost:6379/1" >> .env
+        echo "RATE_LIMIT_USER=5/minute" >> .env
+        echo "RATE_LIMIT_TENANT=10/minute" >> .env
+        echo "IDEMPOTENCY_TTL_DAYS=90" >> .env
+        echo "LOG_LEVEL=INFO" >> .env
+        echo "OBS_REDACT_PII=true" >> .env
+        echo "OTEL_EXPORTER_OTLP_ENDPOINT=" >> .env
+        echo "OTEL_SERVICE_NAME_API=otto-api" >> .env
+        echo "OTEL_SERVICE_NAME_WORKER=otto-worker" >> .env
+
+    - name: Wait for Redis
+      run: |
+        timeout 30s bash -c 'until redis-cli -h localhost ping; do sleep 1; done'
+
+    - name: Run foundations verification
+      run: |
+        make verify
+
+    - name: Run idempotency tests
+      run: |
+        make verify:idempotency
+
+    - name: Run observability tests
+      run: |
+        make verify:obs
+
+    - name: Test secret scanning with dummy secret
+      run: |
+        # Add a dummy secret to test the scanner
+        echo "# sk-THIS-IS-A-TEST" >> test_secret_scan.py
+        if make verify:secrets; then
+          echo "❌ Secret scanner failed to detect dummy secret"
+          exit 1
+        else
+          echo "✅ Secret scanner correctly detected dummy secret"
+        fi
+        # Clean up
+        rm test_secret_scan.py
+
+    - name: Run smoke test (if tokens available)
+      run: |
+        # Set up test tokens for smoke test
+        export BASE="http://localhost:8000"
+        export ORIGIN_OK="http://localhost:3000"
+        export ORIGIN_BAD="https://malicious-site.com"
+        export TOKEN_A="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyX2EiLCJvcmdfaWQiOiJvcmdfdGVzdDEyMyIsImV4cCI6OTk5OTk5OTk5OSwiaWF0IjoxMDAwMDAwMDAwfQ.test_signature"
+        export TOKEN_B="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyX2IiLCJvcmdfaWQiOiJvcmdfdGVzdDEyMyIsImV4cCI6OTk5OTk5OTk5OSwiaWF0IjoxMDAwMDAwMDAwfQ.test_signature"
+        
+        # Start the application in background
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+        APP_PID=$!
+        
+        # Wait for app to start
+        sleep 10
+        
+        # Run smoke test
+        make smoke
+        
+        # Clean up
+        kill $APP_PID
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results
+        path: |
+          test-results/
+          .coverage

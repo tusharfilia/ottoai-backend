@@ -11,47 +11,57 @@ from datetime import datetime, timedelta
 import asyncio
 from .models import scheduled_call, call
 from sqlalchemy import and_
-import logging
-import traceback
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Import centralized configuration
+from app.config import settings
+
+# Import observability components
+from app.obs.logging import setup_logging, get_logger
+from app.obs.tracing import setup_tracing, instrument_fastapi, instrument_requests, instrument_sqlalchemy
+from app.obs.middleware import ObservabilityMiddleware
+from app.obs.errors import register_error_handlers
+from app.obs.metrics import metrics
+
+# Setup observability
+setup_logging()
+setup_tracing()
+instrument_requests()
+instrument_sqlalchemy()
+
+logger = get_logger(__name__)
 
 app = FastAPI(title="TrueView API")
+
+# Instrument FastAPI with OpenTelemetry
+instrument_fastapi(app)
 
 # Initialize BlandAI service but don't start schedulers yet
 bland_ai_service = BlandAI(auto_start_schedulers=False)
 
+# Import middleware
+from app.middleware.tenant import TenantContextMiddleware
+from app.middleware.rate_limiter import RateLimitMiddleware
+
+# Register error handlers
+register_error_handlers(app)
+
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Add global exception handler for more detailed error logs
-@app.middleware("http")
-async def log_exceptions(request: Request, call_next):
-    try:
-        return await call_next(request)
-    except Exception as e:
-        # Log the full exception with stack trace
-        error_details = {
-            "error": str(e),
-            "path": request.url.path,
-            "method": request.method,
-            "trace": traceback.format_exc()
-        }
-        logger.error(f"Unhandled exception: {error_details}")
-        
-        # Return a JSON response with error details
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Internal server error: {str(e)}"}
-        )
+# Observability middleware (must be early in the stack)
+app.add_middleware(ObservabilityMiddleware)
+
+# Tenant context middleware
+app.add_middleware(TenantContextMiddleware)
+
+# Rate limiting middleware
+app.add_middleware(RateLimitMiddleware)
 
 #931980e753b188c6856ffaed726ef00a
 # Include routers
@@ -113,6 +123,11 @@ async def startup_event():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Prometheus metrics endpoint."""
+    return metrics.get_metrics_response()
 
 if __name__ == "__main__":
     import uvicorn

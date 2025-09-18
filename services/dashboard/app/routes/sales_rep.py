@@ -17,10 +17,10 @@ import traceback # Added for detailed error logging
 from app.services.sales_rep_notification_service import send_appointment_assignment_notification # Import notification service
 
 # API key for Clerk integration
-CLERK_SECRET_KEY = os.environ.get("CLERK_SECRET_KEY")
-if not CLERK_SECRET_KEY:
-    raise ValueError("CLERK_SECRET_KEY environment variable is not set")
-CLERK_API_BASE_URL = "https://api.clerk.dev/v1"
+from app.config import settings
+
+CLERK_SECRET_KEY = settings.CLERK_SECRET_KEY
+CLERK_API_BASE_URL = settings.CLERK_API_URL
 
 # Helper function to make authenticated requests to Clerk
 async def clerk_request(method, url, json_data=None):

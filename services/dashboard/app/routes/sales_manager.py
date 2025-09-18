@@ -14,10 +14,10 @@ from app.routes.dependencies import client, bland_ai, date_calculator
 from app.models import sales_manager, sales_rep
 
 # API key for Clerk integration
-CLERK_SECRET_KEY = os.environ.get("CLERK_SECRET_KEY")
-if not CLERK_SECRET_KEY:
-    raise ValueError("CLERK_SECRET_KEY environment variable is not set")
-CLERK_API_BASE_URL = "https://api.clerk.dev/v1"
+from app.config import settings
+
+CLERK_SECRET_KEY = settings.CLERK_SECRET_KEY
+CLERK_API_BASE_URL = settings.CLERK_API_URL
 
 # Helper function to make authenticated requests to Clerk
 async def clerk_request(method, url, json_data=None):

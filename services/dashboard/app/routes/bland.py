@@ -7,6 +7,7 @@ import json
 from app.services.bland_ai import BlandAI
 from app.routes.dependencies import bland_ai, client
 from app.services.twilio_service import twilio_service
+from app.services.idempotency import with_idempotency
 
 router = APIRouter()
 
@@ -141,14 +142,21 @@ async def bland_callback(
     db: Session = Depends(get_db)
 ):
     print("=== BLAND.AI WEBHOOK CALLBACK START ===")
-    try:
-        # Log incoming request data
-        data = await request.json()
-        print(f"Received webhook data: {data}")
-        
-        # Extract and log metadata
-        metadata = data.get("metadata", {})
-        print(f"Extracted metadata: {metadata}")
+    # Log incoming request data
+    data = await request.json()
+    print(f"Received webhook data: {data}")
+    
+    # Extract and log metadata
+    metadata = data.get("metadata", {})
+    print(f"Extracted metadata: {metadata}")
+    
+    # Extract tenant_id from metadata or use default
+    tenant_id = metadata.get("tenant_id") or "default_tenant"
+    
+    # Derive external_id from Bland AI payload - use call_id or session_id
+    external_id = data.get("call_id") or data.get("session_id") or f"bland-{data.get('id', 'unknown')}"
+    
+    def process_webhook():
         
         # scheduled_call_id = metadata.get("scheduled_call_id")
         try:
@@ -291,10 +299,15 @@ async def bland_callback(
         print("Committing database changes")
         db.commit()
         print("=== BLAND.AI WEBHOOK CALLBACK COMPLETE ===")
-        return {"status": "success"}
-        
-    except Exception as e:
-        print(f"=== ERROR IN BLAND.AI WEBHOOK CALLBACK ===")
-        print(f"Error details: {str(e)}")
-        print(f"Request data: {data if 'data' in locals() else 'Not available'}")
-        raise
+        return {"status": "processed", "call_type": call_type}
+    
+    # Apply idempotency protection
+    response_data, status_code = with_idempotency(
+        provider="bland",
+        external_id=external_id,
+        tenant_id=tenant_id,
+        process_fn=process_webhook,
+        trace_id=getattr(request.state, 'trace_id', None)
+    )
+    
+    return response_data

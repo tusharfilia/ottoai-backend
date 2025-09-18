@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models.call import Call
 from app.models.transcript_analysis import TranscriptAnalysis
 from app.services.transcript_analysis import TranscriptAnalyzer
+from app.middleware.rate_limiter import limits
 import logging
 
 router = APIRouter(prefix="/audio", tags=["audio"])
@@ -21,11 +22,9 @@ router = APIRouter(prefix="/audio", tags=["audio"])
 logger = logging.getLogger(__name__)
 
 # Initialize Deepgram client with environment variable
-DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY')
-if not DEEPGRAM_API_KEY:
-    raise ValueError("DEEPGRAM_API_KEY environment variable is not set")
+from app.config import settings
 
-deepgram = Deepgram(DEEPGRAM_API_KEY)
+deepgram = Deepgram(settings.DEEPGRAM_API_KEY)
 
 # In-memory storage for transcripts (replace with database in production)
 transcripts = {}
@@ -343,6 +342,7 @@ async def get_raw_transcript(recording_id: str):
     }
 
 @router.post("/analyze-transcript/{call_id}")
+@limits(user="20/minute")  # Stricter limit for AI processing
 async def analyze_transcript(
     call_id: int,
     company_id: str,
