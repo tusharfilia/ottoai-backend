@@ -3,7 +3,7 @@ from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
-from .routes import webhooks, company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile
+from .routes import webhooks, company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket
 from .routes.mobile_routes import mobile_router
 from .services.bland_ai import BlandAI
 from .services.missing_reports_service import check_missing_reports
@@ -65,6 +65,8 @@ app.add_middleware(RateLimitMiddleware)
 
 #931980e753b188c6856ffaed726ef00a
 # Include routers
+app.include_router(health.router)  # Health checks first
+app.include_router(websocket.router)  # WebSocket endpoint
 app.include_router(webhooks.router)
 app.include_router(company.router)
 app.include_router(user.router)
@@ -119,10 +121,6 @@ async def startup_event():
     # Start the missing reports checker in the background
     asyncio.create_task(check_missing_reports_task())
     logger.info("Started missing reports checker task")
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 @app.get("/metrics")
 async def metrics_endpoint():

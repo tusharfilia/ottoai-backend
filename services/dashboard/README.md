@@ -495,3 +495,613 @@ curl http://localhost:8000/non-existent-route
 - ✅ **Metrics Collection**: Prometheus format, HTTP/task/business metrics
 - ✅ **Error Handling**: RFC-7807 format, trace correlation, structured logging
 - ✅ **Testing**: Comprehensive test suite, smoke tests, CI integration
+
+## Production Deployment
+
+### Prerequisites
+
+1. **Fly.io Account**: Set up account and install flyctl
+2. **Redis Instance**: Provision Redis for rate limiting and Celery
+3. **Environment Secrets**: Configure all required environment variables
+
+### Step 1: Provision Redis
+
+Choose one of these Redis options:
+
+#### Option A: Fly.io Redis (Recommended)
+```bash
+# Create Redis instance
+fly redis create
+# Name: ottoai-redis
+# Region: phx (same as your app)
+
+# Get connection details
+fly redis status ottoai-redis
+```
+
+#### Option B: Upstash Redis
+1. Go to [Upstash Console](https://console.upstash.com/)
+2. Create new Redis database
+3. Copy the connection URL
+
+### Step 2: Configure Secrets
+
+Set all required secrets in Fly.io:
+
+```bash
+# Database and Redis
+fly secrets set DATABASE_URL="postgresql://..."
+fly secrets set REDIS_URL="redis://..."  # or UPSTASH_REDIS_URL
+
+# Authentication
+fly secrets set CLERK_SECRET_KEY="sk_..."
+fly secrets set CLERK_PUBLISHABLE_KEY="pk_..."
+fly secrets set CLERK_WEBHOOK_SECRET="whsec_..."
+
+# External Services
+fly secrets set TWILIO_ACCOUNT_SID="AC..."
+fly secrets set TWILIO_AUTH_TOKEN="..."
+fly secrets set CALLRAIL_API_KEY="..."
+fly secrets set CALLRAIL_ACCOUNT_ID="..."
+fly secrets set DEEPGRAM_API_KEY="sk-..."
+fly secrets set OPENAI_API_KEY="sk-..."
+fly secrets set BLAND_API_KEY="..."
+
+# Configuration
+fly secrets set ALLOWED_ORIGINS="https://your-frontend.vercel.app,https://your-domain.com"
+fly secrets set ENABLE_CELERY="true"
+fly secrets set ENABLE_CELERY_BEAT="true"
+fly secrets set LOG_LEVEL="INFO"
+fly secrets set OBS_REDACT_PII="true"
+```
+
+### Step 3: Deploy Application
+
+Deploy with process groups (API + Worker + Beat):
+
+```bash
+# Deploy all processes
+fly deploy
+
+# Check deployment status
+fly status
+
+# View logs for different processes
+fly logs -a tv-mvp           # API logs
+fly logs -a tv-mvp --process worker  # Worker logs
+fly logs -a tv-mvp --process beat    # Beat logs
+```
+
+### Step 4: Verify Deployment
+
+#### Health Checks
+```bash
+# Basic health
+curl https://tv-mvp-test.fly.dev/health
+
+# Comprehensive readiness
+curl https://tv-mvp-test.fly.dev/ready
+
+# Expected readiness response:
+{
+  "ready": true,
+  "components": {
+    "database": true,
+    "redis": true,
+    "celery_workers": true
+  },
+  "timestamp": 1234567890,
+  "duration_ms": 123.45,
+  "service": "otto-api"
+}
+```
+
+#### Run Verification Pack
+```bash
+# Run all verification tests
+make verify:all
+
+# Run observability smoke test
+BASE=https://tv-mvp-test.fly.dev make smoke:obs
+
+# Run infrastructure validation
+python scripts/quick_validation.py https://tv-mvp-test.fly.dev
+```
+
+### Step 5: Monitor Deployment
+
+#### Process Status
+```bash
+# Check all processes are running
+fly status
+
+# Scale processes if needed
+fly scale count api=2 worker=1 beat=1
+```
+
+#### Application Logs
+```bash
+# Follow all logs
+fly logs --follow
+
+# Process-specific logs
+fly logs --process api --follow
+fly logs --process worker --follow
+fly logs --process beat --follow
+```
+
+#### Metrics and Monitoring
+```bash
+# Check Prometheus metrics
+curl https://tv-mvp-test.fly.dev/metrics
+
+# Monitor Redis connectivity
+curl https://tv-mvp-test.fly.dev/ready | jq '.components.redis'
+
+# Check Celery workers
+curl https://tv-mvp-test.fly.dev/internal/worker/heartbeat
+```
+
+### Troubleshooting
+
+#### Common Issues
+
+1. **Redis Connection Failed**
+   ```bash
+   # Check Redis URL format
+   fly secrets list | grep REDIS
+   
+   # Test Redis connectivity
+   redis-cli -u $REDIS_URL ping
+   ```
+
+2. **Celery Workers Not Starting**
+   ```bash
+   # Check worker logs
+   fly logs --process worker
+   
+   # Verify Redis connectivity from worker
+   fly ssh console --process worker
+   # Inside container: redis-cli -u $REDIS_URL ping
+   ```
+
+3. **Database Migration Issues**
+   ```bash
+   # Run migrations manually
+   fly ssh console --process api
+   # Inside container: alembic upgrade head
+   ```
+
+4. **Process Not Starting**
+   ```bash
+   # Check process configuration
+   cat fly.toml
+   
+   # Restart specific process
+   fly restart --process api
+   ```
+
+#### Performance Issues
+
+1. **High Memory Usage**
+   ```bash
+   # Check memory usage
+   fly status
+   
+   # Scale up if needed
+   fly scale memory 2gb
+   ```
+
+2. **Slow Response Times**
+   ```bash
+   # Check metrics
+   curl https://tv-mvp-test.fly.dev/metrics | grep http_request_duration
+   
+   # Scale horizontally
+   fly scale count api=2
+   ```
+
+### Rollback Procedure
+
+If deployment fails:
+
+```bash
+# List recent releases
+fly releases
+
+# Rollback to previous version
+fly releases rollback <version>
+
+# Or deploy previous Docker image
+fly deploy --image registry.fly.io/tv-mvp:<previous-tag>
+```
+
+### Automated Deployment
+
+Use GitHub Actions for automated deployment:
+
+```bash
+# Trigger staging deployment
+gh workflow run deploy-staging.yml
+
+# Check deployment status
+gh run list --workflow=deploy-staging.yml
+```
+
+### Environment Variables Reference
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `REDIS_URL` | Yes | Redis connection string |
+| `CLERK_SECRET_KEY` | Yes | Clerk authentication secret |
+| `ENABLE_CELERY` | No | Enable Celery workers (default: false) |
+| `ENABLE_CELERY_BEAT` | No | Enable Celery beat scheduler (default: false) |
+| `LOG_LEVEL` | No | Logging level (default: INFO) |
+| `OBS_REDACT_PII` | No | Enable PII redaction (default: true) |
+
+For complete list, see `.env.example` file.
+
+## Real-Time Transport
+
+The OttoAI backend provides real-time communication via authenticated WebSockets with Redis pub/sub for event distribution.
+
+### WebSocket Connection
+
+**Endpoint**: `/ws`
+**Authentication**: Clerk JWT token in Authorization header
+**Protocol**: WebSocket with JSON message format
+
+#### Connection Example
+```javascript
+const ws = new WebSocket('wss://api.ottoai.com/ws', {
+  headers: {
+    'Authorization': `Bearer ${clerkToken}`
+  }
+});
+
+ws.onopen = () => {
+  console.log('Connected to OttoAI real-time');
+};
+
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  handleRealtimeEvent(message);
+};
+```
+
+### Channel Subscription
+
+After connection, clients can subscribe to channels:
+
+```javascript
+// Subscribe to tenant events
+ws.send(JSON.stringify({
+  type: 'subscribe',
+  channel: 'tenant:your-tenant-id:events'
+}));
+
+// Subscribe to user tasks
+ws.send(JSON.stringify({
+  type: 'subscribe', 
+  channel: 'user:your-user-id:tasks'
+}));
+
+// Subscribe to lead timeline
+ws.send(JSON.stringify({
+  type: 'subscribe',
+  channel: 'lead:lead-id:timeline'
+}));
+```
+
+### Message Envelope Format
+
+All events follow a standardized format:
+
+```json
+{
+  "version": "1",
+  "event": "telephony.call.received",
+  "ts": "2025-09-20T10:30:00.000Z",
+  "severity": "info",
+  "trace_id": "uuid-trace-id",
+  "tenant_id": "tenant-123",
+  "user_id": "user-456",
+  "lead_id": "lead-789", 
+  "data": {
+    "call_id": "call-123",
+    "phone_number": "+1234567890",
+    "answered": true
+  }
+}
+```
+
+### Available Events
+
+#### Telephony Events
+- `telephony.call.received` - Incoming call detected
+- `telephony.call.completed` - Call analysis complete
+- `telephony.sms.received` - SMS received from customer
+- `telephony.sms.sent` - SMS sent to customer
+- `telephony.call.status` - Call status update
+
+#### System Events
+- `system.webhook.processed` - Webhook processing complete
+- `system.buffer_dropped` - Message queue overflow
+- `worker.task.finished` - Background task complete
+- `worker.task.failed` - Background task failed
+
+#### User Events
+- `identity.user.created` - New user added
+- `identity.user.updated` - User information updated
+- `task.updated` - Task assigned or updated
+- `appointment.assigned` - Appointment assigned to rep
+
+#### Analytics Events
+- `analytics.daily_recap.ready` - Daily analytics available
+
+### Channel Security
+
+**Access Control**:
+- Users can only subscribe to their own tenant's events
+- Users can only subscribe to their own user tasks
+- Lead channels are validated against tenant ownership
+- No wildcard subscriptions allowed
+
+**Channel Formats**:
+- `tenant:{tenant_id}:events` - Organization-wide events
+- `user:{user_id}:tasks` - User-specific tasks and notifications
+- `lead:{lead_id}:timeline` - Lead-specific updates
+
+### Heartbeat & Connection Management
+
+**Heartbeat**: Server sends ping every 20 seconds, client must respond with pong
+**Timeout**: Connections closed after 40 seconds without pong response
+**Reconnection**: Clients should implement automatic reconnection with exponential backoff
+
+### Rate Limiting
+
+**Control Messages**: 10 subscribe/unsubscribe operations per minute per connection
+**Connection Limits**: Monitored but not hard-limited per tenant
+**Abuse Protection**: Automatic disconnection for protocol violations
+
+### Performance
+
+**Message Size**: 32KB limit per message
+**Large Payloads**: Automatically converted to pointer messages with resource IDs
+**Latency**: <1 second end-to-end event delivery
+**Throughput**: Designed for thousands of concurrent connections
+
+### Development & Testing
+
+**Test Event Emission** (development only):
+```bash
+curl "http://localhost:8000/ws/test-emit?event=test.event&tenant_id=tenant-123"
+```
+
+**Verification Commands**:
+```bash
+# Run WebSocket tests
+make verify:realtime
+
+# Run real-time smoke test
+BASE=https://your-app.fly.dev TOKEN=your-jwt make smoke:realtime
+```
+
+**Event Catalog**: See `docs/events/catalog.md` for complete event documentation
+
+### Real-Time Transport Status
+
+- ✅ **WebSocket Endpoint**: Authenticated `/ws` with Clerk JWT validation
+- ✅ **Redis Pub/Sub**: Event bus with standardized message envelope
+- ✅ **Channel Security**: Strict access control and validation
+- ✅ **Event Emission**: Wired from webhooks and background tasks
+- ✅ **Connection Management**: Heartbeat, cleanup, and monitoring
+- ✅ **Rate Limiting**: Control message rate limiting and abuse protection
+- ✅ **Testing**: Comprehensive test suite and smoke tests
+- ✅ **Documentation**: Complete event catalog and client examples
+
+## Foundations Verification
+
+The OttoAI backend includes a comprehensive verification pack to ensure all foundational features are working correctly in any environment.
+
+### Quick Verification
+
+**Run all unit and integration tests:**
+```bash
+make verify:foundations
+```
+
+This single command runs comprehensive verification of:
+- ✅ **Secrets hygiene** - No hardcoded secrets
+- ✅ **CORS + tenant context** - Multi-tenant security
+- ✅ **Rate limiting** - Per-user/tenant protection
+- ✅ **Webhook idempotency** - Duplicate prevention
+- ✅ **Observability** - Logging, tracing, metrics
+- ✅ **Real-time transport** - WebSocket functionality
+- ✅ **Production readiness** - Health checks and monitoring
+
+### Staging/Production Smoke Tests
+
+**Run end-to-end validation against deployed environment:**
+```bash
+# Basic smoke test
+make smoke:foundations
+
+# With full configuration
+BASE=https://tv-mvp-test.fly.dev \
+TENANT_ID=your-tenant-id \
+TOKEN_A=your-jwt-token \
+DEV_EMIT_KEY=your-dev-key \
+make smoke:foundations
+```
+
+This validates:
+- 🏥 **Infrastructure readiness** - DB + Redis connectivity
+- 🔒 **Security** - CORS, rate limiting, authentication
+- 📊 **Observability** - Metrics, logging, tracing
+- ⚡ **Real-time** - WebSocket connectivity and event delivery
+- 🔄 **Event emission** - End-to-end event flow
+- 🏢 **Multi-tenant isolation** - Data segregation
+
+### Metrics Monitoring
+
+**Get current system health snapshot:**
+```bash
+# Local development
+make metrics:snapshot
+
+# Against specific environment
+./scripts/metrics_snapshot.sh https://tv-mvp-test.fly.dev
+
+# JSON format for automation
+./scripts/metrics_snapshot.sh https://tv-mvp-test.fly.dev --format=json
+```
+
+**Metrics snapshot includes:**
+- 🔗 **WebSocket connections** and message throughput
+- 🌐 **HTTP request latency** and success rates
+- ⚙️ **Worker task** performance and failure rates
+- 🔄 **Webhook processing** metrics and idempotency stats
+- 💾 **Cache performance** and hit rates
+
+### Manual Testing & Debugging
+
+#### **WebSocket Testing**
+```bash
+# Test WebSocket connectivity
+BASE=https://your-app.fly.dev TOKEN=your-jwt make smoke:realtime
+
+# Manual WebSocket connection (requires wscat)
+wscat -c wss://your-app.fly.dev/ws -H "Authorization: Bearer your-jwt"
+
+# Test event emission (dev/staging only)
+curl -H "X-Dev-Key: your-key" \
+  "https://your-app.fly.dev/ws/test-emit?event=test.manual&tenant_id=your-tenant"
+```
+
+#### **Health Check Testing**
+```bash
+# Basic health
+curl https://your-app.fly.dev/health
+
+# Comprehensive readiness
+curl https://your-app.fly.dev/ready | jq '.'
+
+# Worker heartbeat
+curl https://your-app.fly.dev/internal/worker/heartbeat
+```
+
+#### **Security Testing**
+```bash
+# Test CORS
+curl -H "Origin: https://malicious-site.com" https://your-app.fly.dev/health
+
+# Test rate limiting
+for i in {1..20}; do curl https://your-app.fly.dev/health & done; wait
+
+# Test authentication
+curl -H "Authorization: Bearer invalid-token" https://your-app.fly.dev/companies
+```
+
+### CI/CD Integration
+
+**Automated verification in GitHub Actions:**
+
+The `foundations-verify.yml` workflow runs:
+1. **Unit tests** - All foundational feature tests
+2. **Smoke tests** - End-to-end validation against staging
+3. **Security scan** - Secret detection and validation
+4. **Metrics snapshot** - Performance and health validation
+
+**Trigger manually:**
+```bash
+gh workflow run foundations-verify.yml \
+  --field target_environment=staging \
+  --field run_smoke_tests=true
+```
+
+### Environment Configuration
+
+**Required secrets for smoke tests:**
+```bash
+# GitHub Secrets (for CI/CD)
+SMOKE_TEST_TENANT_ID=your-tenant-id
+SMOKE_TEST_TOKEN_A=eyJ...
+SMOKE_TEST_TOKEN_B=eyJ...
+DEV_EMIT_KEY=your-development-key
+
+# Fly.io Secrets (for production)
+fly secrets set DEV_EMIT_KEY=your-development-key  # Optional, for testing
+```
+
+### Interpreting Results
+
+#### **"Greenlight" Criteria**
+✅ **All foundations verified** when:
+- `make verify:foundations` passes with 100% success rate
+- `make smoke:foundations` passes all smoke tests
+- `/ready` endpoint returns `{"ready": true}` with all components healthy
+- Metrics snapshot shows healthy values (latency <250ms, dropped=0)
+
+#### **Warning Signs**
+⚠️ **Monitor closely** when:
+- P95 latency > 500ms
+- WebSocket message drop rate > 1%
+- Worker task failure rate > 5%
+- Cache hit rate < 70%
+
+#### **Critical Issues**
+🚨 **Immediate action required** when:
+- `/ready` returns 503 (infrastructure down)
+- Cross-tenant access detected in logs
+- P95 latency > 1000ms sustained
+- WebSocket connections dropping to 0
+
+### Troubleshooting
+
+**Common issues and solutions:**
+
+1. **Redis connectivity issues**
+   ```bash
+   # Check Redis URL
+   fly secrets list | grep REDIS
+   
+   # Test Redis connection
+   redis-cli -u $REDIS_URL ping
+   ```
+
+2. **WebSocket authentication failures**
+   ```bash
+   # Verify JWT token format
+   echo $TOKEN | cut -d'.' -f2 | base64 -d | jq '.'
+   
+   # Check Clerk configuration
+   fly secrets list | grep CLERK
+   ```
+
+3. **Event delivery failures**
+   ```bash
+   # Check Redis pub/sub
+   redis-cli -u $REDIS_URL monitor
+   
+   # Check WebSocket hub logs
+   fly logs | grep "WebSocket\|realtime\|event"
+   ```
+
+### Operations Dashboard
+
+For detailed operational guidance, see `docs/ops/foundations-dashboard.md` which includes:
+- 📊 Performance baselines and scaling guidelines
+- 🔍 Log patterns and troubleshooting procedures  
+- 🚨 Alert conditions and response procedures
+- 📈 Daily/weekly operational checklists
+
+### Foundations Verification Status
+
+- ✅ **Comprehensive Test Suite**: Unit tests for all foundational features
+- ✅ **End-to-End Smoke Tests**: Staging/production validation
+- ✅ **Automated CI/CD**: GitHub Actions with complete verification
+- ✅ **Metrics Monitoring**: Real-time health and performance tracking
+- ✅ **Operations Documentation**: Complete troubleshooting and monitoring guides
+- ✅ **Security Validation**: Multi-tenant isolation and access control testing

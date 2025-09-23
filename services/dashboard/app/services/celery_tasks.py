@@ -19,6 +19,9 @@ tracer = get_tracer(__name__)
 # Initialize Celery
 celery_app = Celery('ottoai_backend')
 
+# Make celery_app available at module level for CLI
+app = celery_app
+
 # Configure Celery
 celery_app.conf.update(
     broker_url=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),

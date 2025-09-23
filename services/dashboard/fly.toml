@@ -8,26 +8,38 @@ primary_region = 'phx'
 
 [build]
 
+[processes]
+  api = "uvicorn app.main:app --host 0.0.0.0 --port 8080 --forwarded-allow-ips=*"
+  worker = "celery -A app.services.celery_tasks worker --loglevel=INFO"
+  beat = "celery -A app.services.celery_tasks beat --loglevel=INFO"
+
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 1
-  processes = ['app']
+  processes = ['api']
 
 [[vm]]
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
+  processes = ['api']
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  processes = ['worker']
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  processes = ['beat']
   
 [deploy]
-  # release_command = "alembic upgrade head"
-  # if want to delete everything:
-  # release_command = "python /app/scripts/delete_all_tables.py && alembic upgrade head"
-  # then run 
-  # release_command = "python /app/scripts/reset_db.py && alembic upgrade head"
-  # then run: with a migration that creates the whole db
-  # release_command = "alembic upgrade head"
+  release_command = "alembic upgrade head"
 
 [scheduled_tasks]

@@ -86,6 +86,31 @@ active_connections = Gauge(
     'Number of active database connections'
 )
 
+# WebSocket Metrics
+ws_connections = Gauge(
+    'ws_connections',
+    'Number of active WebSocket connections',
+    ['tenant_id']
+)
+
+ws_messages_sent_total = Counter(
+    'ws_messages_sent_total',
+    'Total WebSocket messages sent',
+    ['channel']
+)
+
+ws_messages_dropped_total = Counter(
+    'ws_messages_dropped_total',
+    'Total WebSocket messages dropped',
+    ['reason']
+)
+
+ws_subscriptions_total = Counter(
+    'ws_subscriptions_total',
+    'Total WebSocket channel subscriptions',
+    ['channel']
+)
+
 cache_hits_total = Counter(
     'cache_hits_total',
     'Total number of cache hits',
@@ -264,3 +289,23 @@ def record_cache_miss(cache_type: str):
 def set_active_connections(count: int):
     """Set the number of active database connections."""
     metrics.set_active_connections(count)
+
+
+def record_ws_connection(tenant_id: str, count: int):
+    """Record WebSocket connection count for a tenant."""
+    ws_connections.labels(tenant_id=tenant_id).set(count)
+
+
+def record_ws_message_sent(channel: str):
+    """Record WebSocket message sent."""
+    ws_messages_sent_total.labels(channel=channel).inc()
+
+
+def record_ws_message_dropped(reason: str):
+    """Record WebSocket message dropped."""
+    ws_messages_dropped_total.labels(reason=reason).inc()
+
+
+def record_ws_subscription(channel: str):
+    """Record WebSocket channel subscription."""
+    ws_subscriptions_total.labels(channel=channel).inc()

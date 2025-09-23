@@ -46,7 +46,16 @@ verify:obs: ## Run observability verification tests
 	pytest -q tests/test_logging_tracing.py
 	pytest -q tests/test_metrics.py
 
-verify:all: verify:secrets verify:tests verify:idempotency verify:obs ## Run all verification checks
+verify:readiness: ## Run readiness verification tests
+	@echo "🧪 Running Readiness tests..."
+	pytest -q tests/test_readiness.py
+
+verify:realtime: ## Run real-time transport verification tests
+	@echo "🧪 Running Real-time tests..."
+	pytest -q tests/test_ws_basic.py
+	pytest -q tests/test_ws_events.py
+
+verify:all: verify:secrets verify:tests verify:idempotency verify:obs verify:readiness verify:realtime ## Run all verification checks
 
 verify: ## Run complete foundations verification
 	@echo "🚀 Starting OttoAI Backend Foundations Verification..."
@@ -65,9 +74,25 @@ smoke:obs: ## Run smoke test for observability
 	@echo "💨 Running smoke test for observability..."
 	bash scripts/smoke_obs.sh
 
+smoke:realtime: ## Run smoke test for real-time transport
+	@echo "💨 Running smoke test for real-time transport..."
+	bash scripts/smoke_realtime.sh
+
 validate:infra: ## Validate infrastructure integration
 	@echo "🔍 Validating infrastructure integration..."
 	python scripts/quick_validation.py
+
+verify:foundations: ## Run comprehensive foundations verification
+	@echo "🚀 Running foundations verification pack..."
+	bash scripts/verify_foundations.sh
+
+smoke:foundations: ## Run comprehensive foundations smoke test
+	@echo "💨 Running foundations smoke test..."
+	bash scripts/smoke_foundations.sh
+
+metrics:snapshot: ## Generate metrics snapshot
+	@echo "📊 Generating metrics snapshot..."
+	bash scripts/metrics_snapshot.sh $(BASE)
 
 validate:all: ## Run all validation tests
 	@echo "🚀 Running comprehensive validation..."

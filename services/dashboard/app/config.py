@@ -50,10 +50,16 @@ class Settings:
         allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,exp://*")
         self.ALLOWED_ORIGINS = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
         
+        # Redis Configuration
+        self.REDIS_URL = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL")
+        
         # Rate Limiting Configuration
-        self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.RATE_LIMIT_USER = os.getenv("RATE_LIMIT_USER", "60/minute")
         self.RATE_LIMIT_TENANT = os.getenv("RATE_LIMIT_TENANT", "600/minute")
+        
+        # Celery Configuration
+        self.ENABLE_CELERY = os.getenv("ENABLE_CELERY", "false").lower() in ("true", "1", "yes")
+        self.ENABLE_CELERY_BEAT = os.getenv("ENABLE_CELERY_BEAT", "false").lower() in ("true", "1", "yes")
         
         # Idempotency Configuration
         self.IDEMPOTENCY_TTL_DAYS = int(os.getenv("IDEMPOTENCY_TTL_DAYS", "90"))
@@ -64,6 +70,9 @@ class Settings:
         self.OTEL_EXPORTER_OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
         self.OTEL_SERVICE_NAME_API = os.getenv("OTEL_SERVICE_NAME_API", "otto-api")
         self.OTEL_SERVICE_NAME_WORKER = os.getenv("OTEL_SERVICE_NAME_WORKER", "otto-worker")
+        
+        # Development/Testing Configuration
+        self.DEV_EMIT_KEY = os.getenv("DEV_EMIT_KEY")
         
         # Validate required settings
         self._validate_settings()
@@ -83,6 +92,14 @@ class Settings:
         for name, value in required_settings:
             if value in ['CHANGE_ME', f'your_{name.lower()}', '']:
                 raise ValueError(f'{name} must be set to a real value, not a placeholder')
+        
+        # Validate Redis URL when required
+        if (self.ENABLE_CELERY or self.is_rate_limiting_enabled()) and not self.REDIS_URL:
+            raise ValueError('REDIS_URL or UPSTASH_REDIS_URL must be set when Celery or rate limiting is enabled')
+    
+    def is_rate_limiting_enabled(self) -> bool:
+        """Check if rate limiting is enabled (when Redis is needed)."""
+        return True  # Rate limiting is always enabled in our setup
     
     @property
     def clerk_jwks_url(self) -> str:

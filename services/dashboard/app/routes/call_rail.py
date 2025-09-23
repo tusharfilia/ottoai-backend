@@ -10,6 +10,7 @@ from app.utils.date_calculator import DateCalculator
 from app.routes.dependencies import client, bland_ai, date_calculator
 from app.middleware.rate_limiter import limits
 from app.services.idempotency import with_idempotency
+from app.realtime.bus import emit
 
 router = APIRouter()
 
@@ -47,6 +48,20 @@ async def pre_call_webhook(request: Request, db: Session = Depends(get_db)):
         db.add(new_call)
         db.commit()
         print(f"New call created: {new_call.call_id}")
+        
+        # Emit real-time event
+        emit(
+            event_name="telephony.call.received",
+            payload={
+                "call_id": new_call.call_id,
+                "phone_number": new_call.phone_number,
+                "company_id": str(new_call.company_id),
+                "answered": not new_call.missed_call
+            },
+            tenant_id=tenant_id,
+            lead_id=new_call.call_id
+        )
+        
         return {"status": "success", "call_id": new_call.call_id}
     
     # Apply idempotency protection
@@ -341,6 +356,22 @@ async def call_complete_webhook(call_data: dict, background_tasks: BackgroundTas
     # After extracting information and before committing...
     # Continue with existing commit
     db.commit()
+    
+    # Emit real-time event for call completion
+    emit(
+        event_name="telephony.call.completed",
+        payload={
+            "call_id": call_record.call_id,
+            "phone_number": call_record.phone_number,
+            "company_id": str(call_record.company_id),
+            "booked": call_record.booked,
+            "qualified": call_record.qualified,
+            "objections": call_record.objections or [],
+            "quote_date": call_record.quote_date.isoformat() if call_record.quote_date else None
+        },
+        tenant_id=tenant_id,
+        lead_id=call_record.call_id
+    )
     
     # Add detailed logging for debugging
     print(f"=== CALL COMPLETE SUMMARY ===")
