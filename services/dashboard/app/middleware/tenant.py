@@ -35,8 +35,9 @@ class TenantContextMiddleware:
             return
         
         try:
-            tenant_id = await self._extract_tenant_id(request)
-            if not tenant_id:
+            # Extract tenant context (tenant_id, user_id, user_role)
+            context = await self._extract_tenant_context(request)
+            if not context or not context.get("tenant_id"):
                 response = JSONResponse(
                     status_code=403,
                     content={"detail": "Missing or invalid tenant_id in JWT claims"}
@@ -44,13 +45,14 @@ class TenantContextMiddleware:
                 await response(scope, receive, send)
                 return
             
-            # Extract user_id from JWT claims
-            user_id = decoded_token.get("sub") or decoded_token.get("user_id")
-            
-            # Attach tenant_id and user_id to request state
-            request.state.tenant_id = tenant_id
-            request.state.user_id = user_id
-            logger.debug(f"Tenant context set: {tenant_id}, User: {user_id}")
+            # Attach context to request state
+            request.state.tenant_id = context["tenant_id"]
+            request.state.user_id = context["user_id"]
+            request.state.user_role = context["user_role"]
+            logger.debug(
+                f"Tenant context set: {context['tenant_id']}, "
+                f"User: {context['user_id']}, Role: {context['user_role']}"
+            )
             
         except Exception as e:
             logger.error(f"Error extracting tenant_id: {str(e)}")
@@ -75,8 +77,13 @@ class TenantContextMiddleware:
         
         return any(request.url.path.startswith(path) for path in skip_paths)
     
-    async def _extract_tenant_id(self, request: Request) -> Optional[str]:
-        """Extract tenant_id from Clerk JWT claims."""
+    async def _extract_tenant_context(self, request: Request) -> Optional[dict]:
+        """
+        Extract tenant context from Clerk JWT claims.
+        
+        Returns:
+            dict with tenant_id, user_id, user_role, or None if extraction fails
+        """
         # Get Authorization header
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
@@ -116,7 +123,15 @@ class TenantContextMiddleware:
             if not tenant_id and "user_id" in decoded_token:
                 tenant_id = await self._get_user_default_organization(decoded_token["user_id"])
             
-            return tenant_id
+            # Extract user_id and role
+            user_id = decoded_token.get("sub") or decoded_token.get("user_id")
+            user_role = decoded_token.get("org_role") or decoded_token.get("role") or "rep"
+            
+            return {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "user_role": user_role
+            }
             
         except jwt.ExpiredSignatureError:
             logger.warning("JWT token has expired")

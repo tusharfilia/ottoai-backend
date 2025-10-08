@@ -43,6 +43,13 @@ class Settings:
         # Bland AI
         self.BLAND_API_KEY = os.getenv("BLAND_API_KEY", "")
         
+        # UWC (Unified Workflow Composer) Integration
+        self.UWC_BASE_URL = os.getenv("UWC_BASE_URL", "")
+        self.UWC_API_KEY = os.getenv("UWC_API_KEY", "")
+        self.UWC_HMAC_SECRET = os.getenv("UWC_HMAC_SECRET", "")
+        self.UWC_VERSION = os.getenv("UWC_VERSION", "v1")
+        self.USE_UWC_STAGING = os.getenv("USE_UWC_STAGING", "false").lower() in ("true", "1", "yes")
+        
         # Environment
         self.ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
         

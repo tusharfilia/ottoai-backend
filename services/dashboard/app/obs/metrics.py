@@ -123,6 +123,32 @@ cache_misses_total = Counter(
     ['cache_type']
 )
 
+# UWC Integration Metrics
+uwc_requests_total = Counter(
+    'uwc_requests_total',
+    'Total number of UWC API requests',
+    ['endpoint', 'method', 'status']
+)
+
+uwc_request_duration_ms = Histogram(
+    'uwc_request_duration_ms',
+    'UWC API request duration in milliseconds',
+    ['endpoint', 'method'],
+    buckets=(10, 50, 100, 250, 500, 1000, 2000, 5000, 10000, 30000)
+)
+
+uwc_request_errors_total = Counter(
+    'uwc_request_errors_total',
+    'Total number of UWC API request errors',
+    ['endpoint', 'error_type']
+)
+
+uwc_retries_total = Counter(
+    'uwc_retries_total',
+    'Total number of UWC API request retries',
+    ['endpoint']
+)
+
 
 class MetricsCollector:
     """Centralized metrics collection and management."""
@@ -201,6 +227,31 @@ class MetricsCollector:
     def set_active_connections(self, count: int):
         """Set the number of active database connections."""
         active_connections.set(count)
+    
+    def record_uwc_request(self, endpoint: str, method: str, status_code: int, latency_ms: float):
+        """Record UWC API request metrics."""
+        uwc_requests_total.labels(
+            endpoint=endpoint,
+            method=method,
+            status=str(status_code)
+        ).inc()
+        
+        uwc_request_duration_ms.labels(
+            endpoint=endpoint,
+            method=method
+        ).observe(latency_ms)
+        
+        # Record errors
+        if status_code >= 400:
+            error_type = "client_error" if status_code < 500 else "server_error"
+            uwc_request_errors_total.labels(
+                endpoint=endpoint,
+                error_type=error_type
+            ).inc()
+    
+    def record_uwc_retry(self, endpoint: str):
+        """Record UWC API request retry."""
+        uwc_retries_total.labels(endpoint=endpoint).inc()
     
     def _normalize_route(self, route: str) -> str:
         """Normalize route for metrics by replacing dynamic segments."""
