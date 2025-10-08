@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import user, company, sales_manager, sales_rep
 from app.routes.dependencies import get_user_from_clerk_token
+from app.middleware.rbac import require_role, require_tenant_ownership
 import os
 import httpx
 import logging
@@ -98,6 +99,7 @@ async def add_user_to_organization(clerk_user_id: str, clerk_org_id: str, role: 
         return None
 
 @router.post("/")
+@require_role("exec", "manager")
 async def create_user(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Create a new user (either manager or rep)"""
     payload = await request.json()
@@ -187,7 +189,8 @@ async def create_user(request: Request, background_tasks: BackgroundTasks, db: S
     return {"success": True, "user_id": new_user.id}
 
 @router.get("/{user_id}")
-async def get_user(user_id: int, db: Session = Depends(get_db)):
+@require_role("exec", "manager", "csr", "rep")
+async def get_user(request: Request, user_id: int, db: Session = Depends(get_db)):
     """Get user details"""
     user_record = db.query(user.User).filter_by(id=user_id).first()
     if not user_record:
@@ -223,7 +226,8 @@ async def get_user(user_id: int, db: Session = Depends(get_db)):
     }
 
 @router.put("/{user_id}")
-async def update_user(user_id: int, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+@require_role("exec", "manager")
+async def update_user(request: Request, user_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Update user details"""
     payload = await request.json()
     

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, Query
 from app.database import get_db
 from app.models import call, company, user
+from app.middleware.rbac import require_role, require_tenant_ownership
 from sqlalchemy.orm import Session
 from sqlalchemy import and_ # Added for combining query conditions
 from datetime import datetime, timedelta
@@ -148,7 +149,9 @@ class RepAppointmentsResponse(BaseModel):
     rep_name: str # Name of the rep whose appointments are being shown
 
 @router.get("", response_model=RepsListResponse)
+@require_role("exec", "manager", "csr", "rep")
 async def get_company_reps(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_user_from_clerk_token)
 ):
@@ -305,7 +308,9 @@ async def get_rep_appointments(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve appointments for representative: {str(e)}")
 
 @router.post("/")
+@require_role("exec", "manager")
 async def create_sales_rep(
+    request: Request,
     name: str = Query(...),
     email: str = Query(...),
     phone_number: str = Query(...),

@@ -50,6 +50,12 @@ class Settings:
         self.UWC_VERSION = os.getenv("UWC_VERSION", "v1")
         self.USE_UWC_STAGING = os.getenv("USE_UWC_STAGING", "false").lower() in ("true", "1", "yes")
         
+        # UWC Feature Flags (gradual rollout)
+        self.ENABLE_UWC_ASR = os.getenv("ENABLE_UWC_ASR", "false").lower() in ("true", "1", "yes")
+        self.ENABLE_UWC_RAG = os.getenv("ENABLE_UWC_RAG", "false").lower() in ("true", "1", "yes")
+        self.ENABLE_UWC_TRAINING = os.getenv("ENABLE_UWC_TRAINING", "false").lower() in ("true", "1", "yes")
+        self.ENABLE_UWC_FOLLOWUPS = os.getenv("ENABLE_UWC_FOLLOWUPS", "false").lower() in ("true", "1", "yes")
+        
         # Environment
         self.ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
         
@@ -86,6 +92,10 @@ class Settings:
     
     def _validate_settings(self):
         """Validate that required settings are not placeholder values."""
+        # Skip validation in test environment
+        if self.ENVIRONMENT == "test" or os.getenv("PYTEST_CURRENT_TEST"):
+            return
+        
         required_settings = [
             ('CLERK_SECRET_KEY', self.CLERK_SECRET_KEY),
             ('TWILIO_ACCOUNT_SID', self.TWILIO_ACCOUNT_SID),
@@ -107,6 +117,15 @@ class Settings:
     def is_rate_limiting_enabled(self) -> bool:
         """Check if rate limiting is enabled (when Redis is needed)."""
         return True  # Rate limiting is always enabled in our setup
+    
+    def is_uwc_enabled(self) -> bool:
+        """Check if any UWC feature is enabled."""
+        return any([
+            self.ENABLE_UWC_ASR,
+            self.ENABLE_UWC_RAG,
+            self.ENABLE_UWC_TRAINING,
+            self.ENABLE_UWC_FOLLOWUPS
+        ])
     
     @property
     def clerk_jwks_url(self) -> str:

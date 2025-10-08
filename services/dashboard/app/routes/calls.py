@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 # Note: Delete endpoints have been moved to delete.py
 
 @router.get("/call/{call_id}")
+@require_role("exec", "manager", "csr", "rep")
 async def get_call_details(
+    request: Request,
     call_id: int,
     company_id: str,
     db: Session = Depends(get_db)
@@ -70,7 +72,8 @@ async def get_call_details(
     return call_data
 
 @router.get("/unassigned-calls")
-async def get_unassigned_calls(company_id: str, db: Session = Depends(get_db)):
+@require_role("exec", "manager")
+async def get_unassigned_calls(request: Request, company_id: str, db: Session = Depends(get_db)):
     # Use existing call query logic but filter for unassigned calls
     print(f"Fetching unassigned calls for company ID: {company_id!r}")
     
@@ -113,7 +116,11 @@ async def get_unassigned_calls(company_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/add-call")
-async def add_call(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+@require_role("exec", "manager", "csr")
+async def add_call(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)):
     params = dict(request.query_params)
     
     # Validate required fields

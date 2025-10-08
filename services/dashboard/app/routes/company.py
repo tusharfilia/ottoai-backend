@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, Query
 from app.database import get_db
 from app.models import call, company, sales_manager, sales_rep, user
+from app.middleware.rbac import require_role, require_tenant_ownership
 from sqlalchemy.orm import Session
 import os
 import httpx
@@ -149,13 +150,24 @@ async def list_clerk_organizations(limit: int = 100, offset: int = 0) -> list:
 router = APIRouter(prefix="/company", tags=["company"])
 
 @router.post("/")
+@require_role("exec")
 async def create_company(
+    request: Request,
     name: str = Query(...),
     phone_number: str = Query(...),
     address: str = Query(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db)
 ):
+    # B004 FIX: Validate that user is creating company for their own tenant
+    # The Clerk org ID will be used as company ID, so we validate it matches JWT
+    user_tenant_id = getattr(request.state, 'tenant_id', None)
+    if not user_tenant_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Tenant context not found in request"
+        )
+    
     # Check if company already exists
     existing = db.query(company.Company).filter_by(name=name).first()
     if existing:
@@ -188,6 +200,20 @@ async def create_company(
     
     # Get the Clerk organization ID from the response
     clerk_org_id = clerk_org_response["id"]
+    
+    # B004 FIX: Validate that created org ID matches user's tenant
+    # This prevents cross-tenant company creation
+    if clerk_org_id != user_tenant_id:
+        logging.warning(
+            f"Cross-tenant company creation attempt: user tenant={user_tenant_id}, "
+            f"created org={clerk_org_id}"
+        )
+        # Clean up: delete the Clerk org we just created
+        await delete_clerk_organization(clerk_org_id)
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot create company for different tenant"
+        )
     
     # Create the company record with Clerk org ID
     new_company = company.Company(
@@ -236,7 +262,12 @@ async def get_company(company_id: str, db: Session = Depends(get_db)):
     return company_record
 
 @router.put("/{company_id}")
-async def update_company(company_id: str, request: Request, db: Session = Depends(get_db)):
+@require_role("exec")
+@require_tenant_ownership("company_id")
+async def update_company(
+    request: Request,
+    company_id: str,
+    db: Session = Depends(get_db)):
     params = dict(request.query_params)
     company_record = db.query(company.Company).filter_by(id=company_id).first()
     
@@ -384,7 +415,10 @@ async def add_user_to_organization(
         )
 
 @router.post("/set-callrail-api-key/{company_id}")
+@require_role("exec")
+@require_tenant_ownership("company_id")
 async def set_callrail_api_key(
+    request: Request,
     company_id: str,
     api_key: str,
     db: Session = Depends(get_db)
@@ -411,7 +445,10 @@ async def set_callrail_api_key(
     }
 
 @router.post("/set-callrail-account-id/{company_id}")
+@require_role("exec")
+@require_tenant_ownership("company_id")
 async def set_callrail_account_id(
+    request: Request,
     company_id: str,
     account_id: str,
     db: Session = Depends(get_db)

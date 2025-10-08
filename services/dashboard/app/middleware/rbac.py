@@ -193,3 +193,4 @@ def get_user_context(request: Request) -> dict:
         "rep_id": getattr(request.state, 'rep_id', None),
         "meeting_id": getattr(request.state, 'meeting_id', None),
     }
+

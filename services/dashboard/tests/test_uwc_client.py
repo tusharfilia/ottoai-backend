@@ -384,3 +384,4 @@ class TestUWCClientErrorHandling:
                 "request_123",
                 {"data": "test"}
             )
+

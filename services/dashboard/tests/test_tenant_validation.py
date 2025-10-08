@@ -294,3 +294,4 @@ class TestTenantScopingEdgeCases:
         
         response = client.get("/api/v1/users/", headers=headers)
         assert response.status_code == 403
+

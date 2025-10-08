@@ -266,3 +266,4 @@ class TestRBACEdgeCases:
         
         response = client.get("/api/v1/users/", headers=headers)
         assert response.status_code == 403  # Should be rejected by middleware
+

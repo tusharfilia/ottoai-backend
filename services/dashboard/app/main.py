@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
 from .routes import webhooks, company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket
 from .routes.mobile_routes import mobile_router
+from .routes.webhooks import uwc as uwc_webhooks
 from .services.bland_ai import BlandAI
 from .services.missing_reports_service import check_missing_reports
 from datetime import datetime, timedelta
@@ -68,6 +69,7 @@ app.add_middleware(RateLimitMiddleware)
 app.include_router(health.router)  # Health checks first
 app.include_router(websocket.router)  # WebSocket endpoint
 app.include_router(webhooks.router)
+app.include_router(uwc_webhooks.router)  # UWC webhook handlers
 app.include_router(company.router)
 app.include_router(user.router)
 app.include_router(backend.router)

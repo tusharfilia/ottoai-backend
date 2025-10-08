@@ -263,6 +263,10 @@ class UWCClient:
                 )
             raise UWCClientError(f"Request timeout after {self.timeout}s")
         
+        except (UWCClientError, UWCAuthenticationError, UWCRateLimitError, UWCServerError):
+            # Re-raise our own exceptions without wrapping
+            raise
+        
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
             logger.exception(
@@ -471,3 +475,4 @@ def get_uwc_client() -> UWCClient:
     if _uwc_client is None:
         _uwc_client = UWCClient()
     return _uwc_client
+

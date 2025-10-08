@@ -1104,4 +1104,308 @@ For detailed operational guidance, see `docs/ops/foundations-dashboard.md` which
 - ✅ **Automated CI/CD**: GitHub Actions with complete verification
 - ✅ **Metrics Monitoring**: Real-time health and performance tracking
 - ✅ **Operations Documentation**: Complete troubleshooting and monitoring guides
+
+---
+
+## RBAC (Role-Based Access Control)
+
+### Overview
+
+Otto implements role-based access control with four roles:
+- **exec**: Full access (company settings, billing, all users, all data)
+- **manager**: Team management, reporting, analytics, user creation
+- **csr**: Call handling, follow-ups, customer data (all company calls)
+- **rep**: Own calls, own follow-ups, own schedule (no cross-rep visibility)
+
+### Protecting Endpoints
+
+Use the `@require_role()` decorator to enforce role-based permissions:
+
+```python
+from app.middleware.rbac import require_role, require_tenant_ownership
+from fastapi import Request
+
+@router.get("/admin/settings")
+@require_role("exec", "manager")
+async def admin_settings(request: Request):
+    """Only execs and managers can access."""
+    # User context available in request.state
+    user_role = request.state.user_role
+    tenant_id = request.state.tenant_id
+    user_id = request.state.user_id
+    ...
+
+@router.put("/companies/{company_id}")
+@require_role("exec")
+@require_tenant_ownership("company_id")
+async def update_company(request: Request, company_id: str):
+    """Only exec of the company can update."""
+    # Decorator validates company_id matches user's tenant_id
+    ...
+```
+
+### Role Hierarchy
+
+```
+exec (highest privileges)
+  ├─ Can access all endpoints
+  ├─ Can create/delete users and companies
+  ├─ Can modify company settings
+  └─ Can view all data across company
+
+manager
+  ├─ Can create users (not delete)
+  ├─ Can view team performance
+  ├─ Can access all calls and follow-ups
+  └─ Cannot modify company settings
+
+csr
+  ├─ Can handle calls and follow-ups
+  ├─ Can view all company calls
+  ├─ Can create/update leads
+  └─ Cannot access admin functions
+
+rep (lowest privileges)
+  ├─ Can view own calls and follow-ups
+  ├─ Can record appointments
+  ├─ Can use Ask Otto for own data
+  └─ Cannot view other reps' data
+```
+
+### Getting User Context
+
+```python
+from app.middleware.rbac import get_user_context
+
+@router.get("/my-data")
+async def get_my_data(request: Request):
+    context = get_user_context(request)
+    # Returns: {
+    #   "user_id": "user_123",
+    #   "tenant_id": "tenant_456",
+    #   "user_role": "rep",
+    #   "rep_id": "rep_789",  # Optional
+    #   "meeting_id": "meeting_012"  # Optional
+    # }
+```
+
+### RBAC Error Handling
+
+When a user attempts to access an endpoint without proper role:
+
+```json
+{
+  "detail": "Access denied. Required roles: exec, manager. User role: rep"
+}
+```
+
+HTTP Status: **403 Forbidden**
+
+All RBAC violations are logged for security auditing.
+
+---
+
+## UWC Integration (AI/ML Partner)
+
+### Overview
+
+UWC (Unified Workflow Composer) by Shunya Labs provides Otto's AI/ML capabilities:
+- **ASR**: Voice transcription (batch + real-time)
+- **RAG**: Ask Otto intelligence (vector search + LLM reasoning)
+- **Personal Clone**: Per-rep AI voice/style modeling
+- **Follow-Up AI**: Personalized message drafting
+
+### Configuration
+
+Add to `.env`:
+
+```bash
+# UWC API Configuration
+UWC_BASE_URL=https://api-dev.shunyalabs.ai
+UWC_API_KEY=your_uwc_api_key_here
+UWC_HMAC_SECRET=your_uwc_hmac_secret_here
+UWC_VERSION=v1
+USE_UWC_STAGING=true
+
+# Feature Flags (enable gradually)
+ENABLE_UWC_ASR=false
+ENABLE_UWC_RAG=false
+ENABLE_UWC_TRAINING=false
+ENABLE_UWC_FOLLOWUPS=false
+```
+
+### Using the UWC Client
+
+```python
+from app.services.uwc_client import get_uwc_client
+
+uwc = get_uwc_client()
+
+# Submit ASR batch
+result = await uwc.submit_asr_batch(
+    company_id=request.state.tenant_id,
+    request_id=request.state.trace_id,
+    audio_urls=[{"url": "https://...", "call_id": "call_123"}]
+)
+
+# Query RAG (Ask Otto)
+result = await uwc.query_rag(
+    company_id=request.state.tenant_id,
+    request_id=request.state.trace_id,
+    query="What are the most common objections?",
+    context={"user_role": request.state.user_role}
+)
+
+# Index documents
+result = await uwc.index_documents(
+    company_id=request.state.tenant_id,
+    request_id=request.state.trace_id,
+    documents=[{"document_id": "doc_123", "content": "..."}]
+)
+
+# Submit training job
+result = await uwc.submit_training_job(
+    company_id=request.state.tenant_id,
+    request_id=request.state.trace_id,
+    training_data={"rep_id": "rep_789", "media_urls": [...]}
+)
+```
+
+### UWC Webhooks
+
+Otto receives webhooks from UWC for async operations:
+
+**Endpoints:**
+- `POST /webhooks/uwc/asr/complete` - ASR batch completion
+- `POST /webhooks/uwc/rag/indexed` - Document indexing complete
+- `POST /webhooks/uwc/training/status` - Training job status update
+- `POST /webhooks/uwc/analysis/complete` - ML analysis complete
+- `POST /webhooks/uwc/followup/draft` - Follow-up draft ready
+
+**Security:**
+- All webhooks verify HMAC signatures
+- Timestamps validated (5-minute window)
+- Idempotency enforced (duplicate webhooks ignored)
+- Tenant ownership validated
+
+### Local Development with Mock UWC
+
+For local development without UWC staging access:
+
+```bash
+# Terminal 1: Start mock UWC server
+python tests/mocks/uwc_mock_server.py
+
+# Terminal 2: Configure Otto to use mock
+export UWC_BASE_URL=http://localhost:8001
+export UWC_API_KEY=mock_key
+export ENABLE_UWC_ASR=true
+export ENABLE_UWC_RAG=true
+
+# Run Otto API
+uvicorn app.main:app --reload
+
+# Terminal 3: Run integration tests
+pytest tests/integration/test_uwc_integration.py -v -m integration
+```
+
+### UWC Integration Testing
+
+```bash
+# Run all UWC integration tests
+pytest tests/integration/test_uwc_integration.py -v -m integration
+
+# Run UWC client unit tests
+pytest tests/test_uwc_client.py -v
+
+# Test webhook handlers
+pytest tests/integration/test_uwc_integration.py::test_uwc_webhook_asr_complete -v
+```
+
+### Feature Flag Rollout
+
+Enable UWC features gradually:
+
+**Week 2-3: ASR Only**
+```bash
+ENABLE_UWC_ASR=true
+ENABLE_UWC_RAG=false
+ENABLE_UWC_TRAINING=false
+ENABLE_UWC_FOLLOWUPS=false
+```
+
+**Week 4-5: Add RAG**
+```bash
+ENABLE_UWC_ASR=true
+ENABLE_UWC_RAG=true
+ENABLE_UWC_TRAINING=false
+ENABLE_UWC_FOLLOWUPS=false
+```
+
+**Week 6-7: Add Training & Follow-ups**
+```bash
+ENABLE_UWC_ASR=true
+ENABLE_UWC_RAG=true
+ENABLE_UWC_TRAINING=true
+ENABLE_UWC_FOLLOWUPS=true
+```
+
+### Monitoring UWC Integration
+
+**Prometheus Metrics:**
+```
+uwc_requests_total{endpoint, method, status}
+uwc_request_duration_ms{endpoint, method}
+uwc_request_errors_total{endpoint, error_type}
+uwc_retries_total{endpoint}
+```
+
+**Grafana Dashboard Queries:**
+```promql
+# UWC API latency (p95)
+histogram_quantile(0.95, rate(uwc_request_duration_ms_bucket[5m]))
+
+# UWC error rate
+rate(uwc_request_errors_total[5m])
+
+# UWC retry rate
+rate(uwc_retries_total[5m])
+```
+
+### Troubleshooting UWC Integration
+
+**Connection Issues:**
+```bash
+# Test UWC connectivity
+curl -H "Authorization: Bearer $UWC_API_KEY" $UWC_BASE_URL/health
+
+# Check UWC client logs
+fly logs | grep "UWC\|uwc"
+```
+
+**Webhook Issues:**
+```bash
+# Check webhook receipts
+fly logs | grep "webhooks/uwc"
+
+# Verify HMAC secret
+fly secrets list | grep UWC_HMAC_SECRET
+
+# Test webhook locally
+curl -X POST http://localhost:8000/webhooks/uwc/asr/complete \
+  -H "Content-Type: application/json" \
+  -d '{"job_id": "test", "company_id": "test", "call_id": "test", "status": "completed"}'
+```
+
+**Performance Issues:**
+```bash
+# Check UWC API latency
+curl -w "@curl-format.txt" -H "Authorization: Bearer $UWC_API_KEY" \
+  $UWC_BASE_URL/uwc/v1/rag/query -d '{"query": "test"}'
+
+# Monitor metrics
+curl http://localhost:8000/metrics | grep uwc_request_duration
+```
+
+---
 - ✅ **Security Validation**: Multi-tenant isolation and access control testing
