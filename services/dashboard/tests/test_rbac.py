@@ -1,12 +1,12 @@
 """
-Tests for B002: RBAC decorators applied on Exec/Manager/CSR/Rep routes.
-Enumerate endpoints that require roles; add decorators & tests.
+Tests for B002: RBAC decorators with 3-role system.
+Tests role-based access control: leadership, csr, rep.
 Add 403 tests for role mismatches.
 """
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.middleware.rbac import require_role, require_tenant_ownership, get_user_context, RBACError
+from app.middleware.rbac import require_role, require_tenant_ownership, get_user_context, RBACError, ROLE_LEADERSHIP, ROLE_CSR, ROLE_REP
 from fastapi import Request, HTTPException
 import jwt
 from datetime import datetime, timedelta
@@ -15,13 +15,14 @@ from app.config import settings
 
 @pytest.fixture
 def auth_headers_factory():
-    """Factory for generating auth headers with different roles."""
+    """Factory for generating auth headers with different roles (3-role system)."""
     def _factory(tenant_id: str = "tenant_123", user_id: str = "user_123", role: str = "rep"):
+        # Valid roles: leadership, csr, rep
         payload = {
             "sub": user_id,
             "user_id": user_id,
             "org_id": tenant_id,
-            "org_role": role,
+            "org_role": role,  # leadership, csr, or rep
             "exp": (datetime.utcnow() + timedelta(hours=1)).timestamp(),
             "iat": datetime.utcnow().timestamp(),
         }
@@ -38,26 +39,25 @@ def client():
 
 
 class TestRBACDecorator:
-    """Test suite for RBAC decorator functionality."""
+    """Test suite for RBAC decorator functionality (3-role system)."""
     
-    def test_exec_role_can_access_exec_endpoint(self, client, auth_headers_factory):
-        """Test that exec role can access exec-only endpoints."""
-        headers = auth_headers_factory(role="exec")
+    def test_leadership_role_can_access_leadership_endpoint(self, client, auth_headers_factory):
+        """Test that leadership role can access leadership-only endpoints."""
+        headers = auth_headers_factory(role="leadership")
         
-        # Test an endpoint that should require exec role
-        # Note: This is a placeholder - actual endpoint will be added
+        # Test an endpoint that should require leadership role
         response = client.get("/health", headers=headers)  # Using health as placeholder
         assert response.status_code == 200
     
-    def test_manager_role_can_access_manager_endpoint(self, client, auth_headers_factory):
-        """Test that manager role can access manager endpoints."""
-        headers = auth_headers_factory(role="manager")
+    def test_csr_role_can_access_csr_endpoint(self, client, auth_headers_factory):
+        """Test that csr role can access csr endpoints."""
+        headers = auth_headers_factory(role="csr")
         
         response = client.get("/health", headers=headers)
         assert response.status_code == 200
     
-    def test_rep_role_cannot_access_exec_endpoint(self, client, auth_headers_factory):
-        """Test that rep role cannot access exec-only endpoints."""
+    def test_rep_role_cannot_access_leadership_endpoint(self, client, auth_headers_factory):
+        """Test that rep role cannot access leadership-only endpoints."""
         headers = auth_headers_factory(role="rep")
         
         # This test will be updated when we have actual RBAC-protected endpoints
@@ -65,8 +65,8 @@ class TestRBACDecorator:
         response = client.get("/health", headers=headers)
         assert response.status_code == 200  # Health is public
     
-    def test_csr_role_cannot_access_manager_endpoint(self, client, auth_headers_factory):
-        """Test that CSR role cannot access manager-only endpoints."""
+    def test_csr_role_cannot_access_leadership_endpoint(self, client, auth_headers_factory):
+        """Test that CSR role cannot access leadership-only endpoints."""
         headers = auth_headers_factory(role="csr")
         
         response = client.get("/health", headers=headers)
@@ -90,24 +90,23 @@ class TestRBACDecorator:
 
 
 class TestRBACRoleHierarchy:
-    """Test role hierarchy and permissions."""
+    """Test role hierarchy and permissions (3-role system)."""
     
     ROLE_HIERARCHY = {
-        "exec": ["exec", "manager", "csr", "rep"],  # Can access all
-        "manager": ["manager", "csr", "rep"],  # Can access manager, csr, rep
-        "csr": ["csr", "rep"],  # Can access csr, rep
+        "leadership": ["leadership", "csr", "rep"],  # Can access all
+        "csr": ["csr", "rep"],  # Can access csr, rep  
         "rep": ["rep"]  # Can only access rep
     }
     
-    def test_exec_has_highest_privileges(self, auth_headers_factory):
-        """Test that exec role has access to all role levels."""
-        headers = auth_headers_factory(role="exec")
-        # Exec should be able to access any endpoint
+    def test_leadership_has_highest_privileges(self, auth_headers_factory):
+        """Test that leadership role has access to all role levels."""
+        headers = auth_headers_factory(role="leadership")
+        # Leadership should be able to access any endpoint
         assert headers["Authorization"].startswith("Bearer ")
     
-    def test_manager_has_mid_level_privileges(self, auth_headers_factory):
-        """Test that manager role has appropriate access."""
-        headers = auth_headers_factory(role="manager")
+    def test_csr_has_mid_level_privileges(self, auth_headers_factory):
+        """Test that csr role has appropriate access."""
+        headers = auth_headers_factory(role="csr")
         assert headers["Authorization"].startswith("Bearer ")
     
     def test_rep_has_lowest_privileges(self, auth_headers_factory):
@@ -187,7 +186,7 @@ class TestGetUserContext:
 
 
 class TestRBACIntegration:
-    """Integration tests for RBAC with actual endpoints."""
+    """Integration tests for RBAC with actual endpoints (3-role system)."""
     
     def test_rbac_logs_violations(self, client, auth_headers_factory, caplog):
         """Test that RBAC violations are logged."""
@@ -212,14 +211,14 @@ class TestRBACIntegration:
     
     def test_multiple_roles_allowed(self, client, auth_headers_factory):
         """Test endpoints that allow multiple roles."""
-        # Test with exec
-        headers_exec = auth_headers_factory(role="exec")
-        response = client.get("/health", headers=headers_exec)
+        # Test with leadership
+        headers_leadership = auth_headers_factory(role="leadership")
+        response = client.get("/health", headers=headers_leadership)
         assert response.status_code == 200
         
-        # Test with manager
-        headers_manager = auth_headers_factory(role="manager")
-        response = client.get("/health", headers=headers_manager)
+        # Test with csr
+        headers_csr = auth_headers_factory(role="csr")
+        response = client.get("/health", headers=headers_csr)
         assert response.status_code == 200
         
         # Test with rep
@@ -234,7 +233,7 @@ class TestRBACEdgeCases:
     def test_case_insensitive_role_matching(self, auth_headers_factory):
         """Test that role matching handles case variations."""
         # Roles should be normalized to lowercase
-        headers = auth_headers_factory(role="EXEC")
+        headers = auth_headers_factory(role="LEADERSHIP")
         assert headers["Authorization"].startswith("Bearer ")
     
     def test_unknown_role_defaults_to_rep(self, client):
@@ -252,12 +251,29 @@ class TestRBACEdgeCases:
         response = client.get("/health", headers=headers)
         assert response.status_code == 200
     
+    def test_clerk_admin_role_maps_to_leadership(self, client):
+        """Test that Clerk admin/manager roles map to leadership."""
+        for clerk_role in ["admin", "org:admin", "exec", "manager"]:
+            payload = {
+                "sub": "user_123",
+                "org_id": "tenant_123",
+                "org_role": clerk_role,
+                "exp": (datetime.utcnow() + timedelta(hours=1)).timestamp(),
+                "iat": datetime.utcnow().timestamp(),
+            }
+            token = jwt.encode(payload, settings.CLERK_SECRET_KEY, algorithm="HS256")
+            headers = {"Authorization": f"Bearer {token}"}
+            
+            # All should map to "leadership" internally
+            response = client.get("/health", headers=headers)
+            assert response.status_code == 200
+    
     def test_rbac_with_expired_token(self, client):
         """Test that RBAC checks fail gracefully with expired tokens."""
         payload = {
             "sub": "user_123",
             "org_id": "tenant_123",
-            "org_role": "exec",
+            "org_role": "leadership",
             "exp": (datetime.utcnow() - timedelta(hours=1)).timestamp(),  # Expired
             "iat": (datetime.utcnow() - timedelta(hours=2)).timestamp(),
         }

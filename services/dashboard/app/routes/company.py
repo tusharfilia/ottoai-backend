@@ -150,7 +150,7 @@ async def list_clerk_organizations(limit: int = 100, offset: int = 0) -> list:
 router = APIRouter(prefix="/company", tags=["company"])
 
 @router.post("/")
-@require_role("exec")
+@require_role("leadership")
 async def create_company(
     request: Request,
     name: str = Query(...),
@@ -262,7 +262,7 @@ async def get_company(company_id: str, db: Session = Depends(get_db)):
     return company_record
 
 @router.put("/{company_id}")
-@require_role("exec")
+@require_role("leadership")
 @require_tenant_ownership("company_id")
 async def update_company(
     request: Request,
@@ -415,7 +415,7 @@ async def add_user_to_organization(
         )
 
 @router.post("/set-callrail-api-key/{company_id}")
-@require_role("exec")
+@require_role("leadership")
 @require_tenant_ownership("company_id")
 async def set_callrail_api_key(
     request: Request,
@@ -445,7 +445,7 @@ async def set_callrail_api_key(
     }
 
 @router.post("/set-callrail-account-id/{company_id}")
-@require_role("exec")
+@require_role("leadership")
 @require_tenant_ownership("company_id")
 async def set_callrail_account_id(
     request: Request,

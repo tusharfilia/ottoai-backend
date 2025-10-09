@@ -1111,71 +1111,79 @@ For detailed operational guidance, see `docs/ops/foundations-dashboard.md` which
 
 ### Overview
 
-Otto implements role-based access control with four roles:
-- **exec**: Full access (company settings, billing, all users, all data)
-- **manager**: Team management, reporting, analytics, user creation
-- **csr**: Call handling, follow-ups, customer data (all company calls)
-- **rep**: Own calls, own follow-ups, own schedule (no cross-rep visibility)
+Otto implements role-based access control with three roles:
+- **leadership**: Business owners and sales managers (full management access, company-wide visibility)
+- **csr**: Customer service representatives (call handling, booking, lead management)
+- **rep**: Sales representatives (own appointments, follow-ups, learning via Feed)
+
+**Note**: Leadership role combines owners and managers for simplicity. Can be split into separate `exec` and `manager` roles later if needed (see migration guide).
 
 ### Protecting Endpoints
 
 Use the `@require_role()` decorator to enforce role-based permissions:
 
 ```python
-from app.middleware.rbac import require_role, require_tenant_ownership
+from app.middleware.rbac import require_role, require_tenant_ownership, ROLE_LEADERSHIP, ROLE_CSR, ROLE_REP
 from fastapi import Request
 
 @router.get("/admin/settings")
-@require_role("exec", "manager")
+@require_role("leadership")
 async def admin_settings(request: Request):
-    """Only execs and managers can access."""
+    """Only leadership (owners/managers) can access."""
     # User context available in request.state
-    user_role = request.state.user_role
+    user_role = request.state.user_role  # "leadership", "csr", or "rep"
     tenant_id = request.state.tenant_id
     user_id = request.state.user_id
     ...
 
 @router.put("/companies/{company_id}")
-@require_role("exec")
+@require_role("leadership")
 @require_tenant_ownership("company_id")
 async def update_company(request: Request, company_id: str):
-    """Only exec of the company can update."""
+    """Only leadership of the company can update."""
     # Decorator validates company_id matches user's tenant_id
+    ...
+
+@router.post("/calls")
+@require_role("leadership", "csr")
+async def create_call(request: Request):
+    """Leadership and CSRs can create calls."""
+    # Reps cannot create calls directly
     ...
 ```
 
 ### Role Hierarchy
 
 ```
-exec (highest privileges)
-  ├─ Can access all endpoints
+leadership (highest privileges)
+  ├─ Business owners + Sales managers (merged)
   ├─ Can create/delete users and companies
-  ├─ Can modify company settings
-  └─ Can view all data across company
+  ├─ Can modify company settings (API keys, integrations)
+  ├─ Can view all data across company
+  ├─ Full access to Executive Web/Mobile apps
+  └─ Company-wide visibility and control
 
-manager
-  ├─ Can create users (not delete)
-  ├─ Can view team performance
-  ├─ Can access all calls and follow-ups
-  └─ Cannot modify company settings
+csr (middle tier)
+  ├─ Customer service representatives / Receptionists
+  ├─ Can handle calls and book appointments
+  ├─ Can view all company leads (shared work)
+  ├─ Can see own performance stats only
+  ├─ Access to Receptionist Web App only
+  └─ Cannot access admin functions or rep domain
 
-csr
-  ├─ Can handle calls and follow-ups
-  ├─ Can view all company calls
-  ├─ Can create/update leads
-  └─ Cannot access admin functions
-
-rep (lowest privileges)
-  ├─ Can view own calls and follow-ups
-  ├─ Can record appointments
-  ├─ Can use Ask Otto for own data
-  └─ Cannot view other reps' data
+rep (focused access)
+  ├─ Field sales representatives
+  ├─ Can view own calls, appointments, follow-ups
+  ├─ Can record appointments and post to Feed
+  ├─ Can learn from company Feed (shared posts)
+  ├─ Access to Sales Rep Mobile App only
+  └─ Cannot view other reps' private data
 ```
 
 ### Getting User Context
 
 ```python
-from app.middleware.rbac import get_user_context
+from app.middleware.rbac import get_user_context, ROLE_LEADERSHIP, ROLE_CSR, ROLE_REP
 
 @router.get("/my-data")
 async def get_my_data(request: Request):
@@ -1183,7 +1191,7 @@ async def get_my_data(request: Request):
     # Returns: {
     #   "user_id": "user_123",
     #   "tenant_id": "tenant_456",
-    #   "user_role": "rep",
+    #   "user_role": "leadership" | "csr" | "rep",
     #   "rep_id": "rep_789",  # Optional
     #   "meeting_id": "meeting_012"  # Optional
     # }
@@ -1195,13 +1203,20 @@ When a user attempts to access an endpoint without proper role:
 
 ```json
 {
-  "detail": "Access denied. Required roles: exec, manager. User role: rep"
+  "detail": "Access denied. Required roles: leadership. User role: rep"
 }
 ```
 
 HTTP Status: **403 Forbidden**
 
 All RBAC violations are logged for security auditing.
+
+### Migration to 4 Roles
+
+If you need to split leadership into separate `exec` and `manager` roles:
+- See `/docs/workspace/RBAC_MIGRATION_PLAN.md`
+- Migration time: ~3 hours
+- Difficulty: ⭐⭐ Easy (reversible, low risk)
 
 ---
 

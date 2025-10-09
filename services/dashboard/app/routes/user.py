@@ -99,7 +99,7 @@ async def add_user_to_organization(clerk_user_id: str, clerk_org_id: str, role: 
         return None
 
 @router.post("/")
-@require_role("exec", "manager")
+@require_role("leadership")
 async def create_user(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Create a new user (either manager or rep)"""
     payload = await request.json()
@@ -189,7 +189,7 @@ async def create_user(request: Request, background_tasks: BackgroundTasks, db: S
     return {"success": True, "user_id": new_user.id}
 
 @router.get("/{user_id}")
-@require_role("exec", "manager", "csr", "rep")
+@require_role("leadership", "csr", "rep")
 async def get_user(request: Request, user_id: int, db: Session = Depends(get_db)):
     """Get user details"""
     user_record = db.query(user.User).filter_by(id=user_id).first()
@@ -226,7 +226,7 @@ async def get_user(request: Request, user_id: int, db: Session = Depends(get_db)
     }
 
 @router.put("/{user_id}")
-@require_role("exec", "manager")
+@require_role("leadership")
 async def update_user(request: Request, user_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Update user details"""
     payload = await request.json()

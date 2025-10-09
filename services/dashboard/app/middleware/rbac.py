@@ -1,6 +1,11 @@
 """
 Role-Based Access Control (RBAC) decorators for OttoAI backend.
 Enforces role-based permissions on protected endpoints.
+
+Otto uses 3 roles:
+- leadership: Business owners and sales managers (full management access)
+- csr: Customer service representatives (call handling, booking)
+- rep: Sales representatives (appointments, follow-ups)
 """
 import logging
 from functools import wraps
@@ -9,6 +14,14 @@ from fastapi import Request, HTTPException
 from app.obs.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Role definitions
+ROLE_LEADERSHIP = "leadership"  # Owners + Managers (merged for simplicity)
+ROLE_CSR = "csr"                # Receptionists
+ROLE_REP = "rep"                # Sales reps
+
+# Valid roles
+VALID_ROLES = {ROLE_LEADERSHIP, ROLE_CSR, ROLE_REP}
 
 
 class RBACError(HTTPException):

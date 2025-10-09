@@ -125,7 +125,20 @@ class TenantContextMiddleware:
             
             # Extract user_id and role
             user_id = decoded_token.get("sub") or decoded_token.get("user_id")
-            user_role = decoded_token.get("org_role") or decoded_token.get("role") or "rep"
+            clerk_role = decoded_token.get("org_role") or decoded_token.get("role") or "rep"
+            
+            # Map Clerk roles to Otto's 3-role system
+            # Clerk may use: admin, org:admin, exec, manager, csr, rep
+            # Otto uses: leadership, csr, rep
+            role_mapping = {
+                "admin": "leadership",
+                "org:admin": "leadership",
+                "exec": "leadership",
+                "manager": "leadership",
+                "csr": "csr",
+                "rep": "rep"
+            }
+            user_role = role_mapping.get(clerk_role.lower(), "rep")  # Default to rep if unknown
             
             return {
                 "tenant_id": tenant_id,

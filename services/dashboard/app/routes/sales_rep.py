@@ -149,7 +149,7 @@ class RepAppointmentsResponse(BaseModel):
     rep_name: str # Name of the rep whose appointments are being shown
 
 @router.get("", response_model=RepsListResponse)
-@require_role("exec", "manager", "csr", "rep")
+@require_role("leadership", "csr", "rep")
 async def get_company_reps(
     request: Request,
     db: Session = Depends(get_db),
@@ -308,7 +308,7 @@ async def get_rep_appointments(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve appointments for representative: {str(e)}")
 
 @router.post("/")
-@require_role("exec", "manager")
+@require_role("leadership")
 async def create_sales_rep(
     request: Request,
     name: str = Query(...),
