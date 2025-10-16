@@ -385,12 +385,12 @@ async def call_complete_webhook(call_data: dict, background_tasks: BackgroundTas
     print(f"Cancelled: {call_record.cancelled}")
     print(f"Rescheduled: {call_record.rescheduled}")
     print(f"Missed Call: {call_record.missed_call}")
-        print(f"Still Deciding: {call_record.still_deciding}")
-        print(f"Bought: {call_record.bought}")
-        print(f"Assigned Rep ID: {call_record.assigned_rep_id}")
-        print(f"========================")
-        
-        return {"status": "processed", "call_id": call_record.call_id}
+    print(f"Still Deciding: {call_record.still_deciding}")
+    print(f"Bought: {call_record.bought}")
+    print(f"Assigned Rep ID: {call_record.assigned_rep_id}")
+    print(f"========================")
+    
+    return {"status": "processed", "call_id": call_record.call_id}
     
     # Apply idempotency protection
     return with_idempotency(
