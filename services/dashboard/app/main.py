@@ -3,7 +3,7 @@ from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
-from .routes import webhooks, company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket
+from .routes import webhooks, company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics
 from .routes.mobile_routes import mobile_router
 from .routes.webhooks import uwc as uwc_webhooks
 from .services.bland_ai import BlandAI
@@ -22,10 +22,12 @@ from app.obs.tracing import setup_tracing, instrument_fastapi, instrument_reques
 from app.obs.middleware import ObservabilityMiddleware
 from app.obs.errors import register_error_handlers
 from app.obs.metrics import metrics
+from app.obs.sentry import setup_sentry
 
 # Setup observability
 setup_logging()
 setup_tracing()
+setup_sentry()  # Initialize Sentry for error tracking
 instrument_requests()
 instrument_sqlalchemy()
 
@@ -70,6 +72,12 @@ app.include_router(health.router)  # Health checks first
 app.include_router(websocket.router)  # WebSocket endpoint
 app.include_router(webhooks.router)
 app.include_router(uwc_webhooks.router)  # UWC webhook handlers
+app.include_router(rag.router)  # RAG/Ask Otto endpoints
+app.include_router(analysis.router)  # Call analysis endpoints
+app.include_router(followups.router)  # Follow-up drafts endpoints
+app.include_router(clones.router)  # Personal clone training endpoints
+app.include_router(gdpr.router)  # GDPR compliance endpoints
+app.include_router(metrics.router)  # Prometheus metrics for Grafana
 app.include_router(company.router)
 app.include_router(user.router)
 app.include_router(backend.router)

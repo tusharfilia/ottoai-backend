@@ -1,24 +1,18 @@
-# fly.toml app configuration file generated for tv-mvp on 2025-02-20T18:38:21-08:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
-app = 'tv-mvp'
+app = 'tv-mvp-test'
 primary_region = 'phx'
 
 [build]
+  dockerfile = "Dockerfile"
 
 [processes]
-  api = "uvicorn app.main:app --host 0.0.0.0 --port 8080 --forwarded-allow-ips=*"
-  worker = "celery -A app.services.celery_tasks worker --loglevel=INFO"
-  beat = "celery -A app.services.celery_tasks beat --loglevel=INFO"
+  api = "bash -lc 'alembic stamp base && alembic upgrade head || true; uvicorn app.main:app --host 0.0.0.0 --port 8080 --forwarded-allow-ips=*'"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = "off"        # keep for migration step, then change to "stop"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 1          # keep for migration step, then change to 0
   processes = ['api']
 
 [[vm]]
@@ -27,19 +21,7 @@ primary_region = 'phx'
   cpus = 1
   processes = ['api']
 
-[[vm]]
-  memory = '512mb'
-  cpu_kind = 'shared'
-  cpus = 1
-  processes = ['worker']
 
-[[vm]]
-  memory = '256mb'
-  cpu_kind = 'shared'
-  cpus = 1
-  processes = ['beat']
-  
-[deploy]
-  release_command = "alembic upgrade head"
-
-[scheduled_tasks]
+# Temporarily disable release_command while we fix DB state
+# [deploy]
+#   release_command = "alembic upgrade head"

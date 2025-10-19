@@ -23,8 +23,10 @@ logger = logging.getLogger(__name__)
 
 # Initialize Deepgram client with environment variable
 from app.config import settings
+from app.services.uwc_client import UWCClient
 
 deepgram = Deepgram(settings.DEEPGRAM_API_KEY)
+uwc_client = UWCClient()
 
 # In-memory storage for transcripts (replace with database in production)
 transcripts = {}
@@ -213,22 +215,58 @@ def format_timestamp(seconds: float) -> str:
 
 async def process_audio(recording_id: str, audio_path: str, db: Session):
     """
-    Process audio with Deepgram and store results
+    Process audio with UWC ASR (primary) or Deepgram (fallback) and store results
     """
     try:
-        with open(audio_path, "rb") as audio:
-            source = {"buffer": audio, "mimetype": "audio/wav"}
-            response = await deepgram.transcription.prerecorded(
-                source,
-                {
-                    "model": "nova-2",
-                    "punctuate": True,
-                    "diarize": True,
-                    "smart_format": True,
-                    "numerals": True,
-                    "paragraphs": True
-                }
-            )
+        response = None
+        
+        # Try UWC ASR first if enabled
+        if settings.ENABLE_UWC_ASR:
+            try:
+                # Upload audio to S3 first for UWC to access
+                from app.services.s3_service import s3_service
+                audio_url = await s3_service.upload_audio_file(audio_path, f"transcriptions/{recording_id}.wav")
+                
+                # Get company_id from recording session or use default
+                company_id = transcripts.get(recording_id, {}).get("company_id", "default")
+                request_id = f"mobile-{recording_id}"
+                
+                logger.info(f"Attempting UWC ASR transcription for recording {recording_id}")
+                uwc_response = await uwc_client.transcribe_audio(
+                    company_id=company_id,
+                    request_id=request_id,
+                    audio_url=audio_url,
+                    language="en-US",
+                    model="nova-2"
+                )
+                
+                # Convert UWC response to Deepgram-like format for compatibility
+                if uwc_response and "results" in uwc_response:
+                    response = uwc_response
+                    logger.info(f"UWC ASR transcription successful for recording {recording_id}")
+                else:
+                    raise Exception("UWC ASR returned invalid response format")
+                    
+            except Exception as e:
+                logger.warning(f"UWC ASR failed for recording {recording_id}, falling back to Deepgram: {str(e)}")
+                # Fall through to Deepgram fallback
+        
+        # Fallback to Deepgram if UWC is disabled or failed
+        if response is None:
+            logger.info(f"Using Deepgram transcription for recording {recording_id}")
+            with open(audio_path, "rb") as audio:
+                source = {"buffer": audio, "mimetype": "audio/wav"}
+                response = await deepgram.transcription.prerecorded(
+                    source,
+                    {
+                        "model": "nova-2",
+                        "punctuate": True,
+                        "diarize": True,
+                        "smart_format": True,
+                        "numerals": True,
+                        "paragraphs": True
+                    }
+                )
             
             # Log the raw Deepgram response
             logger.info(f"Raw Deepgram response for recording {recording_id}: {json.dumps(response)}")

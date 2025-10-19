@@ -1,0 +1,148 @@
+# Grafana Alert Rules for Otto Backend
+
+groups:
+  - name: otto_api_alerts
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "High API error rate detected"
+          description: "API error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          runbook_url: "https://docs.otto.ai/runbooks/high-error-rate"
+      
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            rate(http_request_duration_seconds_bucket[5m])
+          ) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High API latency detected"
+          description: "P95 latency is {{ $value | humanizeDuration }} (threshold: 500ms)"
+          runbook_url: "https://docs.otto.ai/runbooks/high-latency"
+      
+      - alert: DatabaseConnectionsHigh
+        expr: db_pool_connections_active > 50
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High database connection count"
+          description: "Active connections: {{ $value }} (threshold: 50)"
+          runbook_url: "https://docs.otto.ai/runbooks/db-connections"
+      
+      - alert: UWCAPIFailureRate
+        expr: |
+          (
+            sum(rate(uwc_api_calls_total{status="error"}[5m]))
+            /
+            sum(rate(uwc_api_calls_total[5m]))
+          ) * 100 > 10
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+          service: uwc
+        annotations:
+          summary: "UWC API experiencing high failure rate"
+          description: "UWC failure rate: {{ $value | humanizePercentage }} (threshold: 10%)"
+          runbook_url: "https://docs.otto.ai/runbooks/uwc-failures"
+      
+      - alert: AskOttoSlowQueries
+        expr: |
+          histogram_quantile(0.95,
+            rate(rag_query_duration_seconds_bucket[5m])
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+          feature: ask_otto
+        annotations:
+          summary: "Ask Otto queries are slow"
+          description: "P95 query time: {{ $value | humanizeDuration }} (threshold: 2s)"
+          runbook_url: "https://docs.otto.ai/runbooks/slow-rag"
+      
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes > 1e9
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage: {{ $value | humanize1024 }}B (threshold: 1GB)"
+          runbook_url: "https://docs.otto.ai/runbooks/high-memory"
+      
+      - alert: HealthCheckFailing
+        expr: up{job="otto-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Otto Backend is DOWN"
+          description: "Health check failing for {{ $labels.instance }}"
+          runbook_url: "https://docs.otto.ai/runbooks/service-down"
+
+  - name: otto_business_alerts
+    interval: 1m
+    rules:
+      - alert: LowAskOttoUsage
+        expr: rate(rag_queries_total[1h]) < 1
+        for: 30m
+        labels:
+          severity: info
+          team: product
+        annotations:
+          summary: "Low Ask Otto usage"
+          description: "Only {{ $value | humanize }} queries/hour (expected: >5)"
+      
+      - alert: HighFollowUpDraftFailures
+        expr: |
+          (
+            sum(rate(followup_drafts_total{status="error"}[1h]))
+            /
+            sum(rate(followup_drafts_total[1h]))
+          ) * 100 > 20
+        for: 15m
+        labels:
+          severity: warning
+          team: ai
+        annotations:
+          summary: "High follow-up draft failure rate"
+          description: "{{ $value | humanizePercentage }} of drafts failing"
+      
+      - alert: PersonalCloneTrainingStuck
+        expr: |
+          sum(clone_training_jobs_total{status="processing"} 
+            and on(job_id) (time() - clone_training_started_timestamp) > 3600
+          ) > 0
+        for: 10m
+        labels:
+          severity: warning
+          team: ai
+        annotations:
+          summary: "Personal clone training stuck"
+          description: "Training job has been processing for > 1 hour"
+
+# Notification routing (configure in Grafana)
+# 1. critical alerts → PagerDuty + Slack
+# 2. warning alerts → Slack only
+# 3. info alerts → Daily digest email
+
+

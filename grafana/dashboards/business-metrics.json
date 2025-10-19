@@ -1,0 +1,256 @@
+{
+  "dashboard": {
+    "title": "Otto Backend - Business Metrics",
+    "tags": ["otto", "business", "analytics"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "1m",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Ask Otto Queries per Hour",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(rag_queries_total[1h])",
+            "legendFormat": "Queries/hour",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "yaxes": [
+          {
+            "label": "queries/hour",
+            "format": "short"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Call Analyses per Hour",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(call_analyses_total[1h])",
+            "legendFormat": "Analyses/hour",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "yaxes": [
+          {
+            "label": "analyses/hour",
+            "format": "short"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Follow-Up Drafts Generated",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(followup_drafts_total[1h])",
+            "legendFormat": "Drafts/hour",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 4,
+        "title": "Personal Clone Training Jobs",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(clone_training_jobs_total) by (status)",
+            "legendFormat": "{{status}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      },
+      {
+        "id": 5,
+        "title": "Documents Uploaded (Last 24h)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "increase(documents_uploaded_total[24h])",
+            "legendFormat": "Documents",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 16
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area"
+        }
+      },
+      {
+        "id": 6,
+        "title": "Ask Otto Average Latency",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(rag_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "P95 Latency",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 16
+        },
+        "options": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 1, "color": "yellow"},
+              {"value": 2, "color": "red"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Call Analysis Average Latency",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(call_analysis_duration_seconds_bucket[5m]))",
+            "legendFormat": "P95 Latency",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 16
+        },
+        "options": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 2, "color": "yellow"},
+              {"value": 5, "color": "red"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "UWC API Success Rate (%)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "(sum(rate(uwc_api_calls_total{status=\"success\"}[5m])) / sum(rate(uwc_api_calls_total[5m]))) * 100",
+            "legendFormat": "Success Rate",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 16
+        },
+        "options": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "red"},
+              {"value": 95, "color": "yellow"},
+              {"value": 99, "color": "green"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Top Endpoints by Request Volume",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "topk(10, sum(rate(http_requests_total[1h])) by (endpoint, method))",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 20
+        }
+      },
+      {
+        "id": 10,
+        "title": "Database Query Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(db_query_duration_seconds_sum[5m]) / rate(db_query_duration_seconds_count[5m])",
+            "legendFormat": "Avg Query Time",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 20
+        },
+        "yaxes": [
+          {
+            "label": "seconds",
+            "format": "s"
+          }
+        ]
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m", "15m"]
+    }
+  }
+}
+
+

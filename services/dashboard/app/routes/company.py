@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, Query, Path
 from app.database import get_db
 from app.models import call, company, sales_manager, sales_rep, user
 from app.middleware.rbac import require_role, require_tenant_ownership
@@ -147,15 +147,85 @@ async def list_clerk_organizations(limit: int = 100, offset: int = 0) -> list:
         logging.error(f"Error listing Clerk organizations: {str(e)}")
         return []
 
-router = APIRouter(prefix="/company", tags=["company"])
+router = APIRouter(prefix="/company", tags=["Companies"])
 
-@router.post("/")
+@router.post(
+    "/",
+    summary="Create a new company",
+    description="""
+    Creates a new company in both Otto's database and Clerk (authentication provider).
+    
+    **Process**:
+    1. Creates organization in Clerk with auto-generated slug
+    2. Uses Clerk org ID as company ID in Otto database
+    3. Validates that user is creating company for their own tenant
+    
+    **Required Role**: leadership (exec role only)
+    
+    **Security**: Prevents cross-tenant company creation - user can only create company for their own org_id
+    
+    **Auto-Generated**:
+    - company_id: Set to Clerk organization ID
+    - slug: Generated from company name (e.g., "RoofCo LLC" → "roofco-llc")
+    - created_at: Auto-set to current timestamp
+    """,
+    responses={
+        200: {
+            "description": "Company created successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": "success",
+                        "company_id": "org_2a1b3c4d5e6f7g8h",
+                        "clerk_org_id": "org_2a1b3c4d5e6f7g8h"
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Company already exists or invalid input",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "duplicate": {
+                            "value": {"detail": "Company with this name already exists"}
+                        },
+                        "clerk_error": {
+                            "value": {
+                                "status": "error",
+                                "message": "Failed to create Clerk organization",
+                                "details": "Clerk API error: ..."
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Missing authentication or tenant context",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Tenant context not found in request"}
+                }
+            }
+        },
+        403: {
+            "description": "Cross-tenant company creation attempt",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Cannot create company for different tenant"}
+                }
+            }
+        }
+    },
+    tags=["Companies"]
+)
 @require_role("leadership")
 async def create_company(
     request: Request,
-    name: str = Query(...),
-    phone_number: str = Query(...),
-    address: str = Query(None),
+    name: str = Query(..., description="Company name (e.g., 'RoofCo LLC')"),
+    phone_number: str = Query(..., description="Primary company phone number (e.g., '+1-555-123-4567')"),
+    address: str = Query(None, description="Company address (optional)"),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db)
 ):
@@ -254,33 +324,139 @@ async def get_user_company(username: str, db: Session = Depends(get_db)):
      # If username not found in any table
      raise HTTPException(status_code=404, detail="User not found in users, sales managers, or sales representatives")
  
-@router.get("/{company_id}")
-async def get_company(company_id: str, db: Session = Depends(get_db)):
+@router.get(
+    "/{company_id}",
+    summary="Get company details",
+    description="""
+    Retrieves complete details for a specific company.
+    
+    **Returns**:
+    - Company ID (same as Clerk org ID)
+    - Company name
+    - Phone number
+    - Address (if set)
+    - CallRail API key (if configured)
+    - CallRail account ID (if configured)
+    - Creation and update timestamps
+    
+    **Tenant Scoping**: Automatically filtered to user's company via middleware
+    
+    **Use Case**: Display company profile, settings page
+    """,
+    responses={
+        200: {
+            "description": "Company found and returned",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "org_2a1b3c4d5e6f7g8h",
+                        "name": "RoofCo LLC",
+                        "phone_number": "+1-555-123-4567",
+                        "address": "123 Main St, Phoenix, AZ 85001",
+                        "callrail_api_key": "abc123...xyz",
+                        "callrail_account_id": "ACC123456",
+                        "created_at": "2025-01-15T10:30:00Z",
+                        "updated_at": "2025-10-10T14:22:00Z"
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Company not found",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Company not found"}
+                }
+            }
+        }
+    },
+    tags=["Companies"]
+)
+async def get_company(
+    company_id: str = Path(..., description="The unique company ID (Clerk org ID)"),
+    db: Session = Depends(get_db)
+):
     company_record = db.query(company.Company).filter_by(id=company_id).first()
     if not company_record:
         raise HTTPException(status_code=404, detail="Company not found")
     return company_record
 
-@router.put("/{company_id}")
+@router.put(
+    "/{company_id}",
+    summary="Update company details",
+    description="""
+    Updates company information (name, phone, address).
+    
+    **Required Role**: leadership (exec only)
+    
+    **Security**: 
+    - Validates user owns this company (tenant ownership check)
+    - Cannot modify other companies' data
+    
+    **Updatable Fields** (all optional):
+    - name: Company name
+    - phone_number: Primary phone
+    - address: Physical address
+    
+    **Note**: CallRail API key and account ID use separate endpoints for security
+    
+    **Use Case**: Company settings page, profile updates
+    """,
+    responses={
+        200: {
+            "description": "Company updated successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": "success",
+                        "company_id": "org_2a1b3c4d5e6f7g8h"
+                    }
+                }
+            }
+        },
+        403: {
+            "description": "Access denied - user doesn't own this company",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Access denied. You can only modify your own company."}
+                }
+            }
+        },
+        404: {
+            "description": "Company not found",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Company not found"}
+                }
+            }
+        }
+    },
+    tags=["Companies"]
+)
 @require_role("leadership")
 @require_tenant_ownership("company_id")
 async def update_company(
     request: Request,
-    company_id: str,
-    db: Session = Depends(get_db)):
-    params = dict(request.query_params)
+    company_id: str = Path(..., description="The unique company ID to update"),
+    name: str = Query(None, description="Updated company name"),
+    phone_number: str = Query(None, description="Updated phone number"),
+    address: str = Query(None, description="Updated address"),
+    db: Session = Depends(get_db)
+):
     company_record = db.query(company.Company).filter_by(id=company_id).first()
     
     if not company_record:
         raise HTTPException(status_code=404, detail="Company not found")
     
-    if params.get("name"):
-        company_record.name = params.get("name")
-    if params.get("phone_number"):
-        company_record.phone_number = params.get("phone_number")
-    if params.get("address"):
-        company_record.address = params.get("address")
+    # Update fields if provided
+    if name:
+        company_record.name = name
+    if phone_number:
+        company_record.phone_number = phone_number
+    if address:
+        company_record.address = address
     
+    company_record.updated_at = datetime.utcnow()
     db.commit()
     return {"status": "success", "company_id": company_id}
 
@@ -414,13 +590,66 @@ async def add_user_to_organization(
             detail=f"Error adding user to organization: {str(e)}"
         )
 
-@router.post("/set-callrail-api-key/{company_id}")
+@router.post(
+    "/set-callrail-api-key/{company_id}",
+    summary="Configure CallRail API key",
+    description="""
+    Sets the CallRail API key for call tracking integration.
+    
+    **Purpose**: Enables Otto to fetch call data from CallRail API
+    
+    **Required Role**: leadership (exec only)
+    
+    **Security**: 
+    - API key stored securely in database
+    - Tenant ownership validated
+    - Cannot set key for other companies
+    
+    **How to Get CallRail API Key**:
+    1. Log into CallRail dashboard
+    2. Go to Settings → Integrations → API
+    3. Generate new API token
+    4. Copy and paste here
+    
+    **Use Case**: Initial setup, API key rotation
+    """,
+    responses={
+        200: {
+            "description": "API key updated successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "message": "CallRail API key updated successfully"
+                    }
+                }
+            }
+        },
+        403: {
+            "description": "Access denied - user doesn't own this company",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Access denied"}
+                }
+            }
+        },
+        404: {
+            "description": "Company not found",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Company not found"}
+                }
+            }
+        }
+    },
+    tags=["Companies", "Integrations"]
+)
 @require_role("leadership")
 @require_tenant_ownership("company_id")
 async def set_callrail_api_key(
     request: Request,
-    company_id: str,
-    api_key: str,
+    company_id: str = Path(..., description="The unique company ID"),
+    api_key: str = Query(..., description="CallRail API token from CallRail dashboard"),
     db: Session = Depends(get_db)
 ):
     """

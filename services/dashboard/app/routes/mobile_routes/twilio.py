@@ -16,6 +16,7 @@ import json
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.twiml.voice_response import VoiceResponse, Dial
 from app.services.idempotency import with_idempotency
+from app.services.uwc_client import UWCClient
 
 # Configure logging
 logging.basicConfig(
@@ -26,6 +27,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Initialize UWC client
+uwc_client = UWCClient()
 
 # Twilio credentials from environment variables
 from app.config import settings
@@ -348,37 +352,90 @@ async def recording_callback(
             return Response(status_code=200)
         
         try:
-            # Send to Deepgram for transcription
-            logger.info("Sending recording to Deepgram for transcription")
+            transcription_data = None
             
-            # Prepare the headers with authentication
-            headers = {
-                "Authorization": f"Token {DEEPGRAM_API_KEY}",
-                "Content-Type": "audio/mp3"
-            }
+            # Try UWC ASR first if enabled
+            if settings.ENABLE_UWC_ASR:
+                try:
+                    # Upload audio to S3 first for UWC to access
+                    from app.services.s3_service import s3_service
+                    import tempfile
+                    import os as os_module
+                    
+                    # Save recording to temporary file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as temp_file:
+                        temp_file.write(recording_response.content)
+                        temp_file_path = temp_file.name
+                    
+                    try:
+                        # Upload to S3
+                        audio_url = await s3_service.upload_audio_file(temp_file_path, f"transcriptions/{recording_sid}.mp3")
+                        
+                        # Get company_id from tenant_id
+                        company_id = tenant_id or "default"
+                        request_id = f"twilio-{recording_sid}"
+                        
+                        logger.info(f"Attempting UWC ASR transcription for recording {recording_sid}")
+                        uwc_response = await uwc_client.transcribe_audio(
+                            company_id=company_id,
+                            request_id=request_id,
+                            audio_url=audio_url,
+                            language="en-US",
+                            model="nova-2"
+                        )
+                        
+                        # Convert UWC response to Deepgram-like format for compatibility
+                        if uwc_response and "results" in uwc_response:
+                            transcription_data = uwc_response
+                            logger.info(f"UWC ASR transcription successful for recording {recording_sid}")
+                        else:
+                            raise Exception("UWC ASR returned invalid response format")
+                            
+                    finally:
+                        # Clean up temporary file
+                        if os_module.path.exists(temp_file_path):
+                            os_module.unlink(temp_file_path)
+                            
+                except Exception as e:
+                    logger.warning(f"UWC ASR failed for recording {recording_sid}, falling back to Deepgram: {str(e)}")
+                    # Fall through to Deepgram fallback
             
-            # Set up transcription parameters
-            params = {
-                "punctuate": "true",
-                "diarize": "true", 
-                "model": "nova-2",
-                "smart_format": "true",
-                "utterances": "true"
-            }
+            # Fallback to Deepgram if UWC is disabled or failed
+            if transcription_data is None:
+                logger.info(f"Using Deepgram transcription for recording {recording_sid}")
+                
+                # Prepare the headers with authentication
+                headers = {
+                    "Authorization": f"Token {DEEPGRAM_API_KEY}",
+                    "Content-Type": "audio/mp3"
+                }
+                
+                # Set up transcription parameters
+                params = {
+                    "punctuate": "true",
+                    "diarize": "true", 
+                    "model": "nova-2",
+                    "smart_format": "true",
+                    "utterances": "true"
+                }
+                
+                # Send recording to Deepgram
+                deepgram_url = f"{settings.DEEPGRAM_API_BASE_URL}/v1/listen"
+                deepgram_response = requests.post(
+                    deepgram_url,
+                    headers=headers,
+                    params=params,
+                    data=recording_response.content
+                )
+                
+                if deepgram_response.ok:
+                    transcription_data = deepgram_response.json()
+                else:
+                    raise Exception(f"Deepgram transcription failed: {deepgram_response.status_code}, {deepgram_response.text}")
             
-            # Send recording to Deepgram
-            deepgram_url = f"{settings.DEEPGRAM_API_BASE_URL}/v1/listen"
-            deepgram_response = requests.post(
-                deepgram_url,
-                headers=headers,
-                params=params,
-                data=recording_response.content
-            )
-            
-            # Process Deepgram response
-            if deepgram_response.ok:
-                transcription_data = deepgram_response.json()
-                logger.info(f"Received Deepgram response: {transcription_data}")
+            # Process transcription response (from either UWC or Deepgram)
+            if transcription_data:
+                logger.info(f"Received transcription response: {transcription_data}")
                 
                 # Extract transcript
                 try:

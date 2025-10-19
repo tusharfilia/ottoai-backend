@@ -1,0 +1,266 @@
+{
+  "dashboard": {
+    "title": "Otto Backend - API Performance",
+    "tags": ["otto", "api", "performance"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Request Rate (requests/sec)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total[1m])",
+            "legendFormat": "{{method}} {{endpoint}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "yaxes": [
+          {
+            "label": "requests/sec",
+            "format": "short"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Error Rate (%)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"4..|5..\"}[1m]) / rate(http_requests_total[1m]) * 100",
+            "legendFormat": "Error Rate",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "yaxes": [
+          {
+            "label": "% errors",
+            "format": "percent"
+          }
+        ],
+        "alert": {
+          "name": "High Error Rate",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [5],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": ["A", "5m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ],
+          "message": "API error rate above 5% - investigate immediately"
+        }
+      },
+      {
+        "id": 3,
+        "title": "Request Latency (P50, P95, P99)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P95",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P99",
+            "refId": "C"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "yaxes": [
+          {
+            "label": "seconds",
+            "format": "s"
+          }
+        ],
+        "alert": {
+          "name": "High Latency P95",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [0.5],
+                "type": "gt"
+              },
+              "query": {
+                "params": ["B", "5m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ],
+          "message": "API P95 latency above 500ms - performance degraded"
+        }
+      },
+      {
+        "id": 4,
+        "title": "Active Requests",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "http_requests_in_progress",
+            "legendFormat": "Active Requests",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "yaxes": [
+          {
+            "label": "count",
+            "format": "short"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Requests by Status Code",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=\"200\"}[1m])",
+            "legendFormat": "200 OK",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(http_requests_total{status=\"400\"}[1m])",
+            "legendFormat": "400 Bad Request",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(http_requests_total{status=\"401\"}[1m])",
+            "legendFormat": "401 Unauthorized",
+            "refId": "C"
+          },
+          {
+            "expr": "rate(http_requests_total{status=\"403\"}[1m])",
+            "legendFormat": "403 Forbidden",
+            "refId": "D"
+          },
+          {
+            "expr": "rate(http_requests_total{status=\"404\"}[1m])",
+            "legendFormat": "404 Not Found",
+            "refId": "E"
+          },
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[1m])",
+            "legendFormat": "5xx Server Errors",
+            "refId": "F"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        }
+      },
+      {
+        "id": 6,
+        "title": "Database Connection Pool",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "db_pool_connections_active",
+            "legendFormat": "Active Connections",
+            "refId": "A"
+          },
+          {
+            "expr": "db_pool_connections_idle",
+            "legendFormat": "Idle Connections",
+            "refId": "B"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        },
+        "yaxes": [
+          {
+            "label": "connections",
+            "format": "short"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Top 10 Slowest Endpoints",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "topk(10, histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) by (endpoint))",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m"]
+    },
+    "templating": {
+      "list": []
+    },
+    "annotations": {
+      "list": []
+    }
+  }
+}
+
+

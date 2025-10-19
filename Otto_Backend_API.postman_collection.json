@@ -1,0 +1,814 @@
+{
+  "info": {
+    "name": "Otto Backend API",
+    "_postman_id": "otto-backend-api-v1",
+    "description": "Complete API collection for Otto AI Platform - For outsourced frontend developers\n\n**Base URLs**:\n- Local: http://localhost:8000\n- Staging: https://otto-backend-staging.fly.dev\n- Production: https://api.otto.ai\n\n**Authentication**:\nAll requests (except health check) require JWT token from Clerk:\n```\nAuthorization: Bearer <jwt_token>\n```\n\n**Tenant Context**:\nAutomatically extracted from JWT token - no manual tenant_id needed!\n\n**Documentation**:\n- Swagger UI: {{BASE_URL}}/docs\n- ReDoc: {{BASE_URL}}/redoc\n- OpenAPI Spec: {{BASE_URL}}/openapi.json",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{JWT_TOKEN}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "BASE_URL",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "JWT_TOKEN",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "COMPANY_ID",
+      "value": "org_2a1b3c4d5e6f7g8h",
+      "type": "string"
+    },
+    {
+      "key": "USER_ID",
+      "value": "user_123abc",
+      "type": "string"
+    },
+    {
+      "key": "CALL_ID",
+      "value": "12345",
+      "type": "string"
+    },
+    {
+      "key": "REP_ID",
+      "value": "rep_001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health & System",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/health",
+              "host": ["{{BASE_URL}}"],
+              "path": ["health"]
+            },
+            "description": "Check if backend is running and healthy. No authentication required."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{BASE_URL}}/health"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"status\": \"healthy\",\n  \"checks\": {\n    \"database\": true,\n    \"redis\": true\n  }\n}"
+            }
+          ]
+        }
+      ],
+      "description": "System health and status endpoints"
+    },
+    {
+      "name": "2. Companies",
+      "item": [
+        {
+          "name": "Create Company",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/company/?name=RoofCo LLC&phone_number=+1-555-123-4567&address=123 Main St, Phoenix, AZ 85001",
+              "host": ["{{BASE_URL}}"],
+              "path": ["company", ""],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "RoofCo LLC",
+                  "description": "Company name"
+                },
+                {
+                  "key": "phone_number",
+                  "value": "+1-555-123-4567",
+                  "description": "Primary phone"
+                },
+                {
+                  "key": "address",
+                  "value": "123 Main St, Phoenix, AZ 85001",
+                  "description": "Company address (optional)"
+                }
+              ]
+            },
+            "description": "**Required Role**: leadership (exec)\n\nCreates new company in Otto + Clerk. Returns Clerk org ID as company_id."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"status\": \"success\",\n  \"company_id\": \"org_2a1b3c4d5e6f7g8h\",\n  \"clerk_org_id\": \"org_2a1b3c4d5e6f7g8h\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Company Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/company/{{COMPANY_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["company", "{{COMPANY_ID}}"]
+            },
+            "description": "Retrieve complete company details including CallRail configuration."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"id\": \"org_2a1b3c4d5e6f7g8h\",\n  \"name\": \"RoofCo LLC\",\n  \"phone_number\": \"+1-555-123-4567\",\n  \"address\": \"123 Main St, Phoenix, AZ 85001\",\n  \"callrail_api_key\": \"abc123xyz\",\n  \"callrail_account_id\": \"ACC123456\",\n  \"created_at\": \"2025-01-15T10:30:00Z\",\n  \"updated_at\": \"2025-10-10T14:22:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Company",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/company/{{COMPANY_ID}}?name=RoofCo LLC&phone_number=+1-555-999-8888",
+              "host": ["{{BASE_URL}}"],
+              "path": ["company", "{{COMPANY_ID}}"],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "RoofCo LLC",
+                  "description": "Updated name (optional)"
+                },
+                {
+                  "key": "phone_number",
+                  "value": "+1-555-999-8888",
+                  "description": "Updated phone (optional)"
+                },
+                {
+                  "key": "address",
+                  "value": "",
+                  "description": "Updated address (optional)",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "**Required Role**: leadership\n\nUpdate company details. All fields optional."
+          },
+          "response": []
+        },
+        {
+          "name": "Configure CallRail API Key",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/company/set-callrail-api-key/{{COMPANY_ID}}?api_key=YOUR_CALLRAIL_API_KEY",
+              "host": ["{{BASE_URL}}"],
+              "path": ["company", "set-callrail-api-key", "{{COMPANY_ID}}"],
+              "query": [
+                {
+                  "key": "api_key",
+                  "value": "YOUR_CALLRAIL_API_KEY",
+                  "description": "CallRail API token from dashboard"
+                }
+              ]
+            },
+            "description": "**Required Role**: leadership\n\nSets CallRail API key for integration. Get key from CallRail dashboard → Settings → API."
+          },
+          "response": []
+        },
+        {
+          "name": "Configure CallRail Account ID",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/company/set-callrail-account-id/{{COMPANY_ID}}?account_id=ACC123456",
+              "host": ["{{BASE_URL}}"],
+              "path": ["company", "set-callrail-account-id", "{{COMPANY_ID}}"],
+              "query": [
+                {
+                  "key": "account_id",
+                  "value": "ACC123456",
+                  "description": "CallRail account ID"
+                }
+              ]
+            },
+            "description": "**Required Role**: leadership\n\nSets CallRail account ID for webhook routing."
+          },
+          "response": []
+        }
+      ],
+      "description": "Company management endpoints"
+    },
+    {
+      "name": "3. Users",
+      "item": [
+        {
+          "name": "Create User",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/user/?username=john.smith&role=rep&name=John Smith&phone_number=+1-555-111-2222&email=john@roofco.com",
+              "host": ["{{BASE_URL}}"],
+              "path": ["user", ""],
+              "query": [
+                {
+                  "key": "username",
+                  "value": "john.smith"
+                },
+                {
+                  "key": "role",
+                  "value": "rep",
+                  "description": "Role: leadership, csr, rep"
+                },
+                {
+                  "key": "name",
+                  "value": "John Smith"
+                },
+                {
+                  "key": "phone_number",
+                  "value": "+1-555-111-2222"
+                },
+                {
+                  "key": "email",
+                  "value": "john@roofco.com"
+                }
+              ]
+            },
+            "description": "**Required Role**: leadership\n\nCreates user in Otto + Clerk. Auto-assigns to company from JWT."
+          },
+          "response": []
+        },
+        {
+          "name": "Get User Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/user/{{USER_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["user", "{{USER_ID}}"]
+            },
+            "description": "**Required Role**: leadership, csr, rep\n\nReps can only view their own profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Update User",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/user/{{USER_ID}}?name=John A. Smith&phone_number=+1-555-222-3333",
+              "host": ["{{BASE_URL}}"],
+              "path": ["user", "{{USER_ID}}"],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "John A. Smith"
+                },
+                {
+                  "key": "phone_number",
+                  "value": "+1-555-222-3333"
+                }
+              ]
+            },
+            "description": "**Required Role**: leadership\n\nUpdate user details."
+          },
+          "response": []
+        }
+      ],
+      "description": "User management endpoints"
+    },
+    {
+      "name": "4. Calls & Transcripts",
+      "item": [
+        {
+          "name": "List Calls",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/calls?limit=50&offset=0",
+              "host": ["{{BASE_URL}}"],
+              "path": ["calls"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "**Required Role**: leadership, csr, rep\n\nReps only see their own calls. Auto-filtered by tenant."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Call Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/call/{{CALL_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["call", "{{CALL_ID}}"]
+            },
+            "description": "**Required Role**: leadership, csr, rep\n\nReturns call details including transcript, analysis, and metadata."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"call_id\": 12345,\n  \"phone\": \"+1-555-123-4567\",\n  \"customer_name\": \"Jane Doe\",\n  \"duration_seconds\": 320,\n  \"transcript\": \"Hello, this is RoofCo...\",\n  \"status\": \"completed\",\n  \"analysis\": {\n    \"objections\": [\"price\", \"timeline\"],\n    \"sentiment_score\": 0.78,\n    \"coaching_tips\": [\"Set agenda earlier\"]\n  },\n  \"created_at\": \"2025-10-10T14:30:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Add Call (Manual)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+1-555-123-4567\",\n  \"customer_name\": \"Jane Doe\",\n  \"address\": \"456 Oak St, Phoenix, AZ\",\n  \"status\": \"qualified\",\n  \"assigned_rep_id\": \"rep_001\",\n  \"notes\": \"Interested in roof replacement\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/add-call",
+              "host": ["{{BASE_URL}}"],
+              "path": ["add-call"]
+            },
+            "description": "**Required Role**: leadership, csr\n\nManually add call record (CSRs use this when booking appointments)."
+          },
+          "response": []
+        }
+      ],
+      "description": "Call and transcript management"
+    },
+    {
+      "name": "5. AI Features - Ask Otto",
+      "item": [
+        {
+          "name": "Ask Otto Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What are the most common objections this week?\",\n  \"context_scope\": [\"calls\", \"appointments\"],\n  \"filters\": {\n    \"date_range\": {\n      \"from\": \"2025-10-01\",\n      \"to\": \"2025-10-10\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/rag/query",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "rag", "query"]
+            },
+            "description": "**Required Role**: All roles\n\nAsk Otto natural language questions. Auto-scoped to user's role and company."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"answer\": \"The top 3 objections this week were: 1) Price (40%), 2) Need other quotes (28%), 3) Need to think about it (22%)\",\n  \"citations\": [\n    {\n      \"source\": \"calls\",\n      \"call_id\": 12345,\n      \"excerpt\": \"Customer mentioned price concern...\"\n    }\n  ],\n  \"confidence\": 0.92,\n  \"latency_ms\": 1850\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Ask Otto History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/rag/queries?limit=20",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "rag", "queries"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "**Required Role**: All roles\n\nRetrieve user's Ask Otto query history."
+          },
+          "response": []
+        }
+      ],
+      "description": "RAG / Ask Otto intelligence features"
+    },
+    {
+      "name": "6. AI Features - Call Analysis",
+      "item": [
+        {
+          "name": "Analyze Call",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/calls/{{CALL_ID}}/analyze",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "calls", "{{CALL_ID}}", "analyze"]
+            },
+            "description": "**Required Role**: leadership, csr, rep\n\nTrigger AI analysis on call (objections, coaching, SOP compliance). Async - results come via webhook."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"status\": \"processing\",\n  \"job_id\": \"uwc_job_abc123\",\n  \"message\": \"Analysis started. Results will be available via webhook.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Call Analysis Results",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/calls/{{CALL_ID}}/analysis",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "calls", "{{CALL_ID}}", "analysis"]
+            },
+            "description": "**Required Role**: leadership, csr, rep\n\nRetrieve completed AI analysis for call."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"call_id\": 12345,\n  \"objections\": [\"price\", \"timeline\"],\n  \"objection_details\": [\n    {\n      \"type\": \"price\",\n      \"timestamp\": 145.2,\n      \"quote\": \"That seems expensive...\"\n    }\n  ],\n  \"sentiment_score\": 0.72,\n  \"coaching_tips\": [\n    {\n      \"tip\": \"Set agenda earlier to build trust\",\n      \"priority\": \"high\"\n    }\n  ],\n  \"rehash_score\": 7.5,\n  \"sop_compliance\": [\n    {\"stage\": \"connect\", \"status\": \"completed\", \"score\": 9},\n    {\"stage\": \"agenda\", \"status\": \"skipped\", \"score\": 0}\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Batch Analyze Calls",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"call_ids\": [12345, 12346, 12347]\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/calls/analyze-batch",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "calls", "analyze-batch"]
+            },
+            "description": "**Required Role**: leadership\n\nTrigger analysis on multiple calls at once."
+          },
+          "response": []
+        }
+      ],
+      "description": "AI-powered call analysis"
+    },
+    {
+      "name": "7. AI Features - Follow-Ups",
+      "item": [
+        {
+          "name": "Generate Follow-Up Draft",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"call_id\": 12345,\n  \"draft_type\": \"sms\",\n  \"tone\": \"professional\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/followups/draft",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "followups", "draft"]
+            },
+            "description": "**Required Role**: leadership, csr, rep\n\nGenerate AI follow-up message draft based on call context.\n\n**Draft Types**: sms, email, call_script\n**Tones**: professional, friendly, urgent"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"draft_id\": \"draft_xyz123\",\n  \"draft_text\": \"Hi Jane, this is John from RoofCo. I wanted to follow up on your roof replacement inquiry. We can schedule an inspection this week if you're available. Would Tuesday or Thursday work better for you?\",\n  \"draft_type\": \"sms\",\n  \"tone\": \"professional\",\n  \"char_count\": 187,\n  \"is_approved\": false\n}"
+            }
+          ]
+        },
+        {
+          "name": "List Follow-Up Drafts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/followups/drafts?status=pending",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "followups", "drafts"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending",
+                  "description": "Filter: pending, approved, sent"
+                }
+              ]
+            },
+            "description": "**Required Role**: leadership, csr, rep\n\nList all follow-up drafts. Reps see only their own."
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Follow-Up Draft",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/followups/drafts/draft_xyz123/approve",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "followups", "drafts", "draft_xyz123", "approve"]
+            },
+            "description": "**Required Role**: leadership, rep (own drafts)\n\nApprove draft for sending. Required before send."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Follow-Up",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/followups/drafts/draft_xyz123/send",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "followups", "drafts", "draft_xyz123", "send"]
+            },
+            "description": "**Required Role**: leadership, rep (own drafts)\n\nSend approved follow-up to customer."
+          },
+          "response": []
+        }
+      ],
+      "description": "AI-powered follow-up generation and management"
+    },
+    {
+      "name": "8. AI Features - Personal Clone",
+      "item": [
+        {
+          "name": "Train Personal Clone",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rep_id\": \"rep_001\",\n  \"training_call_ids\": [12345, 12346, 12347],\n  \"training_media_urls\": [\n    {\n      \"url\": \"s3://otto-media/rep_001/video1.mp4\",\n      \"type\": \"video\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/clone/train",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "clone", "train"]
+            },
+            "description": "**Required Role**: leadership, rep (own clone)\n\nStart training personal AI clone from call recordings and videos."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"job_id\": \"clone_job_abc123\",\n  \"status\": \"processing\",\n  \"estimated_completion\": \"2025-10-15T16:00:00Z\",\n  \"message\": \"Clone training started. You'll be notified when complete.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Clone Training Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/clone/{{REP_ID}}/status",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "clone", "{{REP_ID}}", "status"]
+            },
+            "description": "**Required Role**: leadership, rep (own clone)\n\nCheck training progress and quality score."
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"rep_id\": \"rep_001\",\n  \"status\": \"completed\",\n  \"model_id\": \"clone_model_xyz789\",\n  \"quality_score\": 87,\n  \"training_duration_minutes\": 45,\n  \"completed_at\": \"2025-10-15T15:42:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Clone Training History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/clone/{{REP_ID}}/history",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "clone", "{{REP_ID}}", "history"]
+            },
+            "description": "**Required Role**: leadership, rep (own clone)\n\nView all training attempts for this rep."
+          },
+          "response": []
+        }
+      ],
+      "description": "Personal AI clone training and management"
+    },
+    {
+      "name": "9. Document Management",
+      "item": [
+        {
+          "name": "Upload Document for RAG",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "/path/to/sales_sop.pdf"
+                },
+                {
+                  "key": "document_type",
+                  "value": "sop",
+                  "type": "text"
+                },
+                {
+                  "key": "description",
+                  "value": "Updated sales SOP 2025",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/rag/documents/upload",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "rag", "documents", "upload"]
+            },
+            "description": "**Required Role**: leadership\n\nUpload document for Ask Otto indexing.\n\n**Supported Types**: PDF, DOCX, TXT, MD\n**Max Size**: 50MB\n**Document Types**: sop, script, objection_handler, product_info, training_material"
+          },
+          "response": []
+        },
+        {
+          "name": "List Documents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/rag/documents?document_type=sop",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "rag", "documents"],
+              "query": [
+                {
+                  "key": "document_type",
+                  "value": "sop",
+                  "description": "Filter by type (optional)"
+                }
+              ]
+            },
+            "description": "**Required Role**: leadership\n\nList all indexed documents."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Document",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/rag/documents/doc_abc123",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api", "v1", "rag", "documents", "doc_abc123"]
+            },
+            "description": "**Required Role**: leadership\n\nDelete document and remove from RAG index."
+          },
+          "response": []
+        }
+      ],
+      "description": "Document upload and management for RAG"
+    },
+    {
+      "name": "10. Webhooks (Inbound)",
+      "item": [
+        {
+          "name": "CallRail Webhook",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"call_id\": \"CR123456\",\n  \"customer_phone_number\": \"+15551234567\",\n  \"duration\": 320,\n  \"recording_url\": \"https://callrail.com/recording/xyz\",\n  \"transcript\": \"Hello, this is...\",\n  \"direction\": \"inbound\",\n  \"answered\": true\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/webhooks/callrail",
+              "host": ["{{BASE_URL}}"],
+              "path": ["webhooks", "callrail"]
+            },
+            "description": "**No Auth Required** (verified by signature)\n\nCallRail sends call data here after each call completes."
+          },
+          "response": []
+        },
+        {
+          "name": "UWC ASR Complete Webhook",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-UWC-Signature",
+                "value": "hmac_signature_here"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"job_id\": \"uwc_job_abc123\",\n  \"call_id\": 12345,\n  \"transcript\": \"Full transcript text...\",\n  \"speaker_labels\": [...],\n  \"confidence_score\": 0.94,\n  \"processing_time_ms\": 2340\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/webhooks/uwc/asr-complete",
+              "host": ["{{BASE_URL}}"],
+              "path": ["webhooks", "uwc", "asr-complete"]
+            },
+            "description": "**No Auth Required** (verified by HMAC)\n\nUWC sends transcription results here."
+          },
+          "response": []
+        }
+      ],
+      "description": "Webhook endpoints (for external systems to call)"
+    }
+  ]
+}
+
+

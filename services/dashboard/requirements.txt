@@ -31,3 +31,8 @@ opentelemetry-instrumentation-celery==0.41b0  # Celery instrumentation
 opentelemetry-instrumentation-requests==0.41b0  # Requests instrumentation
 opentelemetry-instrumentation-sqlalchemy==0.41b0  # SQLAlchemy instrumentation
 websockets==11.0.3  # WebSocket support for FastAPI
+sentry-sdk[fastapi]==1.38.0  # Error tracking and monitoring
+boto3==1.29.7  # AWS S3 for file storage
+botocore==1.32.7  # AWS core library
+factory-boy==3.3.0  # Test data factories
+locust==2.19.0  # Load testing

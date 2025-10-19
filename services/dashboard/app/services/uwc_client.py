@@ -344,6 +344,44 @@ class UWCClient:
             payload
         )
     
+    # ASR Single Transcription (Mock API compatible)
+    async def transcribe_audio(
+        self,
+        company_id: str,
+        request_id: str,
+        audio_url: str,
+        language: str = "en-US",
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Transcribe a single audio file using UWC ASR (compatible with Shunya mock API).
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            audio_url: Publicly accessible audio URL
+            language: Language code (default: en-US)
+            model: Optional ASR model identifier
+        
+        Returns:
+            Transcription response with transcript, confidence, language, and duration
+        """
+        payload = {
+            "audio_url": audio_url,
+            "language": language,
+        }
+        if model:
+            payload["model"] = model
+        
+        # Shunya mock API path is /api/v1/asr/transcribe
+        return await self._make_request(
+            "POST",
+            "/api/v1/asr/transcribe",
+            company_id,
+            request_id,
+            payload
+        )
+    
     # RAG Query
     async def query_rag(
         self,
@@ -459,6 +497,54 @@ class UWCClient:
         return await self._make_request(
             "POST",
             "/uwc/v1/training/submit",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    # Follow-up Draft Generation
+    async def generate_followup_draft(
+        self,
+        company_id: str,
+        request_id: str,
+        rep_id: str,
+        call_context: Dict[str, Any],
+        draft_type: str = "sms",
+        tone: str = "professional",
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate personalized follow-up draft for a rep.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            rep_id: Sales rep ID to generate draft for
+            call_context: Context about the call (customer info, objections, etc.)
+            draft_type: Type of draft (sms, email, call_script)
+            tone: Tone of the message (professional, friendly, urgent)
+            options: Optional generation options (length, style, etc.)
+        
+        Returns:
+            Follow-up draft response with content and metadata
+        """
+        payload = {
+            "request_id": request_id,
+            "company_id": company_id,
+            "rep_id": rep_id,
+            "call_context": call_context,
+            "draft_type": draft_type,
+            "tone": tone,
+            "options": options or {
+                "max_length": 160 if draft_type == "sms" else 500,
+                "include_personalization": True,
+                "include_callback_request": True
+            }
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/uwc/v1/followups/generate",
             company_id,
             request_id,
             payload

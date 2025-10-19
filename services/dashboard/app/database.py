@@ -15,7 +15,16 @@ DEBUG_SQL = os.getenv("DEBUG_SQL", "false").lower() == "true"
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-engine = create_engine(DATABASE_URL, echo=DEBUG_SQL)
+# Production-ready connection pool configuration
+engine = create_engine(
+    DATABASE_URL,
+    echo=DEBUG_SQL,
+    pool_size=20,  # Normal connections (adjust based on load)
+    max_overflow=40,  # Burst capacity (total = 60 connections max)
+    pool_timeout=30,  # Wait 30s for connection before failing
+    pool_recycle=1800,  # Recycle connections every 30 minutes
+    pool_pre_ping=True,  # Verify connections before use (prevents stale connections)
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
@@ -79,7 +88,23 @@ def add_column(engine, table_name, column):
 # Create tables
 def init_db():
     # Import all models here so that Base knows about them
-    from .models import call, sales_rep, sales_manager, service, scheduled_call, company
+    from .models import (
+        call, 
+        sales_rep, 
+        sales_manager, 
+        service, 
+        scheduled_call, 
+        company,
+        user,
+        transcript_analysis,
+        call_transcript,
+        call_analysis,
+        rag_document,
+        rag_query,
+        followup_draft,
+        personal_clone_job,
+        audit_log
+    )
     
     inspector = inspect(engine)
     
@@ -93,7 +118,16 @@ def init_db():
         ("sales_managers", sales_manager.SalesManager),
         ("services", service.Service),
         ("scheduled_calls", scheduled_call.ScheduledCall),
-        ("companies", company.Company)  # Add companies table
+        ("companies", company.Company),
+        ("users", user.User),
+        ("transcript_analyses", transcript_analysis.TranscriptAnalysis),
+        ("call_transcripts", call_transcript.CallTranscript),
+        ("call_analysis", call_analysis.CallAnalysis),
+        ("rag_documents", rag_document.RAGDocument),
+        ("rag_queries", rag_query.RAGQuery),
+        ("followup_drafts", followup_draft.FollowUpDraft),
+        ("personal_clone_jobs", personal_clone_job.PersonalCloneJob),
+        ("audit_logs", audit_log.AuditLog)
     ]:
         existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
         model_columns = model.__table__.columns

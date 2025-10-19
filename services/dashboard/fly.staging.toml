@@ -1,0 +1,22 @@
+app = "tv-mvp-staging"
+primary_region = "phx"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  api = "bash -lc 'alembic stamp base && alembic upgrade head || true; uvicorn app.main:app --host 0.0.0.0 --port 8080 --forwarded-allow-ips=*'"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["api"]
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
+  processes = ["api"]

@@ -1,0 +1,180 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [main, develop, 'feat/**']
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      # PostgreSQL for database tests
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: otto_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      # Redis for rate limiting and pub/sub tests
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          cd ottoai-backend/services/dashboard
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements_test.txt
+      
+      - name: Set up environment variables
+        run: |
+          cd ottoai-backend/services/dashboard
+          cat > .env << EOF
+          DATABASE_URL=postgresql://test:test@localhost:5432/otto_test
+          REDIS_URL=redis://localhost:6379/0
+          CLERK_SECRET_KEY=test_secret_key
+          CLERK_PUBLISHABLE_KEY=test_pub_key
+          CLERK_ISSUER=https://test.clerk.accounts.dev
+          CLERK_FRONTEND_ORIGIN=https://test.clerk.accounts.dev
+          TWILIO_ACCOUNT_SID=test_account_sid
+          TWILIO_AUTH_TOKEN=test_auth_token
+          TWILIO_FROM_NUMBER=+15555555555
+          CALLRAIL_API_KEY=test_api_key
+          BLAND_API_KEY=test_api_key
+          DEEPGRAM_API_KEY=test_api_key
+          OPENAI_API_KEY=test_api_key
+          ENVIRONMENT=test
+          LOG_LEVEL=WARNING
+          ENABLE_UWC_RAG=false
+          ENABLE_UWC_ASR=false
+          EOF
+      
+      - name: Run database migrations
+        run: |
+          cd ottoai-backend/services/dashboard
+          alembic upgrade head
+      
+      - name: Run linter (ruff)
+        run: |
+          cd ottoai-backend/services/dashboard
+          pip install ruff
+          ruff check app/ --select E,F,W,I
+        continue-on-error: true
+      
+      - name: Run type checker (mypy)
+        run: |
+          cd ottoai-backend/services/dashboard
+          pip install mypy
+          mypy app/ --ignore-missing-imports
+        continue-on-error: true
+      
+      - name: Run tests
+        run: |
+          cd ottoai-backend/services/dashboard
+          pytest tests/ -v \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --junitxml=junit.xml
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./ottoai-backend/services/dashboard/coverage.xml
+          flags: backend
+          name: backend-coverage
+      
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results
+          path: ottoai-backend/services/dashboard/junit.xml
+      
+      - name: Comment test results on PR
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && github.event_name == 'pull_request'
+        with:
+          files: ottoai-backend/services/dashboard/junit.xml
+
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Run security scan (Bandit)
+        run: |
+          pip install bandit
+          cd ottoai-backend/services/dashboard
+          bandit -r app/ -f json -o bandit-report.json
+        continue-on-error: true
+      
+      - name: Check for secrets (TruffleHog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install linting tools
+        run: |
+          pip install ruff black isort
+      
+      - name: Run Black (code formatter)
+        run: |
+          cd ottoai-backend/services/dashboard
+          black --check app/ tests/
+      
+      - name: Run isort (import sorter)
+        run: |
+          cd ottoai-backend/services/dashboard
+          isort --check-only app/ tests/
+      
+      - name: Run ruff (fast linter)
+        run: |
+          cd ottoai-backend/services/dashboard
+          ruff check app/ tests/
+
+
