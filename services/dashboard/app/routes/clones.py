@@ -12,7 +12,7 @@ from datetime import datetime
 from app.database import get_db
 from app.middleware.rbac import require_role
 from app.config import settings
-from app.services.uwc_client import uwc_client
+from app.services.uwc_client import get_uwc_client
 from app.services.audit_logger import AuditLogger
 from app.models.sales_rep import SalesRep
 from app.models.personal_clone_job import PersonalCloneJob, TrainingStatus, TrainingDataType
@@ -170,6 +170,7 @@ async def train_personal_clone(
         
         # Submit to UWC for training
         if settings.ENABLE_UWC_TRAINING and settings.UWC_BASE_URL:
+            uwc_client = get_uwc_client()
             uwc_result = await uwc_client.submit_training_job(
                 company_id=tenant_id,
                 rep_id=train_request.rep_id,
@@ -409,6 +410,7 @@ async def retry_failed_training(
     
     # Resubmit to UWC
     if settings.ENABLE_UWC_TRAINING and settings.UWC_BASE_URL:
+        uwc_client = get_uwc_client()
         uwc_result = await uwc_client.submit_training_job(
             company_id=tenant_id,
             rep_id=rep_id,

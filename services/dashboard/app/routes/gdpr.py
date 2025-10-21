@@ -12,7 +12,7 @@ from datetime import datetime
 from app.database import get_db
 from app.middleware.rbac import require_role
 from app.config import settings
-from app.services.uwc_client import uwc_client
+from app.services.uwc_client import get_uwc_client
 from app.services.audit_logger import AuditLogger
 from app.services.storage import storage_service
 from app.models.user import User
@@ -164,6 +164,7 @@ async def delete_user_data(
             # Delete from UWC
             if settings.ENABLE_UWC_RAG and doc.uwc_job_id:
                 try:
+                    uwc_client = get_uwc_client()
                     await uwc_client.delete_document(
                         company_id=tenant_id,
                         document_id=doc.id,
@@ -207,6 +208,7 @@ async def delete_user_data(
             # Request UWC to delete clone model
             if settings.ENABLE_UWC_TRAINING and job.model_id:
                 try:
+                    uwc_client = get_uwc_client()
                     await uwc_client.delete_clone_model(
                         company_id=tenant_id,
                         rep_id=target_user_id,
@@ -477,6 +479,7 @@ async def delete_tenant_data(
         # Request UWC to delete all tenant data
         if settings.is_uwc_enabled():
             try:
+                uwc_client = get_uwc_client()
                 await uwc_client.delete_tenant_data(
                     company_id=tenant_id,
                     request_id=request.state.trace_id

@@ -13,7 +13,7 @@ from app.database import get_db
 from app.middleware.rbac import require_role
 from app.core.tenant import get_tenant_id
 from app.config import settings
-from app.services.uwc_client import uwc_client
+from app.services.uwc_client import get_uwc_client
 from app.services.audit_logger import AuditLogger
 from app.models.rag_query import RAGQuery
 from app.models.rag_document import RAGDocument, DocumentType, IndexingStatus
@@ -137,6 +137,7 @@ async def query_ask_otto(
         if settings.ENABLE_UWC_RAG and settings.UWC_BASE_URL:
             try:
                 logger.info(f"Attempting UWC RAG query for: {query.query}")
+                uwc_client = get_uwc_client()
                 uwc_result = await uwc_client.query_rag(
                     company_id=tenant_id,
                     request_id=request.state.trace_id,
@@ -485,6 +486,7 @@ async def delete_document(
     # Request UWC deletion (if indexed)
     if settings.ENABLE_UWC_RAG and document.uwc_job_id:
         try:
+            uwc_client = get_uwc_client()
             await uwc_client.delete_document(
                 company_id=tenant_id,
                 document_id=document_id,
@@ -604,6 +606,7 @@ async def upload_document(
         uwc_job_id = None
         if settings.ENABLE_UWC_RAG and settings.UWC_BASE_URL:
             try:
+                uwc_client = get_uwc_client()
                 uwc_result = await uwc_client.index_documents(
                     company_id=tenant_id,
                     documents=[{

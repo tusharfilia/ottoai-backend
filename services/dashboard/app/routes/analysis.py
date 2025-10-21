@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from app.database import get_db
 from app.middleware.rbac import require_role
 from app.config import settings
-from app.services.uwc_client import uwc_client
+from app.services.uwc_client import get_uwc_client
 from app.services.audit_logger import AuditLogger
 from app.models.call import Call
 from app.models.call_transcript import CallTranscript
@@ -162,6 +162,7 @@ async def analyze_call(
     try:
         # Send to UWC for analysis
         if settings.ENABLE_UWC_ASR and settings.UWC_BASE_URL:
+            uwc_client = get_uwc_client()
             uwc_result = await uwc_client.submit_asr_batch(
                 company_id=tenant_id,
                 audio_urls=[{
@@ -378,6 +379,7 @@ async def analyze_batch(
     
     # Send batch to UWC
     if settings.ENABLE_UWC_ASR and settings.UWC_BASE_URL and audio_data:
+        uwc_client = get_uwc_client()
         uwc_result = await uwc_client.submit_asr_batch(
             company_id=tenant_id,
             audio_urls=audio_data,

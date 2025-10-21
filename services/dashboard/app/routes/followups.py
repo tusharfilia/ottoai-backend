@@ -13,7 +13,7 @@ import pytz
 from app.database import get_db
 from app.middleware.rbac import require_role
 from app.config import settings
-from app.services.uwc_client import uwc_client
+from app.services.uwc_client import get_uwc_client
 from app.services.audit_logger import AuditLogger
 from app.models.call import Call
 from app.models.followup_draft import FollowUpDraft, DraftType, DraftStatus
@@ -148,6 +148,7 @@ async def generate_followup_draft(
                 }
                 
                 logger.info(f"Attempting UWC follow-up generation for call {call.call_id}")
+                uwc_client = get_uwc_client()
                 uwc_result = await uwc_client.generate_followup_draft(
                     company_id=tenant_id,
                     request_id=request.state.trace_id,
