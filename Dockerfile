@@ -30,5 +30,8 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
+# Set Python path to include the services directory
+ENV PYTHONPATH=/app
+
 # Start command - use uvicorn directly
 CMD ["uvicorn", "services.dashboard.app.main:app", "--host", "0.0.0.0", "--port", "8080"]
