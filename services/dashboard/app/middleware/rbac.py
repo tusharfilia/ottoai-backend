@@ -12,7 +12,6 @@ from functools import wraps
 from typing import List, Union
 from fastapi import Request, HTTPException
 from app.obs.logging import get_logger
-from app.middleware.rbac import require_role
 
 logger = get_logger(__name__)
 
