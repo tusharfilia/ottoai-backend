@@ -333,23 +333,23 @@ async def recording_callback(
         
         # Get the Deepgram API key from environment
         DEEPGRAM_API_KEY = settings.DEEPGRAM_API_KEY
-            
-            # Save recording info without transcript
-            formatted_transcript = {
-                "timestamp": call_timestamp,
-                "duration": formatted_duration,
-                "call_sid": call_sid,
-                "recording_sid": recording_sid,
-                "recording_url": recording_url,
-                "transcript": "Deepgram API key not configured"
-            }
-            
-            current_transcript = json.loads(call_record.mobile_transcript) if call_record.mobile_transcript else []
-            current_transcript.append(formatted_transcript)
-            call_record.mobile_transcript = json.dumps(current_transcript)
-            db.commit()
-            
-            return Response(status_code=200)
+        
+        # Save recording info without transcript
+        formatted_transcript = {
+            "timestamp": call_timestamp,
+            "duration": formatted_duration,
+            "call_sid": call_sid,
+            "recording_sid": recording_sid,
+            "recording_url": recording_url,
+            "transcript": "Deepgram API key not configured"
+        }
+        
+        current_transcript = json.loads(call_record.mobile_transcript) if call_record.mobile_transcript else []
+        current_transcript.append(formatted_transcript)
+        call_record.mobile_transcript = json.dumps(current_transcript)
+        db.commit()
+        
+        return Response(status_code=200)
         
         try:
             transcription_data = None
