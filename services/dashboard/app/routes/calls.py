@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.database import get_db
 from app.models import call, company
 from app.core.tenant import get_tenant_id
+from app.middleware.rbac import require_role
 from sqlalchemy.orm import Session
 from datetime import datetime
 from fastapi import BackgroundTasks
