@@ -21,7 +21,7 @@ from app.schemas.responses import APIResponse, ErrorResponse, ErrorCodes, create
 from app.obs.logging import get_logger
 from app.obs.metrics import metrics
 
-logger = get_logger(__name__, Query)
+logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/calls", tags=["analysis", "coaching"])
 
 
