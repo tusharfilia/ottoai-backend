@@ -1,0 +1,6 @@
+# Otto AI Backend - Root Requirements
+# This file helps Railway detect this as a Python project.
+# The main requirements are in services/dashboard/requirements.txt
+
+# Copy all requirements from the dashboard directory
+-r services/dashboard/requirements.txt
