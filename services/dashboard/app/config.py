@@ -11,7 +11,8 @@ class Settings:
     
     def __init__(self):
         # Database
-        self.DATABASE_URL = os.getenv("DATABASE_URL", "")
+        # Database URL with fallback for development
+        self.DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./otto_dev.db")
         
         # Clerk Authentication
         self.CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "")
