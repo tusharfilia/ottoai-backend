@@ -2,7 +2,7 @@
 Follow-Up endpoints for AI-generated follow-up messages.
 Supports SMS, email, and call script generation with quiet hours enforcement.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -22,15 +22,15 @@ from app.schemas.responses import APIResponse, PaginatedResponse, PaginationMeta
 from app.obs.logging import get_logger
 from app.obs.metrics import metrics
 
-logger = get_logger(__name__, Query)
+logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/followups", tags=["followups", "ai-messaging"])
 
 
 # Request/Response Schemas
 class GenerateDraftRequest(BaseModel):
     """Request to generate follow-up draft."""
-    call_id): int = Query(...)
-    draft_type): str = Query(...)
+    call_id: int = Field(..., description="Call ID to generate follow-up for")
+    draft_type: str = Field(..., description="Type of draft: sms, email, call_script")
     tone: Optional[str] = Field("professional", description="Tone: professional, friendly, urgent")
     use_personal_clone: bool = Field(True, description="Use rep's personal clone if available")
     
