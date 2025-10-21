@@ -22,8 +22,16 @@ class TwilioService:
         self.from_number = os.getenv("TWILIO_FROM_NUMBER", "")
         self.callback_number = os.getenv("TWILIO_CALLBACK_NUMBER", "")
         
-        # Initialize Twilio client
-        self.client = Client(self.account_sid, self.auth_token)
+        # Initialize Twilio client lazily (only when needed)
+        self.client = None
+    
+    def _get_client(self):
+        """Get Twilio client, creating it if needed."""
+        if self.client is None:
+            if not self.account_sid or not self.auth_token:
+                raise ValueError("Twilio credentials not configured. Please set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN environment variables.")
+            self.client = Client(self.account_sid, self.auth_token)
+        return self.client
         
     def send_sms(self, to: str, body: str, from_number: Optional[str] = None) -> Dict:
         """
@@ -42,7 +50,7 @@ class TwilioService:
             to_number = self._normalize_phone_number(to)
             
             # Send the message
-            message = self.client.messages.create(
+            message = self._get_client().messages.create(
                 to=to_number,
                 from_=from_number or self.from_number,
                 body=body
