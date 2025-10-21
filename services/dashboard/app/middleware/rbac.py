@@ -6,6 +6,8 @@ Otto uses 3 roles:
 - admin: Business owners, executives, and sales managers (full management access)
 - csr: Customer service representatives (call handling, booking)
 - rep: Sales representatives (appointments, follow-ups)
+
+Fixed circular import issue - removed self-import.
 """
 import logging
 from functools import wraps
