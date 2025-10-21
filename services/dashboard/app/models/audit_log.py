@@ -52,7 +52,7 @@ class AuditLog(Base):
     # Format: {"old_value": "manager", "new_value": "exec"} for role changes
     # Or: {"query": "What are top objections?"} for RAG queries
     
-    metadata = Column(JSON, nullable=True)
+    context_data = Column(JSON, nullable=True)
     # Additional context: {"call_id": 123, "analysis_type": "coaching"}
     
     # Request Context
@@ -90,7 +90,7 @@ class AuditLog(Base):
             "resource_type": self.resource_type,
             "resource_id": self.resource_id,
             "changes": self.changes,
-            "metadata": self.metadata,
+            "context_data": self.context_data,
             "ip_address": self.ip_address,
             "request_id": self.request_id,
             "success": self.success,
