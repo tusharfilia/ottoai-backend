@@ -376,132 +376,131 @@ async def handle_clerk_webhook(request: Request, background_tasks: BackgroundTas
     external_id = payload.get("event_id") or data.get("id") or f"{event_type}-{data.get('id', 'unknown')}"
     
     def process_webhook():
-    
-    if event_type == "user.created":
-        # A user was created in Clerk - we should create/link in our DB
-        clerk_id = data.get("id")
-        email = data.get("email_addresses", [{}])[0].get("email_address", "")
-        username = data.get("username", "")
-        
-        # Check if user already exists by email or username
-        user_record = db.query(user.User).filter(
-            (user.User.email == email) | 
-            (user.User.username == username)
-        ).first()
-        
-        if user_record:
-            # Link existing user with Clerk ID
-            user_record.clerk_id = clerk_id
-            db.commit()
-        else:
-            # Create new user (need to determine company_id from metadata or other source)
-            company_id = data.get("public_metadata", {}).get("company_id")
-            if not company_id:
-                logging.error(f"Warning: Clerk user created without company_id: {clerk_id}")
-                return {"success": False, "error": "No company_id in metadata"}
+        if event_type == "user.created":
+            # A user was created in Clerk - we should create/link in our DB
+            clerk_id = data.get("id")
+            email = data.get("email_addresses", [{}])[0].get("email_address", "")
+            username = data.get("username", "")
             
-            # Create user record
-            new_user = user.User(
-                clerk_id=clerk_id,
-                email=email,
-                username=username,
-                name=f"{data.get('first_name', '')} {data.get('last_name', '')}".strip(),
-                role="manager",  # Assume managers only in Clerk
-                company_id=company_id
-            )
+            # Check if user already exists by email or username
+            user_record = db.query(user.User).filter(
+                (user.User.email == email) | 
+                (user.User.username == username)
+            ).first()
             
-            db.add(new_user)
-            db.commit()
-            db.refresh(new_user)
+            if user_record:
+                # Link existing user with Clerk ID
+                user_record.clerk_id = clerk_id
+                db.commit()
+            else:
+                # Create new user (need to determine company_id from metadata or other source)
+                company_id = data.get("public_metadata", {}).get("company_id")
+                if not company_id:
+                    logging.error(f"Warning: Clerk user created without company_id: {clerk_id}")
+                    return {"success": False, "error": "No company_id in metadata"}
+                
+                # Create user record
+                new_user = user.User(
+                    clerk_id=clerk_id,
+                    email=email,
+                    username=username,
+                    name=f"{data.get('first_name', '')} {data.get('last_name', '')}".strip(),
+                    role="manager",  # Assume managers only in Clerk
+                    company_id=company_id
+                )
+                
+                db.add(new_user)
+                db.commit()
+                db.refresh(new_user)
+                
+                # Create manager profile
+                new_manager = sales_manager.SalesManager(
+                    user_id=new_user.id,
+                    company_id=company_id
+                )
+                db.add(new_manager)
+                db.commit()
+        
+        elif event_type == "user.updated":
+            # Update user in our DB when updated in Clerk
+            clerk_id = data.get("id")
+            user_record = db.query(user.User).filter_by(clerk_id=clerk_id).first()
             
-            # Create manager profile
-            new_manager = sales_manager.SalesManager(
-                user_id=new_user.id,
-                company_id=company_id
-            )
-            db.add(new_manager)
-            db.commit()
-    
-    elif event_type == "user.updated":
-        # Update user in our DB when updated in Clerk
-        clerk_id = data.get("id")
-        user_record = db.query(user.User).filter_by(clerk_id=clerk_id).first()
+            if user_record:
+                # Update fields
+                if "email_addresses" in data and data["email_addresses"]:
+                    user_record.email = data["email_addresses"][0].get("email_address", user_record.email)
+                
+                if "username" in data:
+                    user_record.username = data["username"]
+                
+                name = f"{data.get('first_name', '')} {data.get('last_name', '')}".strip()
+                if name:
+                    user_record.name = name
+                
+                # Update role if changed in metadata
+                if "public_metadata" in data and "role" in data["public_metadata"]:
+                    user_record.role = data["public_metadata"]["role"]
+                
+                db.commit()
         
-        if user_record:
-            # Update fields
-            if "email_addresses" in data and data["email_addresses"]:
-                user_record.email = data["email_addresses"][0].get("email_address", user_record.email)
+        elif event_type == "user.deleted":
+            # Delete or deactivate user in our DB
+            clerk_id = data.get("id")
+            user_record = db.query(user.User).filter_by(clerk_id=clerk_id).first()
             
-            if "username" in data:
-                user_record.username = data["username"]
+            if user_record:
+                # Option 1: Delete user from our DB
+                # background_tasks.add_task(delete_user, user_record.id, db)
+                
+                # Option 2: Just remove clerk_id reference but keep user
+                user_record.clerk_id = None
+                db.commit()
+        
+        elif event_type == "user.password.updated":
+            # Handle password updates (could be used for audit logging)
+            clerk_id = data.get("id")
+            user_record = db.query(user.User).filter_by(clerk_id=clerk_id).first()
             
-            name = f"{data.get('first_name', '')} {data.get('last_name', '')}".strip()
-            if name:
-                user_record.name = name
+            if user_record:
+                logging.info(f"Password updated for user {user_record.email}")
+        
+        elif event_type == "organization.created":
+            # Link organization to company
+            org_id = data.get("id")
+            org_name = data.get("name")
             
-            # Update role if changed in metadata
-            if "public_metadata" in data and "role" in data["public_metadata"]:
-                user_record.role = data["public_metadata"]["role"]
+            # Try to find matching company by name
+            company_record = db.query(company.Company).filter_by(name=org_name).first()
             
-            db.commit()
-    
-    elif event_type == "user.deleted":
-        # Delete or deactivate user in our DB
-        clerk_id = data.get("id")
-        user_record = db.query(user.User).filter_by(clerk_id=clerk_id).first()
+            if company_record:
+                company_record.clerk_org_id = org_id
+                db.commit()
         
-        if user_record:
-            # Option 1: Delete user from our DB
-            # background_tasks.add_task(delete_user, user_record.id, db)
+        elif event_type == "organization.updated":
+            # Update company name if organization name changed
+            org_id = data.get("id")
+            org_name = data.get("name")
             
-            # Option 2: Just remove clerk_id reference but keep user
-            user_record.clerk_id = None
-            db.commit()
-    
-    elif event_type == "user.password.updated":
-        # Handle password updates (could be used for audit logging)
-        clerk_id = data.get("id")
-        user_record = db.query(user.User).filter_by(clerk_id=clerk_id).first()
+            company_record = db.query(company.Company).filter_by(clerk_org_id=org_id).first()
+            if company_record:
+                company_record.name = org_name
+                db.commit()
         
-        if user_record:
-            logging.info(f"Password updated for user {user_record.email}")
-    
-    elif event_type == "organization.created":
-        # Link organization to company
-        org_id = data.get("id")
-        org_name = data.get("name")
-        
-        # Try to find matching company by name
-        company_record = db.query(company.Company).filter_by(name=org_name).first()
-        
-        if company_record:
-            company_record.clerk_org_id = org_id
-            db.commit()
-    
-    elif event_type == "organization.updated":
-        # Update company name if organization name changed
-        org_id = data.get("id")
-        org_name = data.get("name")
-        
-        company_record = db.query(company.Company).filter_by(clerk_org_id=org_id).first()
-        if company_record:
-            company_record.name = org_name
-            db.commit()
-    
-    elif event_type == "organization.deleted":
-        # Handle organization deletion
-        org_id = data.get("id")
-        company_record = db.query(company.Company).filter_by(clerk_org_id=org_id).first()
-        
-        if company_record:
-            # Option 1: Delete company
-            # db.delete(company_record)
+        elif event_type == "organization.deleted":
+            # Handle organization deletion
+            org_id = data.get("id")
+            company_record = db.query(company.Company).filter_by(clerk_org_id=org_id).first()
             
-            # Option 2: Just remove clerk_org_id reference
-            company_record.clerk_org_id = None
-            db.commit()
-        
-        return {"status": "processed", "event_type": event_type, "data_id": data.get("id")}
+            if company_record:
+                # Option 1: Delete company
+                # db.delete(company_record)
+                
+                # Option 2: Just remove clerk_org_id reference
+                company_record.clerk_org_id = None
+                db.commit()
+            
+            return {"status": "processed", "event_type": event_type, "data_id": data.get("id")}
     
     # Apply idempotency protection
     response_data, status_code = with_idempotency(
