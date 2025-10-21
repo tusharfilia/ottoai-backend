@@ -2,7 +2,7 @@
 Call Analysis endpoints for AI coaching, objection detection, and SOP tracking.
 Triggers UWC ASR processing and retrieves analysis results.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
