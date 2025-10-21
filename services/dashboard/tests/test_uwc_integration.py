@@ -285,3 +285,4 @@ class TestUWCClientErrorHandling:
 if __name__ == "__main__":
     # Run tests
     pytest.main([__file__, "-v"])
+

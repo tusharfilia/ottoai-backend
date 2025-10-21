@@ -61,7 +61,7 @@ class DraftResponse(BaseModel):
 # Endpoints
 
 @router.post("/draft", response_model=APIResponse[DraftResponse])
-@require_role("rep", "manager", "exec")
+@require_role("admin", "rep")
 async def generate_followup_draft(
     request: Request,
     draft_request: GenerateDraftRequest,
@@ -244,7 +244,7 @@ async def generate_followup_draft(
 
 
 @router.get("/drafts", response_model=PaginatedResponse[Dict])
-@require_role("rep", "manager", "exec")
+@require_role("admin", "rep")
 async def list_followup_drafts(
     request: Request,
     status: Optional[str] = None,
@@ -306,7 +306,7 @@ async def list_followup_drafts(
 
 
 @router.post("/drafts/{draft_id}/approve")
-@require_role("rep", "manager", "exec")
+@require_role("admin", "rep")
 async def approve_draft(
     request: Request,
     draft_id: str,
@@ -348,7 +348,7 @@ async def approve_draft(
 
 
 @router.post("/drafts/{draft_id}/send")
-@require_role("rep", "manager", "exec")
+@require_role("admin", "rep")
 async def send_draft(
     request: Request,
     draft_id: str,

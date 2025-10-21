@@ -17,7 +17,7 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.composite import CompositeHTTPPropagator
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from opentelemetry.trace.propagation.b3 import B3MultiFormat
+from opentelemetry.propagators.b3 import B3MultiFormat
 from app.config import settings
 
 

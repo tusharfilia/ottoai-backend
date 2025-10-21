@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from app.database import get_db
 from app.models import call, sales_rep, company, user, sales_manager
 from app.routes.dependencies import get_user_from_clerk_token
+from app.middleware.rbac import require_role
 import logging
 import traceback
 
@@ -13,6 +14,7 @@ router = APIRouter(prefix="/appointments")
 logger = logging.getLogger(__name__)
 
 @router.get("")
+@require_role("rep")
 async def get_appointments(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_user_from_clerk_token),
@@ -118,6 +120,7 @@ async def get_appointments(
 
 
 @router.get("/company")
+@require_role("admin")
 async def get_company_appointments(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_user_from_clerk_token)
@@ -194,6 +197,7 @@ async def get_company_appointments(
 
 
 @router.get("/{appointment_id}")
+@require_role("admin", "rep")
 async def get_appointment_details(
     appointment_id: int,
     db: Session = Depends(get_db),

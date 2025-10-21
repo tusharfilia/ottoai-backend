@@ -99,7 +99,7 @@ async def add_user_to_organization(clerk_user_id: str, clerk_org_id: str, role: 
         return None
 
 @router.post("/")
-@require_role("leadership")
+@require_role("admin")
 async def create_user(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Create a new user (either manager or rep)"""
     payload = await request.json()
@@ -189,7 +189,7 @@ async def create_user(request: Request, background_tasks: BackgroundTasks, db: S
     return {"success": True, "user_id": new_user.id}
 
 @router.get("/{user_id}")
-@require_role("leadership", "csr", "rep")
+@require_role("admin", "csr", "rep")
 async def get_user(request: Request, user_id: int, db: Session = Depends(get_db)):
     """Get user details"""
     user_record = db.query(user.User).filter_by(id=user_id).first()
@@ -226,7 +226,7 @@ async def get_user(request: Request, user_id: int, db: Session = Depends(get_db)
     }
 
 @router.put("/{user_id}")
-@require_role("leadership")
+@require_role("admin")
 async def update_user(request: Request, user_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Update user details"""
     payload = await request.json()
@@ -516,6 +516,7 @@ async def handle_clerk_webhook(request: Request, background_tasks: BackgroundTas
 
 # Route to sync a user from our database to Clerk
 @router.post("/{user_id}/sync-to-clerk")
+@require_role("admin")
 async def sync_user_to_clerk(user_id: int, db: Session = Depends(get_db)):
     """Force sync a user from database to Clerk"""
     user_record = db.query(user.User).filter_by(id=user_id).first()
@@ -637,6 +638,7 @@ async def update_user_metadata(user_id: str, request: Request, db: Session = Dep
         raise HTTPException(status_code=500, detail=error_detail)
 
 @router.get("/company")
+@require_role("admin", "csr", "rep")
 async def get_user_company(db: Session = Depends(get_db), current_user: dict = Depends(get_user_from_clerk_token)):
     """Get the company for the current authenticated user"""
     

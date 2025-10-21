@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: otto-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        value: ap-southeast-2
+      - key: S3_BUCKET
+        value: otto-documents-staging
+      - key: UWC_BASE_URL
+        value: https://otto.shunyalabs.ai
+      - key: UWC_API_KEY
+        sync: false
+      - key: UWC_SECRET
+        sync: false
+      - key: ENABLE_UWC_ASR
+        value: true
+      - key: ENABLE_UWC_RAG
+        value: true
+      - key: ENABLE_UWC_TRAINING
+        value: true
+      - key: ENABLE_UWC_FOLLOWUPS
+        value: true
+      - key: ENVIRONMENT
+        value: staging
+      - key: SENTRY_DSN
+        sync: false
+
+databases:
+  - name: otto-postgres
+    plan: starter
+
+  - name: otto-redis
+    plan: starter

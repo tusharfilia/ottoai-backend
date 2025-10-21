@@ -14,6 +14,7 @@ from app.models.call import Call
 from app.models.transcript_analysis import TranscriptAnalysis
 from app.services.transcript_analysis import TranscriptAnalyzer
 from app.middleware.rate_limiter import limits
+from app.middleware.rbac import require_role
 import logging
 
 router = APIRouter(prefix="/audio", tags=["audio"])
@@ -32,6 +33,7 @@ uwc_client = UWCClient()
 transcripts = {}
 
 @router.post("/start-recording")
+@require_role("rep")
 async def start_recording(
     trigger_type: str,  # "location", "time", "both", or "manual"
     call_id: int,
@@ -85,6 +87,7 @@ async def start_recording(
     return {"recording_id": recording_id}
 
 @router.post("/upload/{recording_id}")
+@require_role("rep")
 async def upload_audio(
     recording_id: str,
     background_tasks: BackgroundTasks,

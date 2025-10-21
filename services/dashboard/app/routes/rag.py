@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 from app.database import get_db
 from app.middleware.rbac import require_role
+from app.core.tenant import get_tenant_id
 from app.config import settings
 from app.services.uwc_client import uwc_client
 from app.services.audit_logger import AuditLogger

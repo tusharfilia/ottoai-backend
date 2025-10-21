@@ -67,7 +67,7 @@ class CloneStatusResponse(BaseModel):
 # Endpoints
 
 @router.post("/train", response_model=APIResponse[JobStatusResponse])
-@require_role("exec", "manager", "rep")
+@require_role("admin", "rep")
 async def train_personal_clone(
     request: Request,
     train_request: TrainCloneRequest,
@@ -243,7 +243,7 @@ async def train_personal_clone(
 
 
 @router.get("/{rep_id}/status", response_model=APIResponse[CloneStatusResponse])
-@require_role("exec", "manager", "rep")
+@require_role("admin", "rep")
 async def get_clone_status(
     request: Request,
     rep_id: str,
@@ -321,7 +321,7 @@ async def get_clone_status(
 
 
 @router.get("/{rep_id}/history", response_model=PaginatedResponse[Dict])
-@require_role("exec", "manager")
+@require_role("admin")
 async def get_clone_training_history(
     request: Request,
     rep_id: str,
@@ -370,7 +370,7 @@ async def get_clone_training_history(
 
 
 @router.post("/{rep_id}/retry")
-@require_role("exec", "manager")
+@require_role("admin")
 async def retry_failed_training(
     request: Request,
     rep_id: str,
@@ -445,5 +445,6 @@ async def retry_failed_training(
             created_at=datetime.utcnow()
         )
     )
+
 
 

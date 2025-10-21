@@ -2,7 +2,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.schema import CreateTable
-from fastapi import Request, Depends
+from fastapi import Request, Depends, HTTPException
 from typing import Generator
 import os
 
@@ -51,19 +51,38 @@ class TenantScopedSession(Session):
 
 # Dependency for getting database session with tenant context
 def get_db(request: Request) -> Generator[Session, None, None]:
-    """Get database session with tenant context."""
+    """
+    Get database session with mandatory tenant context.
+    
+    This dependency enforces tenant isolation by requiring tenant_id
+    for all database operations. Only health check endpoints are exempt.
+    """
     # Get tenant_id from request state (set by middleware)
     tenant_id = getattr(request.state, 'tenant_id', None)
     
+    # Only allow non-tenant sessions for specific exempt endpoints
+    exempt_paths = ["/health", "/metrics", "/docs", "/redoc", "/openapi.json"]
+    is_exempt = any(request.url.path.startswith(path) for path in exempt_paths)
+    
+    if not tenant_id and not is_exempt:
+        # For all protected endpoints, tenant_id is mandatory
+        from app.obs.logging import get_logger
+        logger = get_logger(__name__)
+        logger.warning(f"Missing tenant_id for protected endpoint: {request.url.path}")
+        raise HTTPException(
+            status_code=403,
+            detail="Tenant context required for this endpoint"
+        )
+    
     if not tenant_id:
-        # For endpoints that don't require tenant context (like health checks)
+        # Only for exempt endpoints (health checks, docs)
         db = SessionLocal()
         try:
             yield db
         finally:
             db.close()
     else:
-        # Create tenant-scoped session
+        # Create tenant-scoped session for all protected endpoints
         db = TenantScopedSession(tenant_id, bind=engine)
         try:
             yield db

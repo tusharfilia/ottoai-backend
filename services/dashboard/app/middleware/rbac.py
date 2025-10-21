@@ -3,7 +3,7 @@ Role-Based Access Control (RBAC) decorators for OttoAI backend.
 Enforces role-based permissions on protected endpoints.
 
 Otto uses 3 roles:
-- leadership: Business owners and sales managers (full management access)
+- admin: Business owners, executives, and sales managers (full management access)
 - csr: Customer service representatives (call handling, booking)
 - rep: Sales representatives (appointments, follow-ups)
 """
@@ -15,13 +15,20 @@ from app.obs.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Role definitions
-ROLE_LEADERSHIP = "leadership"  # Owners + Managers (merged for simplicity)
-ROLE_CSR = "csr"                # Receptionists
-ROLE_REP = "rep"                # Sales reps
+# Role definitions (updated to 3-role model)
+ROLE_ADMIN = "admin"  # Owners + Executives + Managers (merged for simplicity)
+ROLE_CSR = "csr"      # Customer Service Representatives
+ROLE_REP = "rep"      # Sales Representatives
 
 # Valid roles
-VALID_ROLES = {ROLE_LEADERSHIP, ROLE_CSR, ROLE_REP}
+VALID_ROLES = {ROLE_ADMIN, ROLE_CSR, ROLE_REP}
+
+# Role hierarchy for permission inheritance
+ROLE_HIERARCHY = {
+    ROLE_ADMIN: [ROLE_ADMIN, ROLE_CSR, ROLE_REP],  # Admin can access all
+    ROLE_CSR: [ROLE_CSR],                          # CSR can access CSR endpoints
+    ROLE_REP: [ROLE_REP]                           # Rep can access Rep endpoints
+}
 
 
 class RBACError(HTTPException):
@@ -39,12 +46,17 @@ def require_role(*allowed_roles: str):
     
     Usage:
         @router.get("/admin/dashboard")
-        @require_role("exec", "manager")
+        @require_role("admin")
         async def admin_dashboard(request: Request):
+            ...
+        
+        @router.get("/calls")
+        @require_role("admin", "csr")
+        async def get_calls(request: Request):
             ...
     
     Args:
-        *allowed_roles: Variable number of role strings ("exec", "manager", "csr", "rep")
+        *allowed_roles: Variable number of role strings ("admin", "csr", "rep")
     
     Raises:
         HTTPException: 403 if user's role is not in allowed_roles
@@ -81,8 +93,11 @@ def require_role(*allowed_roles: str):
                     detail="Authentication required: user role not found"
                 )
             
-            # Check if user's role is in allowed roles
-            if user_role not in allowed_roles:
+            # Check if user's role is in allowed roles (with hierarchy support)
+            user_allowed_roles = ROLE_HIERARCHY.get(user_role, [user_role])
+            has_permission = any(role in allowed_roles for role in user_allowed_roles)
+            
+            if not has_permission:
                 logger.warning(
                     f"RBAC violation: user {user_id} (role: {user_role}) "
                     f"attempted to access endpoint requiring roles: {allowed_roles}. "

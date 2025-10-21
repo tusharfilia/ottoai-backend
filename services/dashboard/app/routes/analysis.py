@@ -71,7 +71,7 @@ class ObjectionAnalyticsResponse(BaseModel):
 # Endpoints
 
 @router.post("/{call_id}/analyze", response_model=APIResponse[JobStatusResponse])
-@require_role("exec", "manager", "rep")
+@require_role("admin", "rep")
 async def analyze_call(
     request: Request,
     call_id: int,
@@ -231,7 +231,7 @@ async def analyze_call(
 
 
 @router.get("/{call_id}/analysis", response_model=APIResponse[CallAnalysisResponse])
-@require_role("exec", "manager", "rep")
+@require_role("admin", "rep")
 async def get_call_analysis(
     request: Request,
     call_id: int,
@@ -323,7 +323,7 @@ async def get_call_analysis(
 
 
 @router.post("/analyze-batch", response_model=APIResponse[List[JobStatusResponse]])
-@require_role("exec", "manager")
+@require_role("admin")
 async def analyze_batch(
     request: Request,
     call_ids: List[int],
@@ -412,7 +412,7 @@ async def analyze_batch(
 
 
 @router.get("/analytics/objections", response_model=APIResponse[ObjectionAnalyticsResponse])
-@require_role("exec", "manager")
+@require_role("admin")
 async def get_objection_analytics(
     request: Request,
     date_range: str = "last_30_days",

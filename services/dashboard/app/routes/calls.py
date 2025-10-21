@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from app.database import get_db
 from app.models import call, company
+from app.core.tenant import get_tenant_id
 from sqlalchemy.orm import Session
 from datetime import datetime
 from fastapi import BackgroundTasks
@@ -20,17 +21,15 @@ logger = logging.getLogger(__name__)
 async def get_call_details(
     request: Request,
     call_id: int,
-    company_id: str,
+    tenant_id: str = Depends(get_tenant_id),
     db: Session = Depends(get_db)
 ):
-    # Verify company exists
-    company_record = db.query(company.Company).filter_by(id=company_id).first()
-    if not company_record:
-        raise HTTPException(status_code=404, detail="Company not found")
+    # Tenant isolation: tenant_id is automatically enforced by get_db dependency
+    # No need to manually verify company - tenant scoping is automatic
     
-    # Get call details
+    # Get call details (tenant-scoped automatically)
     call_record = db.query(call.Call)\
-        .filter_by(call_id=call_id, company_id=company_id)\
+        .filter_by(call_id=call_id)\
         .first()
     
     if not call_record:
@@ -73,25 +72,17 @@ async def get_call_details(
 
 @router.get("/unassigned-calls")
 @require_role("leadership")
-async def get_unassigned_calls(request: Request, company_id: str, db: Session = Depends(get_db)):
-    # Use existing call query logic but filter for unassigned calls
-    print(f"Fetching unassigned calls for company ID: {company_id!r}")
+async def get_unassigned_calls(
+    request: Request, 
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
+    # Tenant isolation: tenant_id is automatically enforced by get_db dependency
+    # All queries are automatically scoped to the tenant
     
-    # Verify that there are actually calls in the database for this company
-    all_calls = db.query(call.Call).filter(call.Call.company_id == company_id).all()
-    print(f"Total calls for company {company_id!r}: {len(all_calls)}")
-    
-    # Check if there are any booked calls
-    booked_calls = db.query(call.Call).filter(
-        call.Call.company_id == company_id,
-        call.Call.booked.is_(True)
-    ).all()
-    print(f"Total booked calls for company {company_id!r}: {len(booked_calls)}")
-    
-    # Get the unassigned calls
+    # Get the unassigned calls (tenant-scoped automatically)
     calls = db.query(call.Call)\
         .filter(
-            call.Call.company_id == company_id,
             call.Call.assigned_rep_id.is_(None),
             call.Call.booked.is_(True)  # Only show booked calls that need assignment
         )\
@@ -120,19 +111,15 @@ async def get_unassigned_calls(request: Request, company_id: str, db: Session = 
 async def add_call(
     request: Request,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)):
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
     params = dict(request.query_params)
     
-    # Validate required fields
-    if not params.get("company_id"):
-        raise HTTPException(status_code=400, detail="Company ID is required")
+    # Tenant isolation: tenant_id is automatically enforced by get_db dependency
+    # No need to manually verify company - tenant scoping is automatic
     
-    # Verify company exists
-    company_record = db.query(company.Company).filter_by(id=params.get("company_id")).first()
-    if not company_record:
-        raise HTTPException(status_code=404, detail="Company not found")
-    
-    # Create new call record with only the initial fields
+    # Create new call record with tenant context
     new_call = call.Call(
         phone_number=params.get("phone_number"),
         name=params.get("name"),
@@ -142,7 +129,7 @@ async def add_call(
         transcript=params.get("transcript"),
         missed_call=params.get("missed_call", "false").lower() == "true",
         created_at=datetime.utcnow(),
-        company_id=params.get("company_id"),
+        company_id=tenant_id,  # Use tenant_id from context
         bland_call_id=params.get("bland_call_id")
     )
     

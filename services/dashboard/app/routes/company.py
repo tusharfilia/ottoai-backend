@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks,
 from app.database import get_db
 from app.models import call, company, sales_manager, sales_rep, user
 from app.middleware.rbac import require_role, require_tenant_ownership
+from app.core.tenant import get_tenant_id
 from sqlalchemy.orm import Session
 import os
 import httpx

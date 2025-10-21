@@ -162,3 +162,4 @@ def capture_message(message: str, level: str = "info", extra_context: dict = Non
         sentry_sdk.capture_message(message, level)
 
 
+

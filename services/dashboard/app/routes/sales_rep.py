@@ -149,7 +149,7 @@ class RepAppointmentsResponse(BaseModel):
     rep_name: str # Name of the rep whose appointments are being shown
 
 @router.get("", response_model=RepsListResponse)
-@require_role("leadership", "csr", "rep")
+@require_role("admin", "csr", "rep")
 async def get_company_reps(
     request: Request,
     db: Session = Depends(get_db),
@@ -204,6 +204,7 @@ async def get_company_reps(
 
 
 @router.get("/{rep_id}/appointments", response_model=RepAppointmentsResponse)
+@require_role("admin", "rep")
 async def get_rep_appointments(
     rep_id: str, # Clerk User ID of the rep
     db: Session = Depends(get_db),
@@ -308,7 +309,7 @@ async def get_rep_appointments(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve appointments for representative: {str(e)}")
 
 @router.post("/")
-@require_role("leadership")
+@require_role("admin")
 async def create_sales_rep(
     request: Request,
     name: str = Query(...),
@@ -457,6 +458,7 @@ async def get_sales_rep(rep_id: str, db: Session = Depends(get_db)):
     return rep_data
 
 @router.put("/{rep_id}")
+@require_role("admin")
 async def update_sales_rep(rep_id: int, request: Request, db: Session = Depends(get_db)):
     params = dict(request.query_params)
     rep = db.query(sales_rep.SalesRep).filter_by(id=rep_id).first()
@@ -499,6 +501,7 @@ async def update_sales_rep(rep_id: int, request: Request, db: Session = Depends(
 # Note: Delete endpoints have been moved to delete.py
 
 @router.post("/assign-sales-rep")
+@require_role("admin", "csr")
 async def assign_sales_rep(
     call_id: int,
     new_sales_rep_id: str,  # Changed to string to match the Call model
