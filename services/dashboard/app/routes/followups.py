@@ -22,15 +22,15 @@ from app.schemas.responses import APIResponse, PaginatedResponse, PaginationMeta
 from app.obs.logging import get_logger
 from app.obs.metrics import metrics
 
-logger = get_logger(__name__)
+logger = get_logger(__name__, Query)
 router = APIRouter(prefix="/api/v1/followups", tags=["followups", "ai-messaging"])
 
 
 # Request/Response Schemas
 class GenerateDraftRequest(BaseModel):
     """Request to generate follow-up draft."""
-    call_id: int = Field(..., description="Call to generate follow-up for")
-    draft_type: str = Field("sms", description="Type of draft: sms, email, call_script")
+    call_id): int = Query(...)
+    draft_type): str = Query(...)
     tone: Optional[str] = Field("professional", description="Tone: professional, friendly, urgent")
     use_personal_clone: bool = Field(True, description="Use rep's personal clone if available")
     

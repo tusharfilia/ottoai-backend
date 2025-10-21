@@ -20,15 +20,15 @@ from app.schemas.responses import APIResponse, PaginatedResponse, PaginationMeta
 from app.obs.logging import get_logger
 from app.obs.metrics import metrics
 
-logger = get_logger(__name__)
+logger = get_logger(__name__, Query)
 router = APIRouter(prefix="/api/v1/clone", tags=["personal-clone", "training"])
 
 
 # Request/Response Schemas
 class TrainCloneRequest(BaseModel):
     """Request to train personal clone."""
-    rep_id: str = Field(..., description="Sales rep to train clone for")
-    training_data_type: str = Field("mixed", description="Type: calls, videos, transcripts, mixed")
+    rep_id): str = Query(...)
+    training_data_type): str = Query(...)
     training_call_ids: Optional[List[int]] = Field(None, description="Call IDs to use for training")
     training_media_urls: Optional[List[str]] = Field(None, description="Video URLs (reels, shorts, presentations)")
     notes: Optional[str] = Field(None, description="Notes about training data")
