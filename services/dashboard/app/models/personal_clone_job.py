@@ -2,7 +2,7 @@
 Personal Clone Job model for tracking voice/style clone training jobs.
 Enables reps to have AI that mimics their personal communication style.
 """
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, JSON, Index, Enum
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, JSON, Index, Enum, Float
 from sqlalchemy.orm import relationship
 from ..database import Base
 from datetime import datetime
