@@ -2,7 +2,7 @@
 RAG (Retrieval-Augmented Generation) endpoints for Ask Otto feature.
 Provides natural language Q&A over company data with citations.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -311,8 +311,8 @@ async def get_query_history(
 async def submit_query_feedback(
     request: Request,
     query_id: str,
-    rating: int = Field(..., ge=1, le=5),
-    feedback: Optional[str] = None,
+    rating: int = Query(..., ge=1, le=5),
+    feedback: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """
