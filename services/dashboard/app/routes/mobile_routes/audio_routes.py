@@ -27,7 +27,15 @@ from app.config import settings
 from app.services.uwc_client import UWCClient
 
 deepgram = Deepgram(settings.DEEPGRAM_API_KEY)
-uwc_client = UWCClient()
+# Initialize UWC client lazily (only when needed)
+uwc_client = None
+
+def get_uwc_client():
+    """Get UWC client, creating it if needed."""
+    global uwc_client
+    if uwc_client is None:
+        uwc_client = UWCClient()
+    return uwc_client
 
 # In-memory storage for transcripts (replace with database in production)
 transcripts = {}
@@ -235,7 +243,7 @@ async def process_audio(recording_id: str, audio_path: str, db: Session):
                 request_id = f"mobile-{recording_id}"
                 
                 logger.info(f"Attempting UWC ASR transcription for recording {recording_id}")
-                uwc_response = await uwc_client.transcribe_audio(
+                uwc_response = await get_uwc_client().transcribe_audio(
                     company_id=company_id,
                     request_id=request_id,
                     audio_url=audio_url,
