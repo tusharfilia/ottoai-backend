@@ -64,14 +64,20 @@ class UWCClient:
         
         # Validate configuration
         if not self.base_url:
-            raise ValueError("UWC_BASE_URL must be configured")
+            logger.warning("UWC_BASE_URL not configured - UWC features will be disabled")
+            self.base_url = None
         if not self.api_key:
-            raise ValueError("UWC_API_KEY must be configured")
+            logger.warning("UWC_API_KEY not configured - UWC features will be disabled")
+            self.api_key = None
         
         logger.info(
             f"UWC Client initialized: base_url={self.base_url}, "
             f"version={self.version}, staging={self.use_staging}"
         )
+    
+    def is_available(self) -> bool:
+        """Check if UWC is properly configured and available."""
+        return self.base_url is not None and self.api_key is not None
     
     def _generate_signature(self, payload: dict, timestamp: str) -> str:
         """
@@ -160,6 +166,11 @@ class UWCClient:
             UWCServerError: For 5xx errors
             UWCClientError: For other errors
         """
+        # Check if UWC is available
+        if not self.is_available():
+            logger.warning(f"UWC not available - skipping {method} {endpoint}")
+            raise UWCClientError("UWC is not configured or available")
+        
         url = f"{self.base_url}{endpoint}"
         headers = self._get_headers(company_id, request_id, payload)
         

@@ -28,8 +28,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Initialize UWC client
-uwc_client = UWCClient()
+# Initialize UWC client lazily (only when needed)
+uwc_client = None
+
+def get_uwc_client():
+    """Get UWC client, creating it if needed."""
+    global uwc_client
+    if uwc_client is None:
+        uwc_client = UWCClient()
+    return uwc_client
 
 # Twilio credentials from environment variables
 from app.config import settings
