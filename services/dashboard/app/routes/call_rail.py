@@ -39,30 +39,67 @@ async def pre_call_webhook(request: Request, db: Session = Depends(get_db)):
         
         print(f"Company found: {company_record.name} with ID: {company_record.id}")
         
-        new_call = call.Call(
-            phone_number=params.get("callernum"),  # Changed from customer_phone_number to callernum
-            company_id=company_record.id,
-            created_at=datetime.utcnow(),
-            missed_call=params.get("answered", "true").lower() != "true",
-        )
-        db.add(new_call)
-        db.commit()
-        print(f"New call created: {new_call.call_id}")
+        # Check if caller exists in leads or customers DB by phone number
+        caller_phone = params.get("callernum")
+        existing_call = db.query(call.Call).filter_by(
+            phone_number=caller_phone,
+            company_id=company_record.id
+        ).first()
+        
+        if existing_call:
+            print(f"Existing call found for {caller_phone}, updating...")
+            # Update existing call record
+            existing_call.missed_call = params.get("answered", "true").lower() != "true"
+            existing_call.updated_at = datetime.utcnow()
+            db.commit()
+            call_id = existing_call.call_id
+        else:
+            print(f"New caller {caller_phone}, creating new call record...")
+            # Create new call record (auto-creates lead)
+            new_call = call.Call(
+                phone_number=caller_phone,
+                company_id=company_record.id,
+                created_at=datetime.utcnow(),
+                missed_call=params.get("answered", "true").lower() != "true",
+            )
+            db.add(new_call)
+            db.commit()
+            db.refresh(new_call)
+            call_id = new_call.call_id
+            print(f"New call created: {call_id}")
+        
+        # Handle missed call SMS if call was not answered
+        is_answered = params.get("answered", "true").lower() == "true"
+        if not is_answered:
+            print(f"Missed call detected for {caller_phone}, sending auto-SMS...")
+            try:
+                from app.services.twilio_service import twilio_service
+                sms_result = twilio_service.send_sms(
+                    to=caller_phone,
+                    body="Sorry we missed your call! How can we help you today? Reply with your name and we'll get back to you shortly.",
+                    from_number=company_record.phone_number
+                )
+                if sms_result.get("success"):
+                    print(f"Auto-SMS sent successfully to {caller_phone}")
+                else:
+                    print(f"Failed to send auto-SMS: {sms_result.get('error')}")
+            except Exception as e:
+                print(f"Error sending missed call SMS: {str(e)}")
         
         # Emit real-time event
         emit(
             event_name="telephony.call.received",
             payload={
-                "call_id": new_call.call_id,
-                "phone_number": new_call.phone_number,
-                "company_id": str(new_call.company_id),
-                "answered": not new_call.missed_call
+                "call_id": call_id,
+                "phone_number": caller_phone,
+                "company_id": str(company_record.id),
+                "answered": is_answered
             },
             tenant_id=tenant_id,
-            lead_id=new_call.call_id
+            lead_id=call_id
         )
         
-        return {"status": "success", "call_id": new_call.call_id}
+        return {"status": "success", "call_id": call_id}
     
     # Apply idempotency protection
     return with_idempotency(
