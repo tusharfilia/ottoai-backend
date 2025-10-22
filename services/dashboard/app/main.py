@@ -22,7 +22,7 @@ from app.obs.logging import setup_logging, get_logger
 from app.obs.tracing import setup_tracing, instrument_fastapi, instrument_requests, instrument_sqlalchemy
 from app.obs.middleware import ObservabilityMiddleware
 from app.obs.errors import register_error_handlers
-from app.obs.metrics import metrics
+from app.obs.metrics import metrics as metrics_collector
 from app.obs.sentry import setup_sentry
 
 # Setup observability
@@ -136,7 +136,7 @@ async def startup_event():
 @app.get("/metrics")
 async def metrics_endpoint():
     """Prometheus metrics endpoint."""
-    return metrics.get_metrics_response()
+    return metrics_collector.get_metrics_response()
 
 if __name__ == "__main__":
     import uvicorn
