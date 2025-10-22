@@ -97,7 +97,6 @@ async def verify_uwc_signature(
 
 
 @router.post("/asr/complete")
-@with_idempotency(provider="uwc", event_type="asr_complete")
 async def asr_complete_webhook(
     request: Request,
     x_uwc_signature: Optional[str] = Header(None, alias="X-UWC-Signature"),
@@ -209,7 +208,6 @@ async def asr_complete_webhook(
 
 
 @router.post("/rag/indexed")
-@with_idempotency(provider="uwc", event_type="rag_indexed")
 async def rag_indexed_webhook(
     request: Request,
     x_uwc_signature: Optional[str] = Header(None, alias="X-UWC-Signature"),
@@ -278,7 +276,6 @@ async def rag_indexed_webhook(
 
 
 @router.post("/training/status")
-@with_idempotency(provider="uwc", event_type="training_status")
 async def training_status_webhook(
     request: Request,
     x_uwc_signature: Optional[str] = Header(None, alias="X-UWC-Signature"),
@@ -350,7 +347,6 @@ async def training_status_webhook(
 
 
 @router.post("/analysis/complete")
-@with_idempotency(provider="uwc", event_type="analysis_complete")
 async def analysis_complete_webhook(
     request: Request,
     x_uwc_signature: Optional[str] = Header(None, alias="X-UWC-Signature"),
@@ -455,7 +451,6 @@ async def analysis_complete_webhook(
 
 
 @router.post("/followup/draft")
-@with_idempotency(provider="uwc", event_type="followup_draft")
 async def followup_draft_webhook(
     request: Request,
     x_uwc_signature: Optional[str] = Header(None, alias="X-UWC-Signature"),
