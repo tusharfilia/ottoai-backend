@@ -72,7 +72,7 @@ app.add_middleware(RateLimitMiddleware)
 app.include_router(health.router)  # Health checks first
 app.include_router(websocket.router)  # WebSocket endpoint
 app.include_router(webhooks_module.router)
-app.include_router(uwc_webhooks.router)  # UWC webhook handlers
+app.include_router(uwc_webhooks)  # UWC webhook handlers
 app.include_router(rag.router)  # RAG/Ask Otto endpoints
 app.include_router(analysis.router)  # Call analysis endpoints
 app.include_router(followups.router)  # Follow-up drafts endpoints
