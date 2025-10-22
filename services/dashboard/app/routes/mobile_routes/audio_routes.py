@@ -5,7 +5,7 @@ import os
 import uuid
 from datetime import datetime
 import asyncio
-from deepgram import Deepgram
+# Deepgram removed - using UWC ASR instead
 import json
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -22,11 +22,9 @@ router = APIRouter(prefix="/audio", tags=["audio"])
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Initialize Deepgram client with environment variable
+# Initialize UWC client lazily (only when needed)
 from app.config import settings
 from app.services.uwc_client import UWCClient
-
-deepgram = Deepgram(settings.DEEPGRAM_API_KEY)
 # Initialize UWC client lazily (only when needed)
 uwc_client = None
 
@@ -103,7 +101,7 @@ async def upload_audio(
     db: Session = Depends(get_db)
 ):
     """
-    Upload audio file and process it with Deepgram
+    Upload audio file and process it with UWC ASR
     """
     if recording_id not in transcripts:
         raise HTTPException(status_code=404, detail="Recording session not found")
@@ -143,7 +141,7 @@ async def upload_audio(
 
 def format_transcript_for_llm(transcript: dict) -> str:
     """
-    Format the Deepgram transcript into a clean format for LLM processing
+    Format the UWC ASR transcript into a clean format for LLM processing
     Returns a conversation in a clear speaker-by-speaker format with timestamps
     """
     try:
@@ -157,7 +155,7 @@ def format_transcript_for_llm(transcript: dict) -> str:
         # Check if we have utterances in the response
         if 'results' in transcript and 'utterances' in transcript['results']:
             utterances = transcript['results']['utterances']
-            logger.info(f"Processing {len(utterances)} utterances from Deepgram response")
+            logger.info(f"Processing {len(utterances)} utterances from UWC ASR response")
             
             for i, utterance in enumerate(utterances):
                 speaker = f"Speaker {utterance.get('speaker', i)}"
@@ -201,7 +199,7 @@ def format_transcript_for_llm(transcript: dict) -> str:
                     formatted_transcript.append("Could not extract transcript text")
         # Fall back to raw transcript if all else fails
         else:
-            logger.warning("Could not find expected structure in Deepgram response")
+            logger.warning("Could not find expected structure in UWC ASR response")
             try:
                 text = transcript.get('results', {}).get('channels', [{}])[0].get('alternatives', [{}])[0].get('transcript', '')
                 formatted_transcript.append(f"Transcript: {text}")
@@ -226,12 +224,12 @@ def format_timestamp(seconds: float) -> str:
 
 async def process_audio(recording_id: str, audio_path: str, db: Session):
     """
-    Process audio with UWC ASR (primary) or Deepgram (fallback) and store results
+    Process audio with UWC ASR and store results
     """
     try:
         response = None
         
-        # Try UWC ASR first if enabled
+        # Use UWC ASR for transcription
         if settings.ENABLE_UWC_ASR:
             try:
                 # Upload audio to S3 first for UWC to access
@@ -251,7 +249,6 @@ async def process_audio(recording_id: str, audio_path: str, db: Session):
                     model="nova-2"
                 )
                 
-                # Convert UWC response to Deepgram-like format for compatibility
                 if uwc_response and "results" in uwc_response:
                     response = uwc_response
                     logger.info(f"UWC ASR transcription successful for recording {recording_id}")
@@ -259,100 +256,84 @@ async def process_audio(recording_id: str, audio_path: str, db: Session):
                     raise Exception("UWC ASR returned invalid response format")
                     
             except Exception as e:
-                logger.warning(f"UWC ASR failed for recording {recording_id}, falling back to Deepgram: {str(e)}")
-                # Fall through to Deepgram fallback
+                logger.error(f"UWC ASR failed for recording {recording_id}: {str(e)}")
+                # No fallback - UWC is the only transcription service
+                return {"error": f"Transcription failed: {str(e)}"}
+        else:
+            logger.warning("UWC ASR is disabled - no transcription available")
+            return {"error": "Transcription service not configured"}
         
-        # Fallback to Deepgram if UWC is disabled or failed
-        if response is None:
-            logger.info(f"Using Deepgram transcription for recording {recording_id}")
-            with open(audio_path, "rb") as audio:
-                source = {"buffer": audio, "mimetype": "audio/wav"}
-                response = await deepgram.transcription.prerecorded(
-                    source,
-                    {
-                        "model": "nova-2",
-                        "punctuate": True,
-                        "diarize": True,
-                        "smart_format": True,
-                        "numerals": True,
-                        "paragraphs": True
-                    }
-                )
-            
-            # Log the raw Deepgram response
-            logger.info(f"Raw Deepgram response for recording {recording_id}: {json.dumps(response)}")
-            
-            # Store raw transcript
-            transcripts[recording_id]["transcript"] = response
-            
-            # Extract the formatted transcript with speaker information
-            transcript_text = ""
-            if 'results' in response and 'channels' in response['results']:
-                alternatives = response['results']['channels'][0]['alternatives']
-                if alternatives and 'paragraphs' in alternatives[0]:
-                    # Get the nicely formatted transcript with speaker information
-                    transcript_text = alternatives[0]['paragraphs']['transcript']
-                else:
-                    # Fall back to regular transcript
-                    transcript_text = alternatives[0].get('transcript', '')
+        # Store raw transcript
+        transcripts[recording_id]["transcript"] = response
+        
+        # Extract the formatted transcript with speaker information
+        transcript_text = ""
+        if 'results' in response and 'channels' in response['results']:
+            alternatives = response['results']['channels'][0]['alternatives']
+            if alternatives and 'paragraphs' in alternatives[0]:
+                # Get the nicely formatted transcript with speaker information
+                transcript_text = alternatives[0]['paragraphs']['transcript']
             else:
-                transcript_text = "Could not extract transcript text"
-            
-            transcripts[recording_id]["formatted_transcript"] = transcript_text
-            
-            # Log the transcript
-            logger.info(f"Transcript for recording {recording_id}: {transcript_text}")
-            
-            # Update status
-            transcripts[recording_id]["status"] = "completed"
-            
-            # If this recording is associated with a call, store it in the database
-            call_id = transcripts[recording_id].get("call_id")
-            logger.info(f"Looking for call with ID: {call_id}")
-            
-            if call_id:
-                try:
-                    # Find the call record
-                    logger.info(f"Attempting to find call with ID {call_id} in the database")
-                    call = db.query(Call).filter(Call.call_id == call_id).first()
+                # Fall back to regular transcript
+                transcript_text = alternatives[0].get('transcript', '')
+        else:
+            transcript_text = "Could not extract transcript text"
+        
+        transcripts[recording_id]["formatted_transcript"] = transcript_text
+        
+        # Log the transcript
+        logger.info(f"Transcript for recording {recording_id}: {transcript_text}")
+        
+        # Update status
+        transcripts[recording_id]["status"] = "completed"
+        
+        # If this recording is associated with a call, store it in the database
+        call_id = transcripts[recording_id].get("call_id")
+        logger.info(f"Looking for call with ID: {call_id}")
+        
+        if call_id:
+            try:
+                # Find the call record
+                logger.info(f"Attempting to find call with ID {call_id} in the database")
+                call = db.query(Call).filter(Call.call_id == call_id).first()
+                
+                if call:
+                    logger.info(f"Found call with ID {call_id}, updating with transcript")
+                    # Update existing call record with in-person transcript
+                    call.in_person_transcript = transcript_text
+                    call.updated_at = datetime.utcnow()
                     
-                    if call:
-                        logger.info(f"Found call with ID {call_id}, updating with transcript")
-                        # Update existing call record with in-person transcript
-                        call.in_person_transcript = transcript_text
-                        call.updated_at = datetime.utcnow()
+                    db.commit()
+                    logger.info(f"Database updated successfully for call ID {call_id}")
+                    transcripts[recording_id]["call_id"] = call.call_id
+                    
+                    # Automatically analyze the transcript and update call fields
+                    try:
+                        logger.info(f"Automatically analyzing transcript and updating call fields for call ID {call_id}")
                         
-                        db.commit()
-                        logger.info(f"Database updated successfully for call ID {call_id}")
-                        transcripts[recording_id]["call_id"] = call.call_id
+                        # Initialize the analyzer with the default process
+                        analyzer = TranscriptAnalyzer(process_name="v0")
                         
-                        # Automatically analyze the transcript and update call fields
-                        try:
-                            logger.info(f"Automatically analyzing transcript and updating call fields for call ID {call_id}")
+                        # Run the analysis
+                        analysis_result = analyzer.analyze_and_store(call_id, db)
+                        
+                        if "error" not in analysis_result:
+                            logger.info(f"Successfully analyzed transcript for call ID {call_id}")
+                        else:
+                            logger.error(f"Error analyzing transcript: {analysis_result['error']}")
                             
-                            # Initialize the analyzer with the default process
-                            analyzer = TranscriptAnalyzer(process_name="v0")
-                            
-                            # Run the analysis
-                            analysis_result = analyzer.analyze_and_store(call_id, db)
-                            
-                            if "error" not in analysis_result:
-                                logger.info(f"Successfully analyzed transcript for call ID {call_id}")
-                            else:
-                                logger.error(f"Error analyzing transcript: {analysis_result['error']}")
-                                
-                        except Exception as e:
-                            logger.error(f"Error in automatic transcript analysis: {e}", exc_info=True)
-                    else:
-                        logger.warning(f"Call with ID {call_id} not found in database")
-                        transcripts[recording_id]["error"] = f"Call with ID {call_id} not found"
-                except Exception as db_error:
-                    logger.error(f"Database error for call ID {call_id}: {db_error}", exc_info=True)
-                    transcripts[recording_id]["db_error"] = str(db_error)
-            else:
-                logger.warning(f"No call_id provided for recording {recording_id}")
-            
-            # TODO: Add LLM processing for fraud detection/summarization
+                    except Exception as e:
+                        logger.error(f"Error in automatic transcript analysis: {e}", exc_info=True)
+                else:
+                    logger.warning(f"Call with ID {call_id} not found in database")
+                    transcripts[recording_id]["error"] = f"Call with ID {call_id} not found"
+            except Exception as db_error:
+                logger.error(f"Database error for call ID {call_id}: {db_error}", exc_info=True)
+                transcripts[recording_id]["db_error"] = str(db_error)
+        else:
+            logger.warning(f"No call_id provided for recording {recording_id}")
+        
+        # TODO: Add LLM processing for fraud detection/summarization
             
     except Exception as e:
         transcripts[recording_id]["status"] = "error"
@@ -375,7 +356,7 @@ async def get_status(recording_id: str):
 @router.get("/raw-data/{recording_id}")
 async def get_raw_transcript(recording_id: str):
     """
-    Get the raw deepgram transcript data for debugging purposes
+    Get the raw UWC ASR transcript data for debugging purposes
     """
     if recording_id not in transcripts:
         raise HTTPException(status_code=404, detail="Recording session not found")

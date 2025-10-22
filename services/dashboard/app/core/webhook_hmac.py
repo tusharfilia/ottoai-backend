@@ -319,3 +319,4 @@ def require_clerk_webhook_signature(request: Request, body: bytes) -> bool:
             detail="Invalid Clerk webhook signature"
         )
     return True
+

@@ -293,3 +293,4 @@ def track_rag_query(
         uwc_request_id=uwc_request_id,
         fallback_used=fallback_used
     )
+

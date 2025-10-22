@@ -65,3 +65,4 @@ def cleanup_old_logs():
     except Exception as e:
         logger.error(f"Log cleanup failed: {str(e)}")
         return {"success": False, "error": str(e)}
+

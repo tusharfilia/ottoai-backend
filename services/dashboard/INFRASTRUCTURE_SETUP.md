@@ -216,3 +216,4 @@ If you encounter issues:
 2. Verify secrets: `flyctl secrets list --app tv-mvp-staging`
 3. Test health endpoint: `curl https://tv-mvp-staging.fly.dev/health/detailed`
 4. Check Fly.io status page for service issues
+

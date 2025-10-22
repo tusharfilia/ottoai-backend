@@ -94,3 +94,4 @@ def batch_analyze_calls(self, call_ids: list, tenant_id: str):
     except Exception as e:
         logger.error(f"Batch analysis failed: {str(e)}")
         raise self.retry(countdown=60 * (2 ** self.request.retries))
+

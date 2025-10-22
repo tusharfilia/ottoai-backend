@@ -29,3 +29,4 @@ class IdempotencyRecord(Base):
     
     def __repr__(self):
         return f"<IdempotencyRecord(id={self.id}, key={self.idempotency_key}, tenant={self.tenant_id})>"
+

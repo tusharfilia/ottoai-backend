@@ -56,3 +56,4 @@ class RAGTelemetry(Base):
     
     def __repr__(self):
         return f"<RAGTelemetry(id={self.id}, tenant={self.tenant_id}, user={self.user_id}, latency={self.latency_ms}ms)>"
+

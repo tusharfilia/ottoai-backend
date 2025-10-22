@@ -43,3 +43,4 @@ databases:
 
   - name: otto-redis
     plan: starter
+

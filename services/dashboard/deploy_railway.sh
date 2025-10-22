@@ -53,3 +53,4 @@ echo "   - Install Python dependencies"
 echo "   - Run database migrations"
 echo "   - Start the FastAPI server"
 echo "   - Provide a public URL"
+

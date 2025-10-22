@@ -139,3 +139,4 @@ def require_tenant_context(request: Request) -> dict:
         HTTPException: 403 if any context is missing
     """
     return get_tenant_context(request)
+

@@ -210,3 +210,4 @@ class PIISafeLogger:
 def get_pii_safe_logger(name: str) -> PIISafeLogger:
     """Get a logger that automatically masks PII."""
     return PIISafeLogger(name)
+

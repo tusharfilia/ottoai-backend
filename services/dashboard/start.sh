@@ -14,3 +14,4 @@ alembic upgrade head || echo "⚠️ Migration failed, continuing..."
 # Start the FastAPI server
 echo "🌐 Starting FastAPI server..."
 exec uvicorn app.main:app --host 0.0.0.0 --port $PORT
+

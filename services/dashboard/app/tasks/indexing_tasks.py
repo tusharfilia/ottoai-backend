@@ -101,3 +101,4 @@ def cleanup_indexed_documents():
     logger.info("Cleaning up indexed documents")
     # Implementation for cleanup
     pass
+
