@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
 from .routes import webhooks, company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics
 from .routes.mobile_routes import mobile_router
-from .routes.webhooks import uwc as uwc_webhooks
+from .routes.webhooks.uwc import router as uwc_webhooks
 from .services.bland_ai import BlandAI
 from .services.missing_reports_service import check_missing_reports
 from datetime import datetime, timedelta
