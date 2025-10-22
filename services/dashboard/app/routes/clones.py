@@ -2,7 +2,7 @@
 Personal Clone endpoints for voice/style training.
 Enables reps to train AI that mimics their communication style.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -20,15 +20,15 @@ from app.schemas.responses import APIResponse, PaginatedResponse, PaginationMeta
 from app.obs.logging import get_logger
 from app.obs.metrics import metrics
 
-logger = get_logger(__name__, Query)
+logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/clone", tags=["personal-clone", "training"])
 
 
 # Request/Response Schemas
 class TrainCloneRequest(BaseModel):
     """Request to train personal clone."""
-    rep_id): str = Query(...)
-    training_data_type): str = Query(...)
+    rep_id: str = Field(..., description="Sales rep ID to train clone for")
+    training_data_type: str = Field(..., description="Type of training data: calls, media, mixed")
     training_call_ids: Optional[List[int]] = Field(None, description="Call IDs to use for training")
     training_media_urls: Optional[List[str]] = Field(None, description="Video URLs (reels, shorts, presentations)")
     notes: Optional[str] = Field(None, description="Notes about training data")
