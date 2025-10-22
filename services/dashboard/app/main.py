@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
 from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics
-from .routes import webhooks as webhooks_module
+from .routes.webhooks import router as webhooks_router
 from .routes.mobile_routes import mobile_router
 from .routes.webhooks.uwc import router as uwc_webhooks
 from .services.bland_ai import BlandAI
@@ -71,7 +71,7 @@ app.add_middleware(RateLimitMiddleware)
 # Include routers
 app.include_router(health.router)  # Health checks first
 app.include_router(websocket.router)  # WebSocket endpoint
-app.include_router(webhooks_module.router)
+app.include_router(webhooks_router)
 app.include_router(uwc_webhooks.router)  # UWC webhook handlers
 app.include_router(rag.router)  # RAG/Ask Otto endpoints
 app.include_router(analysis.router)  # Call analysis endpoints
