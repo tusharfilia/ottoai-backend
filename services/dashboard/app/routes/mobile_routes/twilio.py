@@ -45,8 +45,15 @@ TWILIO_ACCOUNT_SID = settings.TWILIO_ACCOUNT_SID
 TWILIO_AUTH_TOKEN = settings.TWILIO_AUTH_TOKEN
 TWILIO_PHONE_NUMBER = settings.TWILIO_FROM_NUMBER
 
-# Initialize Twilio client
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+# Initialize Twilio client lazily (only when needed)
+twilio_client = None
+
+def get_twilio_client():
+    """Get Twilio client, creating it if needed."""
+    global twilio_client
+    if twilio_client is None:
+        twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    return twilio_client
 
 class TwilioTextRequest(BaseModel):
     """Structure for text message request data"""
