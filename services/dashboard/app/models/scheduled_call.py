@@ -12,7 +12,7 @@ class ScheduledCall(Base):
     __tablename__ = "scheduled_calls"
 
     id = Column(Integer, primary_key=True, index=True)
-    call_id = Column(String, ForeignKey("calls.call_id"))
+    call_id = Column(Integer, ForeignKey("calls.call_id"))
     company_id = Column(String, ForeignKey("companies.id"))
     scheduled_time = Column(DateTime, nullable=False)
     call_type = Column(String, nullable=False)
