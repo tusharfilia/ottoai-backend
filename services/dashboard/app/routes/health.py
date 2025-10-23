@@ -37,7 +37,8 @@ async def detailed_health_check(db: Session = Depends(get_db)):
     
     # Check database
     try:
-        db.execute("SELECT 1")
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
         health_status["checks"]["database"] = {"status": "healthy", "response_time_ms": 0}
     except Exception as e:
         health_status["checks"]["database"] = {"status": "unhealthy", "error": str(e)}
@@ -45,11 +46,15 @@ async def detailed_health_check(db: Session = Depends(get_db)):
     
     # Check Redis
     try:
-        redis_client = redis.from_url(settings.REDIS_URL)
-        start_time = datetime.utcnow()
-        redis_client.ping()
-        response_time = (datetime.utcnow() - start_time).total_seconds() * 1000
-        health_status["checks"]["redis"] = {"status": "healthy", "response_time_ms": response_time}
+        if not settings.REDIS_URL:
+            health_status["checks"]["redis"] = {"status": "unhealthy", "error": "REDIS_URL not configured"}
+            health_status["status"] = "unhealthy"
+        else:
+            redis_client = redis.from_url(settings.REDIS_URL)
+            start_time = datetime.utcnow()
+            redis_client.ping()
+            response_time = (datetime.utcnow() - start_time).total_seconds() * 1000
+            health_status["checks"]["redis"] = {"status": "healthy", "response_time_ms": response_time}
     except Exception as e:
         health_status["checks"]["redis"] = {"status": "unhealthy", "error": str(e)}
         health_status["status"] = "unhealthy"
@@ -61,7 +66,7 @@ async def detailed_health_check(db: Session = Depends(get_db)):
             's3',
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            region_name=settings.AWS_DEFAULT_REGION
+            region_name=settings.AWS_REGION
         )
         start_time = datetime.utcnow()
         s3_client.head_bucket(Bucket=settings.S3_BUCKET)
