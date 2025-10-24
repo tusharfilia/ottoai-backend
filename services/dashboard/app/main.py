@@ -3,7 +3,7 @@ from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
-from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics
+from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue
 from .routes import webhooks as webhooks_module
 from .routes.mobile_routes import mobile_router
 from .routes.webhook_handlers.uwc import router as uwc_webhooks
@@ -89,6 +89,9 @@ app.include_router(bland.router)
 app.include_router(call_rail.router)
 app.include_router(scheduled_tasks.router)
 app.include_router(delete.router)
+app.include_router(sms_handler.router)  # SMS handling endpoints
+app.include_router(enhanced_callrail.router)  # Enhanced CallRail webhook handlers
+app.include_router(missed_call_queue.router)  # Missed call queue management
 
 # Include mobile routes
 app.include_router(mobile_router)
@@ -132,6 +135,11 @@ async def startup_event():
     # Start the missing reports checker in the background
     asyncio.create_task(check_missing_reports_task())
     logger.info("Started missing reports checker task")
+    
+    # Start the missed call queue processor
+    from app.services.queue_processor import queue_processor
+    await queue_processor.start()
+    logger.info("Started missed call queue processor")
 
 @app.get("/metrics")
 async def metrics_endpoint():

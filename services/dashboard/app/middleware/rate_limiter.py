@@ -17,12 +17,17 @@ logger = logging.getLogger(__name__)
 
 
 class RateLimiter:
-    """Rate limiter using Redis for distributed rate limiting."""
+    """Enhanced rate limiter with abuse detection and tenant isolation."""
     
     def __init__(self, redis_url: str = None):
         self.redis_url = redis_url or settings.REDIS_URL
         self.redis_client = None
         self._connect_redis()
+        
+        # Abuse detection thresholds
+        self.abuse_threshold = 100  # Requests per minute to trigger abuse detection
+        self.abuse_window = 60  # Seconds
+        self.block_duration = 3600  # Seconds to block abusive clients
     
     def _connect_redis(self):
         """Connect to Redis with error handling."""
@@ -116,6 +121,70 @@ class RateLimiter:
         limit = limit or settings.RATE_LIMIT_TENANT
         key = self._get_redis_key("tenant", f"tenant:{tenant_id}")
         return self._check_rate_limit(key, limit)
+    
+    def check_abuse_detection(self, tenant_id: str, client_ip: str) -> tuple:
+        """Check for abuse patterns and block if necessary."""
+        if not self.redis_client:
+            return True, 0
+        
+        try:
+            # Check if client is already blocked
+            block_key = f"abuse_block:{tenant_id}:{client_ip}"
+            if self.redis_client.exists(block_key):
+                return False, self.block_duration
+            
+            # Count requests in abuse window
+            abuse_key = f"abuse_count:{tenant_id}:{client_ip}"
+            current_time = int(time.time())
+            window_start = current_time - self.abuse_window
+            
+            # Remove expired entries
+            self.redis_client.zremrangebyscore(abuse_key, 0, window_start)
+            
+            # Count current requests
+            request_count = self.redis_client.zcard(abuse_key)
+            
+            if request_count >= self.abuse_threshold:
+                # Block the client
+                self.redis_client.setex(block_key, self.block_duration, "blocked")
+                logger.warning(f"Abuse detected and client blocked: {client_ip} for tenant {tenant_id}")
+                return False, self.block_duration
+            
+            # Add current request
+            self.redis_client.zadd(abuse_key, {str(current_time): current_time})
+            self.redis_client.expire(abuse_key, self.abuse_window)
+            
+            return True, 0
+            
+        except Exception as e:
+            logger.error(f"Error in abuse detection: {e}")
+            return True, 0
+    
+    def emergency_stop(self, tenant_id: str) -> bool:
+        """Emergency stop for a tenant - blocks all requests."""
+        if not self.redis_client:
+            return False
+        
+        try:
+            emergency_key = f"emergency_stop:{tenant_id}"
+            self.redis_client.setex(emergency_key, 3600, "stopped")  # 1 hour
+            logger.critical(f"Emergency stop activated for tenant {tenant_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error activating emergency stop: {e}")
+            return False
+    
+    def is_emergency_stopped(self, tenant_id: str) -> bool:
+        """Check if tenant is in emergency stop mode."""
+        if not self.redis_client:
+            return False
+        
+        try:
+            emergency_key = f"emergency_stop:{tenant_id}"
+            return self.redis_client.exists(emergency_key)
+        except Exception as e:
+            logger.error(f"Error checking emergency stop: {e}")
+            return False
 
 
 # Global rate limiter instance
