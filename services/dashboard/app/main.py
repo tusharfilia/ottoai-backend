@@ -3,7 +3,7 @@ from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
-from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics
+from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics, post_call_analysis
 from .routes import webhooks as webhooks_module
 from .routes.mobile_routes import mobile_router
 from .routes.webhook_handlers.uwc import router as uwc_webhooks
@@ -93,6 +93,7 @@ app.include_router(sms_handler.router)  # SMS handling endpoints
 app.include_router(enhanced_callrail.router)  # Enhanced CallRail webhook handlers
 app.include_router(missed_call_queue.router)  # Missed call queue management
 app.include_router(live_metrics.router)  # Live metrics and real-time KPIs
+app.include_router(post_call_analysis.router)  # Post-call analysis and coaching
 
 # Include mobile routes
 app.include_router(mobile_router)
@@ -146,6 +147,11 @@ async def startup_event():
     from app.services.live_metrics_service import live_metrics_service
     await live_metrics_service.start()
     logger.info("Started live metrics service")
+    
+    # Start the post-call analysis service
+    from app.services.post_call_analysis_service import post_call_analysis_service
+    await post_call_analysis_service.start()
+    logger.info("Started post-call analysis service")
 
 @app.get("/metrics")
 async def metrics_endpoint():
@@ -159,6 +165,11 @@ async def shutdown_event():
     from app.services.live_metrics_service import live_metrics_service
     await live_metrics_service.stop()
     logger.info("Stopped live metrics service")
+    
+    # Stop the post-call analysis service
+    from app.services.post_call_analysis_service import post_call_analysis_service
+    await post_call_analysis_service.stop()
+    logger.info("Stopped post-call analysis service")
     
     # Stop the missed call queue processor
     from app.services.queue_processor import queue_processor
