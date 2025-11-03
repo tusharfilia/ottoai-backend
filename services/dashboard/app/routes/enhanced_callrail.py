@@ -323,8 +323,16 @@ async def handle_call_completed(
         # Find company by tracking number (try multiple formats)
         company_record = find_company_by_tracking_number(tracking_number, db)
         if not company_record:
-            logger.warning(f"No company found for tracking number {tracking_number}")
+            logger.warning(f"No company found for tracking number {tracking_number} (tried normalized formats)")
+            # Log all available companies for debugging
+            all_companies = db.query(company.Company).all()
+            if all_companies:
+                logger.info(f"Available companies: {[(c.id, c.name, c.phone_number) for c in all_companies]}")
+            else:
+                logger.warning("No companies found in database at all!")
             return {"status": "error", "message": "Company not found"}
+        
+        logger.info(f"Found company: {company_record.id} ({company_record.name}) for tracking number {tracking_number}")
         
         # Find or create call record by phone number and company
         # For missed calls, we may not have a pre-existing record, so create one if needed
