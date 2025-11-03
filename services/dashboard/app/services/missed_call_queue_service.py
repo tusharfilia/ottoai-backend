@@ -107,6 +107,14 @@ class MissedCallQueueService:
             
             logger.info(f"Added missed call to queue: {queue_entry.id}")
             
+            # Immediately process the first SMS attempt (don't wait for queue processor)
+            try:
+                result = await self._process_missed_call(queue_entry, db)
+                logger.info(f"Immediate SMS processing result for queue entry {queue_entry.id}: {result}")
+            except Exception as e:
+                logger.error(f"Failed to send immediate SMS for queue entry {queue_entry.id}: {str(e)}")
+                # Don't fail the whole operation if SMS fails - queue will retry later
+            
             # Emit real-time event
             emit(
                 event_name="missed_call.queued",

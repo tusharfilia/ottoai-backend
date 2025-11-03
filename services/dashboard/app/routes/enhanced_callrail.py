@@ -222,6 +222,8 @@ async def handle_call_completed(
     """
     Handle CallRail 'call.completed' webhook
     Processes recording, sends to UWC ASR, and generates insights
+    Note: CallRail doesn't have a separate 'call.missed' webhook, so we detect
+    missed calls from the 'answered' field in this webhook.
     """
     try:
         data = await request.json()
@@ -230,6 +232,7 @@ async def handle_call_completed(
         callrail_call_id = data.get("call_id")
         recording_url = data.get("recording_url")
         duration = data.get("duration")
+        is_answered = data.get("answered", True)  # Default to True if not provided
         
         # Find call record
         call_record = db.query(call.Call).filter_by(callrail_call_id=callrail_call_id).first()
@@ -237,22 +240,40 @@ async def handle_call_completed(
             logger.warning(f"Call record not found for CallRail call ID: {callrail_call_id}")
             return {"status": "error", "message": "Call record not found"}
         
+        # Check if this was a missed call
+        call_record.missed_call = not is_answered
+        
         # Update call record
-        call_record.status = "completed"
+        if not is_answered:
+            call_record.status = "missed"
+            logger.info(f"⚠️ MISSED CALL DETECTED in call.completed webhook - Routing to missed call queue")
+            
+            # Route to Missed Call Queue Service
+            from app.services.missed_call_queue_service import MissedCallQueueService
+            missed_call_service = MissedCallQueueService()
+            
+            background_tasks.add_task(
+                missed_call_service.add_missed_call_to_queue,
+                call_record.call_id,
+                call_record.phone_number,
+                call_record.company_id,
+                db
+            )
+        else:
+            call_record.status = "completed"
+        
         call_record.duration = duration
         call_record.recording_url = recording_url
         call_record.updated_at = datetime.utcnow()
         db.commit()
         
-        # Check if human has taken over and stop AI automation
-        from app.services.missed_call_queue_service import MissedCallQueueService
-        missed_call_service = MissedCallQueueService()
-        
-        # Check for human takeover before processing
-        await missed_call_service.check_and_stop_ai_automation(
-            phone=call_record.phone_number,
-            db=db
-        )
+        # Check for human takeover before processing (only for answered calls with recordings)
+        if is_answered:
+            missed_call_service = MissedCallQueueService()
+            await missed_call_service.check_and_stop_ai_automation(
+                phone=call_record.phone_number,
+                db=db
+            )
         
         # Process recording with UWC ASR
         if recording_url:

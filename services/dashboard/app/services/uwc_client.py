@@ -10,9 +10,11 @@ import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import httpx
+import jwt
 from app.config import settings
 from app.obs.logging import get_logger
 from app.obs.metrics import metrics
+from app.services.circuit_breaker import circuit_breaker_manager, UWCClientError
 
 logger = get_logger(__name__)
 
@@ -51,7 +53,8 @@ class UWCClient:
     
     def __init__(self):
         self.base_url = settings.UWC_BASE_URL
-        self.api_key = settings.UWC_API_KEY
+        self.api_key = settings.UWC_API_KEY  # legacy; prefer JWT
+        self.jwt_secret = settings.UWC_JWT_SECRET
         self.hmac_secret = settings.UWC_HMAC_SECRET
         self.version = settings.UWC_VERSION
         self.use_staging = settings.USE_UWC_STAGING
@@ -103,6 +106,24 @@ class UWCClient:
         
         return signature
     
+    def _generate_jwt(self, company_id: str) -> str:
+        """Generate short-lived HS256 JWT for UWC per OpenAPI (HTTP Bearer)."""
+        if not self.jwt_secret:
+            logger.warning("UWC_JWT_SECRET not configured; falling back to API key if present")
+            return ""
+        iat = int(time.time())
+        exp = iat + 60 * 5  # 5 minutes TTL
+        claims = {
+            "company_id": company_id,
+            "iat": iat,
+            "exp": exp,
+            "iss": "otto-backend",
+            "aud": "uwc"
+        }
+        token = jwt.encode(claims, self.jwt_secret, algorithm="HS256")
+        # PyJWT returns str in v2+
+        return token
+
     def _get_headers(
         self,
         company_id: str,
@@ -121,8 +142,10 @@ class UWCClient:
             Dictionary of HTTP headers
         """
         timestamp = datetime.utcnow().isoformat() + "Z"
+        bearer = self._generate_jwt(company_id)
+        auth_header = f"Bearer {bearer}" if bearer else (f"Bearer {self.api_key}" if self.api_key else "")
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": auth_header,
             "X-Company-ID": company_id,
             "X-Request-ID": request_id,
             "X-UWC-Version": self.version,
@@ -173,87 +196,96 @@ class UWCClient:
         
         url = f"{self.base_url}{endpoint}"
         headers = self._get_headers(company_id, request_id, payload)
+        # Idempotency for mutating requests
+        if method in ("POST", "PUT", "DELETE"):
+            headers.setdefault("Idempotency-Key", request_id)
         
         start_time = time.time()
         
-        try:
+        async def _do_http():
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 logger.info(
                     f"UWC API request: {method} {endpoint} "
                     f"(company_id={company_id}, request_id={request_id}, retry={retry_count})"
                 )
-                
                 if method == "GET":
-                    response = await client.get(url, headers=headers)
+                    return await client.get(url, headers=headers)
                 elif method == "POST":
-                    response = await client.post(url, headers=headers, json=payload)
+                    return await client.post(url, headers=headers, json=payload)
                 elif method == "PUT":
-                    response = await client.put(url, headers=headers, json=payload)
+                    return await client.put(url, headers=headers, json=payload)
                 elif method == "DELETE":
-                    response = await client.delete(url, headers=headers)
+                    return await client.delete(url, headers=headers)
                 else:
                     raise ValueError(f"Unsupported HTTP method: {method}")
-                
-                latency_ms = (time.time() - start_time) * 1000
-                
-                # Record metrics
-                metrics.record_uwc_request(
-                    endpoint=endpoint,
-                    method=method,
-                    status_code=response.status_code,
-                    latency_ms=latency_ms
+
+        breaker = circuit_breaker_manager.get_breaker(
+            name=f"uwc:{endpoint}", tenant_id=company_id, failure_threshold=5, recovery_timeout=30, expected_exception=Exception
+        )
+
+        try:
+            response = await breaker.call(_do_http)
+            
+            latency_ms = (time.time() - start_time) * 1000
+            
+            # Record metrics
+            metrics.record_uwc_request(
+                endpoint=endpoint,
+                method=method,
+                status_code=response.status_code,
+                latency_ms=latency_ms
+            )
+            
+            # Handle response
+            if response.status_code == 200:
+                logger.info(
+                    f"UWC API success: {method} {endpoint} "
+                    f"(status={response.status_code}, latency={latency_ms:.2f}ms)"
                 )
-                
-                # Handle response
-                if response.status_code == 200:
-                    logger.info(
-                        f"UWC API success: {method} {endpoint} "
-                        f"(status={response.status_code}, latency={latency_ms:.2f}ms)"
+                return response.json()
+            
+            elif response.status_code in [401, 403]:
+                logger.error(
+                    f"UWC API authentication error: {method} {endpoint} "
+                    f"(status={response.status_code}, response={response.text})"
+                )
+                raise UWCAuthenticationError(
+                    f"Authentication failed: {response.status_code} - {response.text}"
+                )
+            
+            elif response.status_code == 429:
+                logger.warning(
+                    f"UWC API rate limit exceeded: {method} {endpoint} "
+                    f"(retry={retry_count}/{self.max_retries})"
+                )
+                if retry_count < self.max_retries:
+                    return await self._retry_request(
+                        method, endpoint, company_id, request_id, payload, retry_count
                     )
-                    return response.json()
-                
-                elif response.status_code in [401, 403]:
-                    logger.error(
-                        f"UWC API authentication error: {method} {endpoint} "
-                        f"(status={response.status_code}, response={response.text})"
+                raise UWCRateLimitError("Rate limit exceeded after max retries")
+            
+            elif response.status_code >= 500:
+                logger.error(
+                    f"UWC API server error: {method} {endpoint} "
+                    f"(status={response.status_code}, response={response.text}, "
+                    f"retry={retry_count}/{self.max_retries})"
+                )
+                if retry_count < self.max_retries:
+                    return await self._retry_request(
+                        method, endpoint, company_id, request_id, payload, retry_count
                     )
-                    raise UWCAuthenticationError(
-                        f"Authentication failed: {response.status_code} - {response.text}"
-                    )
-                
-                elif response.status_code == 429:
-                    logger.warning(
-                        f"UWC API rate limit exceeded: {method} {endpoint} "
-                        f"(retry={retry_count}/{self.max_retries})"
-                    )
-                    if retry_count < self.max_retries:
-                        return await self._retry_request(
-                            method, endpoint, company_id, request_id, payload, retry_count
-                        )
-                    raise UWCRateLimitError("Rate limit exceeded after max retries")
-                
-                elif response.status_code >= 500:
-                    logger.error(
-                        f"UWC API server error: {method} {endpoint} "
-                        f"(status={response.status_code}, response={response.text}, "
-                        f"retry={retry_count}/{self.max_retries})"
-                    )
-                    if retry_count < self.max_retries:
-                        return await self._retry_request(
-                            method, endpoint, company_id, request_id, payload, retry_count
-                        )
-                    raise UWCServerError(
-                        f"Server error: {response.status_code} - {response.text}"
-                    )
-                
-                else:
-                    logger.error(
-                        f"UWC API error: {method} {endpoint} "
-                        f"(status={response.status_code}, response={response.text})"
-                    )
-                    raise UWCClientError(
-                        f"Request failed: {response.status_code} - {response.text}"
-                    )
+                raise UWCServerError(
+                    f"Server error: {response.status_code} - {response.text}"
+                )
+            
+            else:
+                logger.error(
+                    f"UWC API error: {method} {endpoint} "
+                    f"(status={response.status_code}, response={response.text})"
+                )
+                raise UWCClientError(
+                    f"Request failed: {response.status_code} - {response.text}"
+                )
         
         except httpx.TimeoutException as e:
             latency_ms = (time.time() - start_time) * 1000
@@ -355,7 +387,7 @@ class UWCClient:
             payload
         )
     
-    # ASR Single Transcription (Mock API compatible)
+    # ASR Single Transcription (per OpenAPI)
     async def transcribe_audio(
         self,
         company_id: str,
@@ -384,16 +416,42 @@ class UWCClient:
         if model:
             payload["model"] = model
         
-        # Shunya mock API path is /api/v1/asr/transcribe
+        # OpenAPI path: /api/v1/transcription/transcribe
         return await self._make_request(
             "POST",
-            "/api/v1/asr/transcribe",
+            "/api/v1/transcription/transcribe",
             company_id,
             request_id,
             payload
         )
+
+    async def get_transcription_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        return await self._make_request(
+            "GET",
+            f"/api/v1/transcription/status/{call_id}",
+            company_id,
+            request_id,
+        )
+
+    async def get_transcript(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        return await self._make_request(
+            "GET",
+            f"/api/v1/transcription/transcript/{call_id}",
+            company_id,
+            request_id,
+        )
     
-    # RAG Query
+    # RAG Query (per OpenAPI /api/v1/search/)
     async def query_rag(
         self,
         company_id: str,
@@ -416,26 +474,21 @@ class UWCClient:
             RAG query response with results and metadata
         """
         payload = {
-            "request_id": request_id,
-            "company_id": company_id,
             "query": query,
-            "context": context,
-            "options": options or {
-                "max_results": 10,
-                "similarity_threshold": 0.7,
-                "include_metadata": True
-            }
+            "document_types": options.get("document_types") if options else None,
+            "limit": (options or {}).get("limit", 10),
+            "score_threshold": (options or {}).get("score_threshold", 0),
+            "filters": (options or {}).get("filters"),
         }
-        
         return await self._make_request(
             "POST",
-            "/uwc/v1/rag/query",
+            "/api/v1/search/",
             company_id,
             request_id,
             payload
         )
     
-    # Document Indexing
+    # Document Indexing (legacy - kept for backward compatibility)
     async def index_documents(
         self,
         company_id: str,
@@ -444,7 +497,8 @@ class UWCClient:
         options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Index documents for RAG system.
+        Index documents for RAG system (legacy method).
+        Use ingest_document() for new implementations.
         
         Args:
             company_id: Tenant/company ID
@@ -472,6 +526,71 @@ class UWCClient:
             company_id,
             request_id,
             payload
+        )
+    
+    # Document Ingestion to UWC (per OpenAPI /api/v1/ingestion/documents/upload)
+    async def ingest_document(
+        self,
+        company_id: str,
+        request_id: str,
+        file_url: str,
+        document_type: str,
+        filename: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Ingest a document to UWC for processing.
+        Call this after uploading file to S3.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            file_url: S3 URL or public URL of the document
+            document_type: Type of document (sop, training, reference)
+            filename: Original filename
+            metadata: Optional document metadata
+        
+        Returns:
+            Ingestion response with document_id, status, job_id
+        """
+        payload = {
+            "company_id": company_id,
+            "document_name": filename,
+            "document_type": document_type,
+            "url": file_url,
+            "metadata": metadata or {}
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/api/v1/ingestion/documents/upload",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    async def get_document_status(
+        self,
+        company_id: str,
+        request_id: str,
+        document_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get document processing status from UWC.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            document_id: Document ID returned from ingestion
+        
+        Returns:
+            Document status response
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/ingestion/{document_id}/status",
+            company_id,
+            request_id
         )
     
     # Training Job Submission
@@ -513,7 +632,7 @@ class UWCClient:
             payload
         )
     
-    # Follow-up Draft Generation
+    # Follow-up Draft Generation (keep for future when available)
     async def generate_followup_draft(
         self,
         company_id: str,
@@ -559,6 +678,237 @@ class UWCClient:
             company_id,
             request_id,
             payload
+        )
+    
+    # Call Summarization (per OpenAPI /api/v1/summarization/summarize)
+    async def summarize_call(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Summarize a call transcript using UWC.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID to summarize
+            options: Optional summarization options (length, focus, etc.)
+        
+        Returns:
+            Summarization response with summary, key_points, action_items
+        """
+        payload = {
+            "call_id": call_id
+        }
+        if options:
+            payload.update(options)
+        
+        return await self._make_request(
+            "POST",
+            "/api/v1/summarization/summarize",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    async def get_summarization_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get summarization status for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Summarization status response
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/summarization/status/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Objections (per OpenAPI /api/v1/analysis/objections/{call_id})
+    async def detect_objections(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Detect objections in a call transcript.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Objections response with detected objections list
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/objections/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Lead Qualification (per OpenAPI /api/v1/analysis/qualification/{call_id})
+    async def qualify_lead(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Qualify a lead from a call transcript.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Lead qualification response with BANT scores and qualification level
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/qualification/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - SOP Compliance (per OpenAPI /api/v1/analysis/compliance/{call_id})
+    async def check_compliance(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Check SOP compliance for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Compliance check response with compliance score, violations, recommendations
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/compliance/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Complete Analysis (per OpenAPI /api/v1/analysis/complete/{call_id})
+    async def get_complete_analysis(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get complete analysis results for a call (summary, objections, qualification, compliance).
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Complete analysis response with all analysis types
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/complete/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Start Analysis (per OpenAPI /api/v1/analysis/start/{call_id})
+    async def start_analysis(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Start analysis pipeline for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Analysis start response with analysis types and status
+        """
+        return await self._make_request(
+            "POST",
+            f"/api/v1/analysis/start/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    async def get_analysis_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get analysis status for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Analysis status response with status per analysis type
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/status/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    async def get_call_summary(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get call summary (alternative endpoint).
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Call summary response
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/summary/{call_id}",
+            company_id,
+            request_id
         )
 
 

@@ -145,7 +145,25 @@ async def call_complete_webhook(call_data: dict, background_tasks: BackgroundTas
     # Update the call record with company_id
     call_record.company_id = company_record.id
     call_record.transcript = call_data.get("transcription")
-    call_record.missed_call = not call_data.get("answered", True)
+    is_answered = call_data.get("answered", True)
+    call_record.missed_call = not is_answered
+    
+    # Route missed calls to missed call queue service
+    if not is_answered:
+        print(f"⚠️ MISSED CALL DETECTED - Routing to missed call queue")
+        from app.services.missed_call_queue_service import MissedCallQueueService
+        missed_call_service = MissedCallQueueService()
+        background_tasks.add_task(
+            missed_call_service.add_missed_call_to_queue,
+            call_record.call_id,
+            call_record.phone_number,
+            call_record.company_id,
+            db
+        )
+        # Update status
+        call_record.status = "missed"
+    else:
+        call_record.status = "completed"
     
     # Extract information using LLM
     if call_data.get("transcription"):
