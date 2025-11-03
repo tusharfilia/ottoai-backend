@@ -380,7 +380,7 @@ In the meantime, you can:
 We're here to help! 🏠"""
         
         # Send SMS via Twilio
-        sms_result = twilio_service.send_sms(
+        sms_result = await twilio_service.send_sms(
             to=to_number,
             body=welcome_message,
             from_number=company_record.phone_number
@@ -459,7 +459,7 @@ async def send_sms_to_customer(
         )
         
         # Send SMS
-        sms_result = twilio_service.send_sms(
+        sms_result = await twilio_service.send_sms(
             to=call_record.phone_number,
             body=message,
             from_number=company_record.phone_number

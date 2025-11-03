@@ -244,7 +244,7 @@ class MissedCallQueueService:
             )
             
             # Send SMS via Twilio
-            sms_result = self.twilio_service.send_sms(
+            sms_result = await self.twilio_service.send_sms(
                 to=queue_entry.customer_phone,
                 body=sms_content,
                 from_number=company_record.phone_number
