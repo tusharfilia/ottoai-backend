@@ -61,7 +61,12 @@ def get_db(request: Request) -> Generator[Session, None, None]:
     tenant_id = getattr(request.state, 'tenant_id', None)
     
     # Only allow non-tenant sessions for specific exempt endpoints
-    exempt_paths = ["/health", "/metrics", "/docs", "/redoc", "/openapi.json"]
+    exempt_paths = [
+        "/health", "/metrics", "/docs", "/redoc", "/openapi.json",
+        "/call-complete", "/callrail/", "/pre-call", "/call-modified",
+        "/sms/callrail-webhook", "/sms/twilio-webhook", "/twilio-webhook",
+        "/mobile/twilio-", "/clerk-webhook"
+    ]
     is_exempt = any(request.url.path.startswith(path) for path in exempt_paths)
     
     if not tenant_id and not is_exempt:

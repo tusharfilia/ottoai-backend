@@ -72,7 +72,16 @@ class TenantContextMiddleware:
             "/docs",
             "/redoc",
             "/openapi.json",
-            "/favicon.ico"
+            "/favicon.ico",
+            "/call-complete",  # CallRail webhook
+            "/callrail/",  # CallRail webhooks
+            "/pre-call",  # CallRail pre-call webhook
+            "/call-modified",  # CallRail call-modified webhook
+            "/sms/callrail-webhook",  # CallRail SMS webhook
+            "/sms/twilio-webhook",  # Twilio SMS webhook
+            "/twilio-webhook",  # Twilio webhook
+            "/mobile/twilio-",  # Twilio mobile webhooks
+            "/clerk-webhook",  # Clerk webhook
         ]
         
         return any(request.url.path.startswith(path) for path in skip_paths)
