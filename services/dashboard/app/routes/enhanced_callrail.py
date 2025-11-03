@@ -12,6 +12,7 @@ from app.middleware.rate_limiter import limits
 from app.services.idempotency import with_idempotency
 from app.realtime.bus import emit
 from datetime import datetime, timedelta
+from typing import Optional
 import json
 import requests
 import logging
@@ -21,6 +22,63 @@ router = APIRouter()
 
 # Initialize services
 twilio_service = TwilioService()
+
+def normalize_phone_number(phone: str) -> str:
+    """
+    Normalize phone number for comparison by removing all non-digit characters
+    and ensuring it starts with country code (1 for US/Canada).
+    
+    Examples:
+        +1 (202) 831-3219 -> 12028313219
+        +12028313219 -> 12028313219
+        (202) 831-3219 -> 12028313219
+    """
+    if not phone:
+        return ""
+    # Remove all non-digit characters
+    digits_only = ''.join(filter(str.isdigit, phone))
+    # If it starts with 1 and is 11 digits, keep it
+    # If it's 10 digits, assume US number and add 1
+    if len(digits_only) == 10:
+        return "1" + digits_only
+    elif len(digits_only) == 11 and digits_only.startswith("1"):
+        return digits_only
+    else:
+        # Return as-is if it doesn't match expected patterns
+        return digits_only
+
+def find_company_by_tracking_number(tracking_number: str, db: Session) -> Optional[company.Company]:
+    """
+    Find company by tracking number, trying multiple formats.
+    """
+    if not tracking_number:
+        return None
+    
+    # Try exact match first
+    company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+    if company_record:
+        return company_record
+    
+    # Try normalized comparison
+    normalized_tracking = normalize_phone_number(tracking_number)
+    if normalized_tracking:
+        # Get all companies and compare normalized phone numbers
+        all_companies = db.query(company.Company).all()
+        for comp in all_companies:
+            if comp.phone_number:
+                normalized_company_phone = normalize_phone_number(comp.phone_number)
+                if normalized_company_phone == normalized_tracking:
+                    logger.info(f"Found company {comp.id} by normalized phone match: {normalized_tracking}")
+                    return comp
+    
+    # Try without leading + sign
+    if tracking_number.startswith("+"):
+        without_plus = tracking_number[1:]
+        company_record = db.query(company.Company).filter_by(phone_number=without_plus).first()
+        if company_record:
+            return company_record
+    
+    return None
 
 @router.post("/callrail/call.incoming")
 @limits(tenant="30/minute")
@@ -46,8 +104,8 @@ async def handle_call_incoming(
         if not all([call_id, caller_number, tracking_number]):
             raise HTTPException(status_code=400, detail="Missing required call data")
         
-        # Find company by tracking number
-        company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+        # Find company by tracking number (try multiple formats)
+        company_record = find_company_by_tracking_number(tracking_number, db)
         if not company_record:
             logger.warning(f"No company found for tracking number {tracking_number}")
             return {"status": "error", "message": "Company not found"}
@@ -120,8 +178,8 @@ async def handle_call_answered(
         duration = data.get("duration")
         csr_id = data.get("csr_id")
         
-        # Find company by tracking number
-        company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+        # Find company by tracking number (try multiple formats)
+        company_record = find_company_by_tracking_number(tracking_number, db)
         if not company_record:
             logger.warning(f"No company found for tracking number {tracking_number}")
             return {"status": "error", "message": "Company not found"}
@@ -185,8 +243,8 @@ async def handle_call_missed(
         customer_phone = data.get("customer_phone_number") or data.get("callernum") or data.get("caller_number")
         tracking_number = data.get("tracking_phone_number") or data.get("trackingnum") or data.get("tracking_number")
         
-        # Find company by tracking number
-        company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+        # Find company by tracking number (try multiple formats)
+        company_record = find_company_by_tracking_number(tracking_number, db)
         if not company_record:
             logger.warning(f"No company found for tracking number {tracking_number}")
             return {"status": "error", "message": "Company not found"}
@@ -262,8 +320,8 @@ async def handle_call_completed(
         duration = data.get("duration")
         is_answered = data.get("answered", True)  # Default to True if not provided
         
-        # Find company by tracking number
-        company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+        # Find company by tracking number (try multiple formats)
+        company_record = find_company_by_tracking_number(tracking_number, db)
         if not company_record:
             logger.warning(f"No company found for tracking number {tracking_number}")
             return {"status": "error", "message": "Company not found"}
