@@ -113,9 +113,20 @@ async def pre_call_webhook(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/call-complete")
 @limits(tenant="30/minute")  # Stricter limit for CallRail webhooks
-async def call_complete_webhook(call_data: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def call_complete_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Handle CallRail Post-Call webhook - can be JSON body or query params"""
     print("================= CALL COMPLETE WEBHOOK ==================")
-    print(call_data)
+    
+    # Try to get data from JSON body first, then query params
+    try:
+        call_data = await request.json()
+        print(f"Received JSON body: {call_data}")
+    except:
+        # Fallback to query params if no JSON body
+        call_data = dict(request.query_params)
+        print(f"Received query params: {call_data}")
+    
+    print(f"Full call_data: {call_data}")
     
     # Extract tenant_id from middleware (for webhooks, we may need to derive from call_data)
     tenant_id = "webhook_tenant"  # TODO: Implement proper tenant resolution for webhooks
@@ -150,7 +161,11 @@ async def call_complete_webhook(call_data: dict, background_tasks: BackgroundTas
     
     # Route missed calls to missed call queue service
     if not is_answered:
-        print(f"⚠️ MISSED CALL DETECTED - Routing to missed call queue")
+        print(f"⚠️⚠️⚠️ MISSED CALL DETECTED ⚠️⚠️⚠️")
+        print(f"Call ID: {call_record.call_id}")
+        print(f"Phone: {call_record.phone_number}")
+        print(f"Company ID: {call_record.company_id}")
+        print(f"Routing to missed call queue...")
         from app.services.missed_call_queue_service import MissedCallQueueService
         missed_call_service = MissedCallQueueService()
         background_tasks.add_task(
@@ -162,7 +177,9 @@ async def call_complete_webhook(call_data: dict, background_tasks: BackgroundTas
         )
         # Update status
         call_record.status = "missed"
+        print(f"✅ Missed call queued successfully")
     else:
+        print(f"✅ Call was answered - not a missed call")
         call_record.status = "completed"
     
     # Extract information using LLM
