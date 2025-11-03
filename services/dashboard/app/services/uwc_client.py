@@ -14,7 +14,7 @@ import jwt
 from app.config import settings
 from app.obs.logging import get_logger
 from app.obs.metrics import metrics
-from app.services.circuit_breaker import circuit_breaker_manager, UWCClientError
+from app.services.circuit_breaker import circuit_breaker_manager
 
 logger = get_logger(__name__)
 
