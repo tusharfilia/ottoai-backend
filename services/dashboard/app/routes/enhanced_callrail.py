@@ -322,17 +322,36 @@ async def handle_call_completed(
         
         # Find company by tracking number (try multiple formats)
         company_record = find_company_by_tracking_number(tracking_number, db)
-        if not company_record:
-            logger.warning(f"No company found for tracking number {tracking_number} (tried normalized formats)")
-            # Log all available companies for debugging
-            all_companies = db.query(company.Company).all()
-            if all_companies:
-                logger.info(f"Available companies: {[(c.id, c.name, c.phone_number) for c in all_companies]}")
-            else:
-                logger.warning("No companies found in database at all!")
-            return {"status": "error", "message": "Company not found"}
         
-        logger.info(f"Found company: {company_record.id} ({company_record.name}) for tracking number {tracking_number}")
+        # If not found by phone, try to find/create by CallRail company_id or company_name
+        if not company_record:
+            callrail_company_id = data.get("company_id") or data.get("company_resource_id")
+            callrail_company_name = data.get("company_name") or "Default Company"
+            
+            # Try to find by CallRail account ID (if stored)
+            if callrail_company_id:
+                company_record = db.query(company.Company).filter_by(
+                    callrail_account_id=str(callrail_company_id)
+                ).first()
+            
+            # If still not found, create a default company for testing
+            if not company_record:
+                logger.warning(f"No company found for tracking number {tracking_number}, creating default company for testing")
+                # Create company with CallRail company_id as the company ID
+                company_id = f"callrail_{callrail_company_id}" if callrail_company_id else f"default_{datetime.utcnow().timestamp()}"
+                company_record = company.Company(
+                    id=company_id,
+                    name=callrail_company_name,
+                    phone_number=tracking_number,
+                    callrail_account_id=str(callrail_company_id) if callrail_company_id else None,
+                    created_at=datetime.utcnow()
+                )
+                db.add(company_record)
+                db.commit()
+                db.refresh(company_record)
+                logger.info(f"Created default company: {company_record.id} ({company_record.name}) with tracking number {tracking_number}")
+        
+        logger.info(f"Using company: {company_record.id} ({company_record.name}) for tracking number {tracking_number}")
         
         # Find or create call record by phone number and company
         # For missed calls, we may not have a pre-existing record, so create one if needed
