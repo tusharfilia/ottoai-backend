@@ -60,7 +60,6 @@ async def handle_call_incoming(
         
         if existing_call:
             # Update existing lead
-            existing_call.callrail_call_id = call_id
             existing_call.updated_at = datetime.utcnow()
             db.commit()
             call_id_db = existing_call.call_id
@@ -70,7 +69,6 @@ async def handle_call_incoming(
             new_call = call.Call(
                 phone_number=caller_number,
                 company_id=company_record.id,
-                callrail_call_id=call_id,
                 created_at=datetime.utcnow(),
                 missed_call=False,  # Will be updated when call status is known
                 status="incoming"  # New status for incoming calls
@@ -86,7 +84,7 @@ async def handle_call_incoming(
             event_name="call.incoming",
             payload={
                 "call_id": call_id_db,
-                "callrail_call_id": call_id,
+                "callrail_call_id": call_id,  # Store in event payload only
                 "phone_number": caller_number,
                 "company_id": str(company_record.id),
                 "timestamp": timestamp
@@ -116,21 +114,37 @@ async def handle_call_answered(
         data = await request.json()
         logger.info(f"CallRail call.answered webhook: {data}")
         
-        callrail_call_id = data.get("call_id")
+        # Extract call data
+        customer_phone = data.get("customer_phone_number") or data.get("callernum") or data.get("caller_number")
+        tracking_number = data.get("tracking_phone_number") or data.get("trackingnum") or data.get("tracking_number")
         duration = data.get("duration")
         csr_id = data.get("csr_id")
         
-        # Find call record
-        call_record = db.query(call.Call).filter_by(callrail_call_id=callrail_call_id).first()
+        # Find company by tracking number
+        company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+        if not company_record:
+            logger.warning(f"No company found for tracking number {tracking_number}")
+            return {"status": "error", "message": "Company not found"}
+        
+        # Find call record by phone number and company
+        call_record = db.query(call.Call).filter_by(
+            phone_number=customer_phone,
+            company_id=company_record.id
+        ).order_by(call.Call.created_at.desc()).first()
+        
         if not call_record:
-            logger.warning(f"Call record not found for CallRail call ID: {callrail_call_id}")
+            logger.warning(f"Call record not found for phone {customer_phone}, company {company_record.id}")
             return {"status": "error", "message": "Call record not found"}
         
         # Update call record
         call_record.missed_call = False
         call_record.status = "answered"
-        call_record.duration = duration
-        call_record.csr_id = csr_id
+        if duration:
+            try:
+                call_record.last_call_duration = int(duration)
+            except (ValueError, TypeError):
+                pass
+        # Note: csr_id field doesn't exist in Call model, store in JSON if needed
         call_record.updated_at = datetime.utcnow()
         db.commit()
         
@@ -167,13 +181,24 @@ async def handle_call_missed(
         data = await request.json()
         logger.info(f"CallRail call.missed webhook: {data}")
         
-        callrail_call_id = data.get("call_id")
-        caller_number = data.get("caller_number")
+        # Extract call data
+        customer_phone = data.get("customer_phone_number") or data.get("callernum") or data.get("caller_number")
+        tracking_number = data.get("tracking_phone_number") or data.get("trackingnum") or data.get("tracking_number")
         
-        # Find call record
-        call_record = db.query(call.Call).filter_by(callrail_call_id=callrail_call_id).first()
+        # Find company by tracking number
+        company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+        if not company_record:
+            logger.warning(f"No company found for tracking number {tracking_number}")
+            return {"status": "error", "message": "Company not found"}
+        
+        # Find call record by phone number and company
+        call_record = db.query(call.Call).filter_by(
+            phone_number=customer_phone,
+            company_id=company_record.id
+        ).order_by(call.Call.created_at.desc()).first()
+        
         if not call_record:
-            logger.warning(f"Call record not found for CallRail call ID: {callrail_call_id}")
+            logger.warning(f"Call record not found for phone {customer_phone}, company {company_record.id}")
             return {"status": "error", "message": "Call record not found"}
         
         # Update call record
@@ -229,16 +254,57 @@ async def handle_call_completed(
         data = await request.json()
         logger.info(f"CallRail call.completed webhook: {data}")
         
-        callrail_call_id = data.get("call_id")
-        recording_url = data.get("recording_url")
+        # Extract call data from webhook
+        resource_id = data.get("resource_id")  # CallRail call ID (e.g., "CAL019a4be69ef4764db2d8ac1d6b21ee00")
+        customer_phone = data.get("customer_phone_number") or data.get("callernum") or data.get("caller_number")
+        tracking_number = data.get("tracking_phone_number") or data.get("trackingnum") or data.get("tracking_number")
+        recording_url = data.get("recording") or data.get("recording_url")
         duration = data.get("duration")
         is_answered = data.get("answered", True)  # Default to True if not provided
         
-        # Find call record
-        call_record = db.query(call.Call).filter_by(callrail_call_id=callrail_call_id).first()
+        # Find company by tracking number
+        company_record = db.query(company.Company).filter_by(phone_number=tracking_number).first()
+        if not company_record:
+            logger.warning(f"No company found for tracking number {tracking_number}")
+            return {"status": "error", "message": "Company not found"}
+        
+        # Find or create call record by phone number and company
+        # For missed calls, we may not have a pre-existing record, so create one if needed
+        call_record = db.query(call.Call).filter_by(
+            phone_number=customer_phone,
+            company_id=company_record.id
+        ).order_by(call.Call.created_at.desc()).first()
+        
         if not call_record:
-            logger.warning(f"Call record not found for CallRail call ID: {callrail_call_id}")
-            return {"status": "error", "message": "Call record not found"}
+            # Create new call record for missed call or if it doesn't exist
+            logger.info(f"Creating new call record for phone {customer_phone}, company {company_record.id}")
+            
+            # Parse created_at timestamp from webhook
+            try:
+                created_at_str = data.get("created_at") or data.get("timestamp")
+                if created_at_str:
+                    # Handle timezone-aware ISO format
+                    if created_at_str.endswith("Z"):
+                        created_at_str = created_at_str.replace("Z", "+00:00")
+                    created_at = datetime.fromisoformat(created_at_str.replace(" ", "T"))
+                else:
+                    created_at = datetime.utcnow()
+            except Exception as e:
+                logger.warning(f"Error parsing created_at timestamp: {e}, using current time")
+                created_at = datetime.utcnow()
+            
+            call_record = call.Call(
+                phone_number=customer_phone,
+                company_id=company_record.id,
+                name=data.get("customer_name") or data.get("callername") or "Unknown Caller",
+                created_at=created_at,
+                missed_call=not is_answered,
+                status="missed" if not is_answered else "completed"
+            )
+            db.add(call_record)
+            db.commit()
+            db.refresh(call_record)
+            logger.info(f"Created new call record: {call_record.call_id}")
         
         # Check if this was a missed call
         call_record.missed_call = not is_answered
@@ -246,7 +312,7 @@ async def handle_call_completed(
         # Update call record
         if not is_answered:
             call_record.status = "missed"
-            logger.info(f"⚠️ MISSED CALL DETECTED in call.completed webhook - Routing to missed call queue")
+            logger.info(f"⚠️⚠️⚠️ MISSED CALL DETECTED ⚠️⚠️⚠️ - Routing to missed call queue")
             
             # Route to Missed Call Queue Service
             from app.services.missed_call_queue_service import MissedCallQueueService
@@ -262,8 +328,17 @@ async def handle_call_completed(
         else:
             call_record.status = "completed"
         
-        call_record.duration = duration
-        call_record.recording_url = recording_url
+        # Update duration if provided (store as last_call_duration)
+        if duration:
+            try:
+                call_record.last_call_duration = int(duration)
+            except (ValueError, TypeError):
+                pass
+        
+        # Note: recording_url is not stored in Call model, but can be accessed from CallRail API if needed
+        if recording_url:
+            logger.info(f"CallRail recording URL available: {recording_url}")
+        
         call_record.updated_at = datetime.utcnow()
         db.commit()
         
