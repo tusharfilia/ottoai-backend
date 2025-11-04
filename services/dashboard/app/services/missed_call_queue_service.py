@@ -157,13 +157,15 @@ class MissedCallQueueService:
                     # New items in queue
                     and_(
                         MissedCallQueue.status == MissedCallStatus.QUEUED,
-                        MissedCallQueue.sla_deadline > now  # Not expired
+                        MissedCallQueue.sla_deadline > now,  # Not expired
+                        MissedCallQueue.customer_responded == False  # Customer hasn't responded yet
                     ),
-                    # Items ready for retry
+                    # Items ready for retry (but only if customer hasn't responded)
                     and_(
                         MissedCallQueue.status == MissedCallStatus.AI_RESCUED_PENDING,
                         MissedCallQueue.next_attempt_at <= now,  # Ready for retry
-                        MissedCallQueue.retry_count < MissedCallQueue.max_retries  # Haven't exceeded max retries
+                        MissedCallQueue.retry_count < MissedCallQueue.max_retries,  # Haven't exceeded max retries
+                        MissedCallQueue.customer_responded == False  # Customer hasn't responded yet
                     )
                 )
             ).order_by(
@@ -215,6 +217,14 @@ class MissedCallQueueService:
             if not lock_token:
                 logger.warning(f"Could not acquire lock for queue entry {queue_entry.id}")
                 return "failed"
+            
+            # Refresh from database to get latest state (in case customer responded while waiting for lock)
+            db.refresh(queue_entry)
+            
+            # Check if customer has already responded (shouldn't happen, but double-check for safety)
+            if queue_entry.customer_responded or queue_entry.status == MissedCallStatus.RECOVERED:
+                logger.info(f"Customer already responded for queue entry {queue_entry.id}, skipping follow-up SMS")
+                return "recovered"
             
             # Check if human has taken over (CSR called back)
             if await self._check_human_takeover(queue_entry, db):
@@ -556,10 +566,14 @@ If you're not interested, just reply "STOP" and we'll remove you from our list. 
             if response_text.upper().strip() == "STOP":
                 return await self._handle_stop_request(phone, db)
             
-            # Find active queue entry for this phone
+            # Find active queue entry for this phone (any status except RECOVERED, ESCALATED, or FAILED)
             queue_entry = db.query(MissedCallQueue).filter(
                 MissedCallQueue.customer_phone == phone,
-                MissedCallQueue.status == MissedCallStatus.AI_RESCUED_PENDING
+                MissedCallQueue.status.in_([
+                    MissedCallStatus.QUEUED,
+                    MissedCallStatus.PROCESSING,
+                    MissedCallStatus.AI_RESCUED_PENDING
+                ])
             ).first()
             
             if not queue_entry:
