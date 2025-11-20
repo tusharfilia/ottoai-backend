@@ -199,3 +199,10 @@ INSERT INTO call_analysis (
     '{"overall_score": 75, "performance_level": "good"}',
     '1.0'
 ) ON CONFLICT DO NOTHING;
+
+
+
+
+
+
+

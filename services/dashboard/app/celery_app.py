@@ -15,7 +15,9 @@ celery_app = Celery(
         "app.tasks.analysis_tasks", 
         "app.tasks.followup_tasks",
         "app.tasks.indexing_tasks",
-        "app.tasks.uwc_tasks"
+        "app.tasks.uwc_tasks",
+        "app.tasks.property_intelligence_tasks",
+        "app.tasks.recording_session_tasks"
     ]
 )
 
@@ -34,6 +36,8 @@ celery_app.conf.update(
         "app.tasks.followup_tasks.*": {"queue": "followups"},
         "app.tasks.indexing_tasks.*": {"queue": "indexing"},
         "app.tasks.uwc_tasks.*": {"queue": "uwc"},
+        "app.tasks.property_intelligence_tasks.*": {"queue": "analysis"},
+        "app.tasks.recording_session_tasks.*": {"queue": "analysis"},
     },
     
     # Queue configuration
@@ -73,6 +77,10 @@ celery_app.conf.update(
         },
         "cleanup-old-tasks": {
             "task": "app.tasks.cleanup_tasks.cleanup_old_tasks",
+            "schedule": 3600.0,  # Hourly
+        },
+        "cleanup-ephemeral-sessions": {
+            "task": "app.tasks.recording_session_tasks.cleanup_ephemeral_sessions",
             "schedule": 3600.0,  # Hourly
         },
     },

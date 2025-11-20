@@ -127,7 +127,20 @@ def init_db():
         rag_query,
         followup_draft,
         personal_clone_job,
-        audit_log
+        audit_log,
+        contact_card,
+        lead,
+        appointment,
+        rep_shift,
+        recording_session,
+        recording_transcript,
+        recording_analysis,
+        task,
+        key_signal,
+        lead_status_history,
+        rep_assignment_history,
+        event_log,
+        sop_compliance_result
     )
     
     inspector = inspect(engine)
@@ -151,7 +164,20 @@ def init_db():
         ("rag_queries", rag_query.RAGQuery),
         ("followup_drafts", followup_draft.FollowUpDraft),
         ("personal_clone_jobs", personal_clone_job.PersonalCloneJob),
-        ("audit_logs", audit_log.AuditLog)
+        ("audit_logs", audit_log.AuditLog),
+        ("contact_cards", contact_card.ContactCard),
+        ("leads", lead.Lead),
+        ("appointments", appointment.Appointment),
+        ("rep_shifts", rep_shift.RepShift),
+        ("recording_sessions", recording_session.RecordingSession),
+        ("recording_transcripts", recording_transcript.RecordingTranscript),
+        ("recording_analyses", recording_analysis.RecordingAnalysis),
+        ("tasks", task.Task),
+        ("key_signals", key_signal.KeySignal),
+        ("lead_status_history", lead_status_history.LeadStatusHistory),
+        ("rep_assignment_history", rep_assignment_history.RepAssignmentHistory),
+        ("event_logs", event_log.EventLog),
+        ("sop_compliance_results", sop_compliance_result.SopComplianceResult)
     ]:
         existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
         model_columns = model.__table__.columns

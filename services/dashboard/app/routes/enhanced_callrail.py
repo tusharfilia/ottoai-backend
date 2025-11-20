@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import call, company
+from app.models.contact_card import ContactCard
+from app.models.lead import Lead, LeadSource, LeadStatus
 from app.services.twilio_service import TwilioService
 from app.services.uwc_client import get_uwc_client
 from app.middleware.rate_limiter import limits
@@ -17,9 +19,10 @@ import json
 import requests
 import logging
 
+from app.services.domain_entities import ensure_contact_card_and_lead
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
 # Initialize services
 twilio_service = TwilioService()
 
@@ -116,9 +119,17 @@ async def handle_call_incoming(
             company_id=company_record.id
         ).first()
         
+        contact_card, lead = ensure_contact_card_and_lead(
+            db,
+            company_id=company_record.id,
+            phone_number=caller_number,
+        )
+
         if existing_call:
             # Update existing lead
             existing_call.updated_at = datetime.utcnow()
+            existing_call.contact_card_id = contact_card.id
+            existing_call.lead_id = lead.id
             db.commit()
             call_id_db = existing_call.call_id
             logger.info(f"Updated existing call record: {call_id_db}")
@@ -127,6 +138,8 @@ async def handle_call_incoming(
             new_call = call.Call(
                 phone_number=caller_number,
                 company_id=company_record.id,
+                contact_card_id=contact_card.id,
+                lead_id=lead.id,
                 created_at=datetime.utcnow(),
                 missed_call=False,  # Will be updated when call status is known
                 status="incoming"  # New status for incoming calls
@@ -360,6 +373,12 @@ async def handle_call_completed(
             company_id=company_record.id
         ).order_by(call.Call.created_at.desc()).first()
         
+        contact_card, lead = ensure_contact_card_and_lead(
+            db,
+            company_id=company_record.id,
+            phone_number=customer_phone,
+        )
+
         if not call_record:
             # Create new call record for missed call or if it doesn't exist
             logger.info(f"Creating new call record for phone {customer_phone}, company {company_record.id}")
@@ -381,6 +400,8 @@ async def handle_call_completed(
             call_record = call.Call(
                 phone_number=customer_phone,
                 company_id=company_record.id,
+                contact_card_id=contact_card.id,
+                lead_id=lead.id,
                 name=data.get("customer_name") or data.get("callername") or "Unknown Caller",
                 created_at=created_at,
                 missed_call=not is_answered,
@@ -390,7 +411,11 @@ async def handle_call_completed(
             db.commit()
             db.refresh(call_record)
             logger.info(f"Created new call record: {call_record.call_id}")
-        
+        else:
+            call_record.contact_card_id = contact_card.id
+            call_record.lead_id = lead.id
+            db.commit()
+
         # Check if this was a missed call
         call_record.missed_call = not is_answered
         

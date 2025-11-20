@@ -3,7 +3,7 @@ Centralized configuration management for OttoAI backend.
 Loads and validates all environment variables.
 """
 import os
-from typing import Optional
+from typing import Optional, List
 
 
 class Settings:
@@ -40,14 +40,21 @@ class Settings:
         
         # OpenAI
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+        # Multiple keys for rotation: comma-separated or OPENAI_API_KEY_1, OPENAI_API_KEY_2, etc.
+        self.OPENAI_API_KEYS = os.getenv("OPENAI_API_KEYS", "")  # Comma-separated list
+        self.OPENAI_KEY_ROTATION_STRATEGY = os.getenv("OPENAI_KEY_ROTATION_STRATEGY", "round_robin")  # round_robin, random, least_used
         
         # Bland AI
         self.BLAND_API_KEY = os.getenv("BLAND_API_KEY", "")
+        
+        # Google Maps (for geocoding)
+        self.GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
         
         # UWC (Unified Workflow Composer) Integration
         # Default to Shunya mock for local development if not provided
         self.UWC_BASE_URL = os.getenv("UWC_BASE_URL") or "https://otto.shunyalabs.ai"
         self.UWC_API_KEY = os.getenv("UWC_API_KEY", "")
+        self.UWC_JWT_SECRET = os.getenv("UWC_JWT_SECRET", "")
         self.UWC_HMAC_SECRET = os.getenv("UWC_HMAC_SECRET", "")
         self.UWC_VERSION = os.getenv("UWC_VERSION", "v1")
         self.USE_UWC_STAGING = os.getenv("USE_UWC_STAGING", "false").lower() in ("true", "1", "yes")
@@ -57,6 +64,7 @@ class Settings:
         self.ENABLE_UWC_ASR = os.getenv("ENABLE_UWC_ASR", "false").lower() in ("true", "1", "yes")
         self.ENABLE_UWC_TRAINING = os.getenv("ENABLE_UWC_TRAINING", "false").lower() in ("true", "1", "yes")
         self.ENABLE_UWC_FOLLOWUPS = os.getenv("ENABLE_UWC_FOLLOWUPS", "false").lower() in ("true", "1", "yes")
+        self.ENABLE_UWC_SUMMARIZATION = os.getenv("ENABLE_UWC_SUMMARIZATION", "false").lower() in ("true", "1", "yes")
         
         # AWS S3 Storage
         self.AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
@@ -154,7 +162,8 @@ class Settings:
             self.ENABLE_UWC_RAG,
             self.ENABLE_UWC_ASR,
             self.ENABLE_UWC_TRAINING,
-            self.ENABLE_UWC_FOLLOWUPS
+            self.ENABLE_UWC_FOLLOWUPS,
+            self.ENABLE_UWC_SUMMARIZATION
         ])
     
     def is_storage_configured(self) -> bool:

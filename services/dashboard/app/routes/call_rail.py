@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from app.database import get_db
 from app.models import call, company
+from app.models.contact_card import ContactCard
+from app.models.lead import Lead, LeadSource, LeadStatus
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import json
@@ -11,6 +13,7 @@ from app.routes.dependencies import client, bland_ai, date_calculator
 from app.middleware.rate_limiter import limits
 from app.services.idempotency import with_idempotency
 from app.realtime.bus import emit
+from app.services.domain_entities import ensure_contact_card_and_lead
 
 router = APIRouter()
 
@@ -46,11 +49,19 @@ async def pre_call_webhook(request: Request, db: Session = Depends(get_db)):
             company_id=company_record.id
         ).first()
         
+        contact_card, lead = ensure_contact_card_and_lead(
+            db,
+            company_id=company_record.id,
+            phone_number=caller_phone,
+        )
+
         if existing_call:
             print(f"Existing call found for {caller_phone}, updating...")
             # Update existing call record
             existing_call.missed_call = params.get("answered", "true").lower() != "true"
             existing_call.updated_at = datetime.utcnow()
+            existing_call.contact_card_id = contact_card.id
+            existing_call.lead_id = lead.id
             db.commit()
             call_id = existing_call.call_id
         else:
@@ -59,6 +70,8 @@ async def pre_call_webhook(request: Request, db: Session = Depends(get_db)):
             new_call = call.Call(
                 phone_number=caller_phone,
                 company_id=company_record.id,
+                contact_card_id=contact_card.id,
+                lead_id=lead.id,
                 created_at=datetime.utcnow(),
                 missed_call=params.get("answered", "true").lower() != "true",
             )
@@ -153,8 +166,17 @@ async def call_complete_webhook(request: Request, background_tasks: BackgroundTa
     if not call_record:
         raise HTTPException(status_code=404, detail="Call not found")
     print(f"Call record: {call_record.call_id}")
-    # Update the call record with company_id
+    # Ensure contact + lead context is attached
+    contact_card, lead = ensure_contact_card_and_lead(
+        db,
+        company_id=company_record.id,
+        phone_number=call_data.get("customer_phone_number"),
+    )
+
+    # Update the call record with company and entity links
     call_record.company_id = company_record.id
+    call_record.contact_card_id = contact_card.id
+    call_record.lead_id = lead.id
     call_record.transcript = call_data.get("transcription")
     is_answered = call_data.get("answered", True)
     call_record.missed_call = not is_answered
@@ -209,6 +231,9 @@ async def call_complete_webhook(request: Request, background_tasks: BackgroundTa
             
             # Only proceed with information extraction if it's a sales call
             if is_sales_call:
+                # Store previous address before updating
+                previous_address = contact_card.address if contact_card else None
+                
                 # Prepare prompt for OpenAI with current date context
                 current_date = datetime.now()
                 date_prompt = f"""
@@ -399,9 +424,20 @@ async def call_complete_webhook(request: Request, background_tasks: BackgroundTa
                     # Update call record with extracted information
                     if extracted_info.get("address"):
                         call_record.address = extracted_info["address"]
+                        # Update contact card address
+                        if contact_card:
+                            contact_card.address = extracted_info["address"]
                         print(f"Address: {call_record.address}")
                     if extracted_info.get("name"):
                         call_record.name = extracted_info["name"]
+                        # Update contact card name if not already set
+                        if contact_card and not contact_card.first_name and not contact_card.last_name:
+                            name_parts = extracted_info["name"].split(maxsplit=1)
+                            if len(name_parts) >= 2:
+                                contact_card.first_name = name_parts[0]
+                                contact_card.last_name = name_parts[1]
+                            else:
+                                contact_card.first_name = name_parts[0]
                         print(f"Name: {call_record.name}")
                     if extracted_info.get("quote_date"):
                         try:
@@ -420,7 +456,6 @@ async def call_complete_webhook(request: Request, background_tasks: BackgroundTa
                         if call_record.address:
                             from app.routes.mobile_routes.location_geofence_stuff import create_geofence_for_call
                             background_tasks.add_task(create_geofence_for_call, call_record.call_id, db)
-                        
 
         except Exception as e:
             print(f"Error processing transcript with LLM: {str(e)}")
@@ -428,6 +463,14 @@ async def call_complete_webhook(request: Request, background_tasks: BackgroundTa
     # After extracting information and before committing...
     # Continue with existing commit
     db.commit()
+    
+    # Refresh contact card to get latest state
+    db.refresh(contact_card)
+    
+    # Trigger property intelligence scrape if address was set/changed
+    if contact_card and contact_card.address:
+        from app.services.property_intelligence_service import maybe_trigger_property_scrape
+        maybe_trigger_property_scrape(db, contact_card.id, previous_address)
     
     # Emit real-time event for call completion
     emit(

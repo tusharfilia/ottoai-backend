@@ -1,8 +1,13 @@
+from datetime import datetime
+
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text, Time
 from sqlalchemy.orm import relationship
+
 from ..database import Base
-from datetime import datetime
+
 #931980e753b188c6856ffaed726ef00a
+
+
 class Call(Base):
     __tablename__ = "calls"
 
@@ -23,6 +28,8 @@ class Call(Base):
     bought = Column(Boolean, default=False)
     price_if_bought = Column(Float)
     company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+    contact_card_id = Column(String, ForeignKey("contact_cards.id"), nullable=True, index=True)
+    lead_id = Column(String, ForeignKey("leads.id"), nullable=True, index=True)
     reason_for_lost_sale = Column(String)
     reason_not_bought_homeowner = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -47,6 +54,8 @@ class Call(Base):
     # Relationships
     assigned_rep = relationship("SalesRep", back_populates="calls")
     company = relationship("Company", back_populates="calls")
+    contact_card = relationship("ContactCard", back_populates="calls")
+    lead = relationship("Lead", back_populates="calls")
     
     # Geofence tracking fields
     geofence = Column(JSON, nullable=True)  # Stores latitude, longitude, and radius (in meters) of the geofence

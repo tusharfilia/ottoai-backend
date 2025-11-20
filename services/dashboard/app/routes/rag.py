@@ -602,31 +602,54 @@ async def upload_document(
         db.add(document)
         db.commit()
         
-        # Send to UWC for indexing
+        # Send to UWC for ingestion/processing
         uwc_job_id = None
+        uwc_document_id = None
         if settings.ENABLE_UWC_RAG and settings.UWC_BASE_URL:
             try:
                 uwc_client = get_uwc_client()
-                uwc_result = await uwc_client.index_documents(
+                
+                # Use the correct UWC ingestion endpoint
+                uwc_result = await uwc_client.ingest_document(
                     company_id=tenant_id,
-                    documents=[{
+                    request_id=request.state.trace_id,
+                    file_url=file_url,
+                    document_type=document_type,
+                    filename=file.filename,
+                    metadata={
                         "document_id": document_id,
-                        "url": file_url,
-                        "type": document_type,
-                        "filename": file.filename
-                    }],
-                    request_id=request.state.trace_id
+                        "tenant_id": tenant_id,
+                        "uploaded_by": user_id,
+                        "file_size_bytes": file_size,
+                        "content_type": file.content_type
+                    }
                 )
                 
-                uwc_job_id = uwc_result.get("job_id")
+                # Extract UWC document ID and job ID from response
+                uwc_document_id = uwc_result.get("document_id")
+                uwc_job_id = uwc_result.get("job_id") or uwc_result.get("processing_job_id")
+                
                 document.uwc_job_id = uwc_job_id
+                if uwc_document_id:
+                    # Store UWC document ID for future status checks
+                    # Could add a separate field or store in metadata
+                    pass
+                    
                 document.indexing_status = IndexingStatus.PROCESSING
                 db.commit()
+                
+                logger.info(f"Document successfully sent to UWC for ingestion",
+                           extra={
+                               "document_id": document_id,
+                               "uwc_document_id": uwc_document_id,
+                               "uwc_job_id": uwc_job_id
+                           })
                 
             except Exception as e:
                 logger.error(f"Failed to send document to UWC: {str(e)}",
                            extra={"document_id": document_id})
                 # Keep local record even if UWC fails
+                # Document will remain in PENDING status
         
         # Audit log
         audit = AuditLogger(db, request)

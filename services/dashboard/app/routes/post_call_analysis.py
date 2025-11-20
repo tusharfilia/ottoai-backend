@@ -307,3 +307,10 @@ async def get_analysis_service_status() -> APIResponse:
     except Exception as e:
         logger.error(f"Error getting analysis service status: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve service status")
+
+
+
+
+
+
+

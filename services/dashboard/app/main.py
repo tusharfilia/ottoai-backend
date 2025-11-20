@@ -3,7 +3,7 @@ from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
-from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics, post_call_analysis
+from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics, post_call_analysis, contact_cards, leads, appointments, rep_shifts, recording_sessions
 from .routes import webhooks as webhooks_module
 from .routes.mobile_routes import mobile_router
 from .routes.webhook_handlers.uwc import router as uwc_webhooks
@@ -94,6 +94,18 @@ app.include_router(enhanced_callrail.router)  # Enhanced CallRail webhook handle
 app.include_router(missed_call_queue.router)  # Missed call queue management
 app.include_router(live_metrics.router)  # Live metrics and real-time KPIs
 app.include_router(post_call_analysis.router)  # Post-call analysis and coaching
+app.include_router(contact_cards.router)  # Contact card domain endpoints
+app.include_router(leads.router)  # Lead domain endpoints
+app.include_router(appointments.router)  # Appointment domain endpoints
+app.include_router(rep_shifts.router)  # Rep shift management endpoints
+app.include_router(recording_sessions.router)  # Recording session endpoints
+
+# Include admin routes
+try:
+    from app.routes.admin import openai_stats
+    app.include_router(openai_stats.router)
+except ImportError:
+    logger.warning("Admin routes not available - skipping")
 
 # Include mobile routes
 app.include_router(mobile_router)

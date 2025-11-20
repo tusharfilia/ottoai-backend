@@ -213,3 +213,10 @@ class CircuitBreakerManager:
 
 # Global circuit breaker manager
 circuit_breaker_manager = CircuitBreakerManager()
+
+
+
+
+
+
+

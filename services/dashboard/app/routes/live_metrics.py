@@ -194,3 +194,10 @@ async def get_metrics_service_status() -> APIResponse:
     except Exception as e:
         logger.error(f"Error getting metrics service status: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve service status")
+
+
+
+
+
+
+

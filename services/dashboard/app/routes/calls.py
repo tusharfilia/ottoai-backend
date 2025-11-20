@@ -9,6 +9,7 @@ from fastapi import BackgroundTasks
 from sqlalchemy import and_
 from typing import List, Optional
 from ..services.manager_notification_service import send_unassigned_appointment_notification
+from app.services.domain_entities import ensure_contact_card_and_lead
 import logging
 import traceback
 
@@ -121,8 +122,18 @@ async def add_call(
     # No need to manually verify company - tenant scoping is automatic
     
     # Create new call record with tenant context
+    phone_number = params.get("phone_number")
+    if not phone_number:
+        raise HTTPException(status_code=400, detail="phone_number is required")
+
+    contact_card, lead = ensure_contact_card_and_lead(
+        db,
+        company_id=tenant_id,
+        phone_number=phone_number,
+    )
+
     new_call = call.Call(
-        phone_number=params.get("phone_number"),
+        phone_number=phone_number,
         name=params.get("name"),
         address=params.get("address"),
         quote_date=datetime.strptime(params.get("quote_date"), "%Y-%m-%d %H:%M:%S") if params.get("quote_date") else None,
@@ -131,6 +142,8 @@ async def add_call(
         missed_call=params.get("missed_call", "false").lower() == "true",
         created_at=datetime.utcnow(),
         company_id=tenant_id,  # Use tenant_id from context
+        contact_card_id=contact_card.id,
+        lead_id=lead.id,
         bland_call_id=params.get("bland_call_id")
     )
     

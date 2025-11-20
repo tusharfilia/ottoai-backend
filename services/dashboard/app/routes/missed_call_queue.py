@@ -364,3 +364,10 @@ async def stop_processor():
     except Exception as e:
         logger.error(f"Error stopping processor: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+
+

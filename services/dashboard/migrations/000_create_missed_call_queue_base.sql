@@ -130,3 +130,10 @@ CHECK (method IN ('sms', 'call', 'email'));
 
 -- Migration completed successfully
 SELECT 'Migration 000_create_missed_call_queue_base completed successfully' as status;
+
+
+
+
+
+
+

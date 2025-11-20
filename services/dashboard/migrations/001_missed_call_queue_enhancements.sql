@@ -249,3 +249,10 @@ COMMENT ON TABLE event_deduplication IS 'Event deduplication to prevent replay a
 
 -- Migration completed successfully
 SELECT 'Migration 001_missed_call_queue_enhancements completed successfully' as status;
+
+
+
+
+
+
+

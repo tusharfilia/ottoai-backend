@@ -221,7 +221,7 @@ class StorageService:
         tenant_id: Optional[str] = None
     ) -> str:
         """
-        Generate presigned URL for secure temporary access.
+        Generate presigned URL for secure temporary access (GET).
         
         Args:
             file_url: Full URL to the file
@@ -256,6 +256,77 @@ class StorageService:
         except ClientError as e:
             logger.error(f"Failed to generate presigned URL: {str(e)}")
             raise StorageException(f"Presigned URL generation failed: {str(e)}")
+    
+    def generate_presigned_upload_url(
+        self,
+        s3_key: str,
+        content_type: Optional[str] = None,
+        expires_in: int = 3600,
+        tenant_id: Optional[str] = None
+    ) -> str:
+        """
+        Generate presigned URL for file upload (PUT).
+        
+        Args:
+            s3_key: S3 key (path) where file will be uploaded
+            content_type: Optional MIME type (e.g., 'audio/mpeg', 'audio/wav')
+            expires_in: Expiration time in seconds (default 1 hour)
+            tenant_id: Optional tenant ID for validation (ensures tenant isolation)
+        
+        Returns:
+            Presigned URL for PUT operation
+        """
+        self._check_initialized()
+        
+        try:
+            # Verify tenant isolation if tenant_id provided
+            if tenant_id and not s3_key.startswith(f"{tenant_id}/"):
+                raise StorageException(f"S3 key must start with tenant ID: {tenant_id}/")
+            
+            # Build parameters
+            params = {
+                'Bucket': self.bucket,
+                'Key': s3_key
+            }
+            
+            # Add content type if provided
+            if content_type:
+                params['ContentType'] = content_type
+            
+            # Generate presigned URL for PUT
+            presigned_url = self.s3_client.generate_presigned_url(
+                'put_object',
+                Params=params,
+                ExpiresIn=expires_in
+            )
+            
+            return presigned_url
+            
+        except ClientError as e:
+            logger.error(f"Failed to generate presigned upload URL: {str(e)}")
+            raise StorageException(f"Presigned upload URL generation failed: {str(e)}")
+    
+    def generate_audio_upload_key(
+        self,
+        recording_session_id: str,
+        tenant_id: str,
+        filename: Optional[str] = None
+    ) -> str:
+        """
+        Generate S3 key for audio file upload.
+        
+        Args:
+            recording_session_id: Recording session ID
+            tenant_id: Tenant/company ID
+            filename: Optional filename (defaults to session ID with extension)
+        
+        Returns:
+            S3 key (path) for the audio file
+        """
+        if not filename:
+            filename = f"{recording_session_id}.m4a"  # Default format
+        
+        return f"{tenant_id}/recordings/{recording_session_id}/{filename}"
     
     async def file_exists(self, file_url: str) -> bool:
         """

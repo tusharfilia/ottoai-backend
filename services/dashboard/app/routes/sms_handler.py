@@ -11,6 +11,7 @@ from app.services.twilio_service import TwilioService
 from app.services.uwc_client import get_uwc_client
 from app.middleware.rate_limiter import limits
 from app.services.idempotency import with_idempotency
+from app.services.domain_entities import ensure_contact_card_and_lead
 from app.realtime.bus import emit
 from datetime import datetime
 import json
@@ -203,10 +204,21 @@ async def process_inbound_sms(
             company_id=company_record.id
         ).first()
         
+        contact_card, lead = ensure_contact_card_and_lead(
+            db,
+            company_id=company_record.id,
+            phone_number=from_number,
+        )
+
         if existing_call:
             # Update existing conversation
             logger.info(f"Updating existing conversation for {from_number}")
             call_id = existing_call.call_id
+            if not existing_call.contact_card_id:
+                existing_call.contact_card_id = contact_card.id
+            if not existing_call.lead_id:
+                existing_call.lead_id = lead.id
+            db.commit()
             
             # Add message to conversation
             await add_message_to_conversation(
@@ -239,6 +251,8 @@ async def process_inbound_sms(
             new_call = call.Call(
                 phone_number=from_number,
                 company_id=company_record.id,
+                contact_card_id=contact_card.id,
+                lead_id=lead.id,
                 created_at=datetime.utcnow(),
                 missed_call=False,  # SMS is not a missed call
                 text_messages=json.dumps([{
