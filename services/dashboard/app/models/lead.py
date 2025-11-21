@@ -45,6 +45,14 @@ class LeadSource(str, enum.Enum):
     OTHER = "other"
 
 
+class PoolStatus(str, enum.Enum):
+    """Lead pool status for shared lead management."""
+    IN_POOL = "in_pool"  # Available in pool
+    ASSIGNED = "assigned"  # Assigned to a rep
+    CLOSED = "closed"  # Deal closed (won or lost)
+    ARCHIVED = "archived"  # Archived/no longer active
+
+
 class Lead(Base):
     """
     Lead generated from a contact interaction. Leads represent sales opportunities
@@ -90,6 +98,16 @@ class Lead(Base):
     assigned_at = Column(DateTime, nullable=True, comment="When rep was assigned")
     assigned_by = Column(String, nullable=True, comment="User ID who assigned this lead")
     rep_claimed = Column(Boolean, default=False, comment="Whether rep claimed this lead")
+    
+    # Lead Pool tracking (Section 2.2)
+    pool_status = Column(
+        Enum(PoolStatus, native_enum=False, name="pool_status"),
+        default=PoolStatus.IN_POOL,
+        nullable=False,
+        index=True,
+        comment="Lead pool status: in_pool/assigned/closed/archived"
+    )
+    requested_by_rep_ids = Column(JSON, nullable=True, comment="List of rep IDs who requested this lead (denormalized for quick access)")
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

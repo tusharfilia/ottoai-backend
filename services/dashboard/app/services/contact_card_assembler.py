@@ -23,6 +23,9 @@ from app.models.recording_transcript import RecordingTranscript
 from app.models.recording_analysis import RecordingAnalysis
 from app.models.sop_compliance_result import SopComplianceResult
 from app.models.sales_rep import SalesRep
+from app.models.lead_status_history import LeadStatusHistory
+from app.models.rep_assignment_history import RepAssignmentHistory
+from app.models.message_thread import MessageThread
 from app.schemas.domain import (
     ContactCardDetail,
     ContactCardTopSection,
@@ -42,6 +45,8 @@ from app.schemas.domain import (
     AppointmentDetailExtended,
     AppointmentSummary,
     LeadSummary,
+    LeadStatusHistoryEntry,
+    RepAssignmentHistoryEntry,
 )
 from app.core.pii_masking import PIISafeLogger
 import json
@@ -244,6 +249,88 @@ class ContactCardAssembler:
             route_group = recent_apt.route_group
             distance_from_previous_stop = recent_apt.distance_from_previous_stop
         
+        # Lead Status History (Section 3.4)
+        lead_status = None
+        lead_status_history = []
+        if primary_lead:
+            lead_status = primary_lead.status.value if primary_lead.status else None
+            status_history_entries = (
+                db.query(LeadStatusHistory)
+                .filter(LeadStatusHistory.lead_id == primary_lead.id)
+                .order_by(LeadStatusHistory.created_at.desc())
+                .limit(20)
+                .all()
+            )
+            for entry in status_history_entries:
+                context_dict = None
+                if entry.context:
+                    try:
+                        context_dict = json.loads(entry.context) if isinstance(entry.context, str) else entry.context
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                lead_status_history.append(LeadStatusHistoryEntry(
+                    from_status=entry.from_status,
+                    to_status=entry.to_status,
+                    reason=entry.reason,
+                    triggered_by=entry.triggered_by,
+                    created_at=entry.created_at,
+                    context=context_dict,
+                ))
+            lead_status_history.reverse()  # Show oldest first
+        
+        # Rep Assignment History (Section 3.3) + Lead Pool tracking
+        rep_assignment_history = []
+        requested_by_reps = []
+        pool_status = None
+        if primary_lead:
+            # Get pool status
+            from app.models.lead import PoolStatus
+            pool_status = primary_lead.pool_status.value if primary_lead.pool_status else None
+            
+            # Get requested by rep IDs from denormalized field
+            if primary_lead.requested_by_rep_ids:
+                requested_by_reps = primary_lead.requested_by_rep_ids.copy()
+            
+            # Get assignment history
+            assignment_history_entries = (
+                db.query(RepAssignmentHistory)
+                .filter(RepAssignmentHistory.lead_id == primary_lead.id)
+                .order_by(RepAssignmentHistory.created_at.desc())
+                .limit(20)
+                .all()
+            )
+            for entry in assignment_history_entries:
+                rep_name = None
+                if entry.rep_id:
+                    rep = db.query(SalesRep).filter(SalesRep.user_id == entry.rep_id).first()
+                    if rep:
+                        rep_name = getattr(rep, 'name', None) or entry.rep_id
+                rep_assignment_history.append(RepAssignmentHistoryEntry(
+                    rep_id=entry.rep_id,
+                    rep_name=rep_name,
+                    assigned_by=entry.assigned_by,
+                    assignment_type=entry.assignment_type,
+                    status=getattr(entry, 'status', None) or entry.assignment_type,
+                    route_position=entry.route_position,
+                    route_group=entry.route_group,
+                    distance_from_previous_stop=entry.distance_from_previous_stop,
+                    rep_claimed=entry.rep_claimed,
+                    notes=entry.notes,
+                    requested_at=getattr(entry, 'requested_at', None),
+                    assigned_at=getattr(entry, 'assigned_at', None),
+                    created_at=entry.created_at,
+                ))
+                # Track reps who requested (from history entries)
+                if entry.assignment_type in ["requested", "claimed"] and entry.rep_id and entry.rep_id not in requested_by_reps:
+                    requested_by_reps.append(entry.rep_id)
+            rep_assignment_history.reverse()  # Show oldest first
+            
+            # Ensure requested_by_reps includes all from denormalized field
+            if primary_lead.requested_by_rep_ids:
+                for rep_id in primary_lead.requested_by_rep_ids:
+                    if rep_id not in requested_by_reps:
+                        requested_by_reps.append(rep_id)
+        
         # Tasks
         tasks = (
             db.query(Task)
@@ -256,6 +343,7 @@ class ContactCardAssembler:
             .all()
         )
         task_summaries = [TaskSummary.model_validate(task) for task in tasks]
+        overdue_count = sum(1 for task in tasks if task.due_at and task.due_at < datetime.utcnow() and task.status == TaskStatus.OPEN)
         
         # Key Signals
         signals = (
@@ -275,6 +363,8 @@ class ContactCardAssembler:
             lead_source=lead_source,
             lead_age_days=lead_age_days,
             last_activity_at=last_activity_at,
+            lead_status=lead_status,
+            lead_status_history=lead_status_history,
             deal_status=deal_status,
             deal_size=deal_size,
             deal_summary=deal_summary,
@@ -286,7 +376,11 @@ class ContactCardAssembler:
             route_position=route_position,
             route_group=route_group,
             distance_from_previous_stop=distance_from_previous_stop,
+            rep_assignment_history=rep_assignment_history,
+            requested_by_reps=requested_by_reps,
+            pool_status=pool_status,
             tasks=task_summaries,
+            overdue_count=overdue_count,
             key_signals=signal_summaries,
         )
     
@@ -520,8 +614,30 @@ class ContactCardAssembler:
             )
             call_summaries.append(call_summary)
         
-        # Text Messages (from Call.text_messages JSON field)
+        # Text Messages (from MessageThread table and Call.text_messages fallback)
         all_messages = []
+        
+        # First, get messages from MessageThread table (primary source)
+        message_threads = (
+            db.query(MessageThread)
+            .filter(MessageThread.contact_card_id == contact.id)
+            .order_by(MessageThread.created_at.desc())
+            .limit(100)
+            .all()
+        )
+        for msg_thread in message_threads:
+            message_summary = MessageSummary(
+                timestamp=msg_thread.created_at,
+                sender=msg_thread.sender,
+                role=msg_thread.sender_role.value if msg_thread.sender_role else "customer",
+                body=msg_thread.body,
+                direction=msg_thread.direction.value if msg_thread.direction else "inbound",
+                type=msg_thread.message_type.value if msg_thread.message_type else "manual",
+                message_sid=msg_thread.message_sid,
+            )
+            all_messages.append(message_summary)
+        
+        # Fallback: Also check Call.text_messages for backward compatibility
         for call_obj in calls:
             if call_obj.text_messages:
                 try:
@@ -598,8 +714,29 @@ class ContactCardAssembler:
                 recording_url=None,
             ))
         
-        # All Messages (from calls)
+        # All Messages (from MessageThread table and Call.text_messages fallback)
         all_messages = []
+        
+        # Primary source: MessageThread table
+        message_threads = (
+            db.query(MessageThread)
+            .filter(MessageThread.contact_card_id == contact.id)
+            .order_by(MessageThread.created_at.desc())
+            .limit(200)
+            .all()
+        )
+        for msg_thread in message_threads:
+            all_messages.append(MessageSummary(
+                timestamp=msg_thread.created_at,
+                sender=msg_thread.sender,
+                role=msg_thread.sender_role.value if msg_thread.sender_role else "customer",
+                body=msg_thread.body,
+                direction=msg_thread.direction.value if msg_thread.direction else "inbound",
+                type=msg_thread.message_type.value if msg_thread.message_type else "manual",
+                message_sid=msg_thread.message_sid,
+            ))
+        
+        # Fallback: Call.text_messages for backward compatibility
         for call_obj in all_calls_query.all():
             if call_obj.text_messages:
                 try:

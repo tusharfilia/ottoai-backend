@@ -373,6 +373,42 @@ async def handle_call_completed(
             company_id=company_record.id
         ).order_by(call.Call.created_at.desc()).first()
         
+        # Trigger Shunya processing if recording URL is available
+        if recording_url and call_record:
+            # Use new async job system
+            from app.services.shunya_async_job_service import shunya_async_job_service
+            import asyncio
+            
+            try:
+                # Submit async job (non-blocking)
+                job = asyncio.run(
+                    shunya_async_job_service.submit_csr_call_job(
+                        db=db,
+                        call_id=call_record.call_id,
+                        audio_url=recording_url,
+                        company_id=str(company_record.id),
+                        request_id=getattr(request.state, 'trace_id', str(uuid.uuid4()))
+                    )
+                )
+                logger.info(
+                    f"Submitted CSR call {call_record.call_id} to async Shunya job {job.id}",
+                    extra={"call_id": call_record.call_id, "job_id": job.id}
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error submitting call {call_record.call_id} to async Shunya: {str(e)}",
+                    exc_info=True
+                )
+                # Fallback to old synchronous method if async fails
+                logger.warning(f"Falling back to synchronous Shunya processing for call {call_record.call_id}")
+                from app.tasks.shunya_integration_tasks import process_call_with_shunya
+                process_call_with_shunya.delay(
+                    call_id=call_record.call_id,
+                    audio_url=recording_url,
+                    company_id=str(company_record.id),
+                    call_type="csr_call"  # CallRail calls are typically CSR calls
+                )
+        
         contact_card, lead = ensure_contact_card_and_lead(
             db,
             company_id=company_record.id,

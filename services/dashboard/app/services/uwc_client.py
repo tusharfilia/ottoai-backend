@@ -399,6 +399,8 @@ class UWCClient:
         """
         Transcribe a single audio file using UWC ASR (compatible with Shunya mock API).
         
+        Returns a job/task ID that can be used for status polling.
+        
         Args:
             company_id: Tenant/company ID
             request_id: Correlation ID
@@ -407,23 +409,31 @@ class UWCClient:
             model: Optional ASR model identifier
         
         Returns:
-            Transcription response with transcript, confidence, language, and duration
+            Transcription response with task_id/job_id/transcript_id for async tracking
+            Response format: {"success": True, "task_id": "...", "transcript_id": ..., "message": "..."}
         """
         payload = {
+            "call_id": 0,  # Will be set by caller if known
             "audio_url": audio_url,
-            "language": language,
+            "call_type": "csr_call",  # Default, caller can override
         }
+        if language:
+            payload["language"] = language
         if model:
             payload["model"] = model
         
         # OpenAPI path: /api/v1/transcription/transcribe
-        return await self._make_request(
+        response = await self._make_request(
             "POST",
             "/api/v1/transcription/transcribe",
             company_id,
             request_id,
             payload
         )
+        
+        # Extract job ID from response (may be task_id, transcript_id, or job_id)
+        # Return response as-is - job ID extraction handled by caller
+        return response
 
     async def get_transcription_status(
         self,
@@ -848,20 +858,116 @@ class UWCClient:
         """
         Start analysis pipeline for a call.
         
+        Returns a job ID for async tracking.
+        
         Args:
             company_id: Tenant/company ID
             request_id: Correlation ID
             call_id: Call ID
         
         Returns:
-            Analysis start response with analysis types and status
+            Analysis start response with job_id/task_id for async tracking
         """
-        return await self._make_request(
+        response = await self._make_request(
             "POST",
             f"/api/v1/analysis/start/{call_id}",
             company_id,
             request_id
         )
+        
+        # Return response as-is - job ID extraction handled by caller
+        return response
+    
+    async def get_job_status(
+        self,
+        company_id: str,
+        request_id: str,
+        job_id: str,
+        job_type: str = "analysis",
+    ) -> Dict[str, Any]:
+        """
+        Get status of a Shunya job.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            job_id: Shunya job/task ID
+            job_type: Type of job ("analysis", "transcription", "segmentation")
+        
+        Returns:
+            Job status response with status, progress, etc.
+        """
+        # Map job type to endpoint
+        if job_type == "transcription":
+            # For transcription, we use call_id or job_id
+            # Try to use analysis status endpoint if call_id available
+            # Otherwise, use a generic status endpoint
+            return await self._make_request(
+                "GET",
+                f"/api/v1/transcription/status/{job_id}",  # Using job_id as call_id temporarily
+                company_id,
+                request_id,
+            )
+        elif job_type == "segmentation":
+            return await self._make_request(
+                "GET",
+                f"/api/v1/meeting-segmentation/status/{job_id}",
+                company_id,
+                request_id,
+            )
+        else:
+            # Analysis status
+            return await self._make_request(
+                "GET",
+                f"/api/v1/analysis/status/{job_id}",
+                company_id,
+                request_id,
+            )
+    
+    async def get_job_result(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+        job_type: str = "analysis",
+    ) -> Dict[str, Any]:
+        """
+        Get result of a completed Shunya job.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID (used for result retrieval)
+            job_type: Type of job ("analysis", "transcription", "segmentation")
+        
+        Returns:
+            Job result (normalized if possible)
+        """
+        if job_type == "transcription":
+            return await self.get_transcript(company_id, request_id, call_id)
+        elif job_type == "segmentation":
+            return await self.get_meeting_segmentation_analysis(company_id, request_id, call_id)
+        else:
+            # Complete analysis
+            return await self.get_complete_analysis(company_id, request_id, call_id)
+    
+    async def get_segmentation_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        """Get meeting segmentation status."""
+        return await self.get_meeting_segmentation_status(company_id, request_id, call_id)
+    
+    async def get_segmentation_result(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        """Get meeting segmentation result."""
+        return await self.get_meeting_segmentation_analysis(company_id, request_id, call_id)
     
     async def get_analysis_status(
         self,
@@ -907,6 +1013,70 @@ class UWCClient:
         return await self._make_request(
             "GET",
             f"/api/v1/analysis/summary/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Meeting Segmentation (per OpenAPI /api/v1/meeting-segmentation/analyze)
+    async def analyze_meeting_segmentation(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+        analysis_type: str = "full"
+    ) -> Dict[str, Any]:
+        """
+        Analyze meeting segmentation for a sales appointment.
+        
+        Segments appointment into:
+        - Part 1: Rapport/Agenda (relationship building, agenda setting)
+        - Part 2: Proposal/Close (presentation, proposal, closing)
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID (for sales appointment)
+            analysis_type: "full" or "quick"
+        
+        Returns:
+            Meeting segmentation response with part1, part2, transition point, etc.
+        """
+        payload = {
+            "call_id": call_id,
+            "analysis_type": analysis_type
+        }
+        return await self._make_request(
+            "POST",
+            "/api/v1/meeting-segmentation/analyze",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    async def get_meeting_segmentation_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """Get meeting segmentation status."""
+        return await self._make_request(
+            "GET",
+            f"/api/v1/meeting-segmentation/status/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    async def get_meeting_segmentation_analysis(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """Get full meeting segmentation analysis."""
+        return await self._make_request(
+            "GET",
+            f"/api/v1/meeting-segmentation/analysis/{call_id}",
             company_id,
             request_id
         )

@@ -17,7 +17,9 @@ celery_app = Celery(
         "app.tasks.indexing_tasks",
         "app.tasks.uwc_tasks",
         "app.tasks.property_intelligence_tasks",
-        "app.tasks.recording_session_tasks"
+        "app.tasks.recording_session_tasks",
+        "app.tasks.shunya_integration_tasks",
+        "app.tasks.shunya_job_polling_tasks"
     ]
 )
 
@@ -38,6 +40,8 @@ celery_app.conf.update(
         "app.tasks.uwc_tasks.*": {"queue": "uwc"},
         "app.tasks.property_intelligence_tasks.*": {"queue": "analysis"},
         "app.tasks.recording_session_tasks.*": {"queue": "analysis"},
+        "app.tasks.shunya_integration_tasks.*": {"queue": "uwc"},
+        "app.tasks.shunya_job_polling_tasks.*": {"queue": "shunya"},
     },
     
     # Queue configuration
@@ -49,6 +53,7 @@ celery_app.conf.update(
         "followups": {"exchange": "followups", "routing_key": "followups"},
         "indexing": {"exchange": "indexing", "routing_key": "indexing"},
         "uwc": {"exchange": "uwc", "routing_key": "uwc"},
+        "shunya": {"exchange": "shunya", "routing_key": "shunya"},
     },
     
     # Task execution

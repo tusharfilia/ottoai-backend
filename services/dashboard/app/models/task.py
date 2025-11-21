@@ -52,6 +52,7 @@ class Task(Base):
         Index("ix_tasks_appointment", "appointment_id"),
         Index("ix_tasks_assigned_to", "assigned_to"),
         Index("ix_tasks_status_due", "status", "due_at"),
+        Index("ix_tasks_unique_key", "unique_key", "company_id"),  # For idempotency checks
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
@@ -75,6 +76,9 @@ class Task(Base):
         nullable=False,
         comment="How this task was created"
     )
+    
+    # Idempotency: natural key for duplicate detection
+    unique_key = Column(String, nullable=True, index=True, comment="Hash of (source, description, contact_card_id) for duplicate detection")
     
     # Scheduling
     due_at = Column(DateTime, nullable=True, index=True, comment="When task is due")

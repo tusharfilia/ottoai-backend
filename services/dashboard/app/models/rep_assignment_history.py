@@ -36,7 +36,10 @@ class RepAssignmentHistory(Base):
     
     # Assignment details
     assigned_by = Column(String, nullable=True, comment="User ID who made the assignment")
-    assignment_type = Column(String, nullable=False, comment="assigned/unassigned/claimed/unclaimed")
+    assignment_type = Column(String, nullable=False, comment="requested/assigned/declined/revoked/unassigned/claimed/unclaimed")
+    requested_at = Column(DateTime, nullable=True, comment="When rep requested this lead")
+    assigned_at = Column(DateTime, nullable=True, comment="When lead was assigned to rep")
+    status = Column(String, nullable=False, default="requested", comment="requested/assigned/declined/revoked")
     
     # Routing information
     route_position = Column(Integer, nullable=True, comment="Position in rep's route")

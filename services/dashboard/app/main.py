@@ -73,6 +73,7 @@ app.include_router(health.router)  # Health checks first
 app.include_router(websocket.router)  # WebSocket endpoint
 app.include_router(webhooks_module.router)
 app.include_router(uwc_webhooks)  # UWC webhook handlers
+app.include_router(shunya_webhook.router)  # Shunya job webhook handlers
 app.include_router(rag.router)  # RAG/Ask Otto endpoints
 app.include_router(analysis.router)  # Call analysis endpoints
 app.include_router(followups.router)  # Follow-up drafts endpoints
@@ -97,6 +98,8 @@ app.include_router(post_call_analysis.router)  # Post-call analysis and coaching
 app.include_router(contact_cards.router)  # Contact card domain endpoints
 app.include_router(leads.router)  # Lead domain endpoints
 app.include_router(appointments.router)  # Appointment domain endpoints
+from app.routes.lead_pool import router as lead_pool_router
+app.include_router(lead_pool_router)  # Lead pool management endpoints
 app.include_router(rep_shifts.router)  # Rep shift management endpoints
 app.include_router(recording_sessions.router)  # Recording session endpoints
 

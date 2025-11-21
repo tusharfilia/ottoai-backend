@@ -33,7 +33,9 @@ from app.schemas.domain import (
 from app.schemas.responses import APIResponse
 from app.realtime.bus import emit
 from app.services.recording_session_service import RecordingSessionService
+from app.core.pii_masking import PIISafeLogger
 
+logger = PIISafeLogger(__name__)
 router = APIRouter(prefix="/api/v1/recording-sessions", tags=["recording-sessions"])
 
 recording_service = RecordingSessionService()
@@ -321,6 +323,40 @@ async def upload_audio_complete(
     if session.audio_storage_mode != AudioStorageMode.NOT_STORED:
         from app.tasks.recording_session_tasks import process_recording_session
         process_recording_session.delay(session_id)
+        
+        # Trigger Shunya visit analysis if audio URL is available (or ghost mode)
+        # Use new async job system
+        from app.services.shunya_async_job_service import shunya_async_job_service
+        import asyncio
+        
+        try:
+            # Submit async job (non-blocking)
+            job = asyncio.run(
+                shunya_async_job_service.submit_sales_visit_job(
+                    db=db,
+                    recording_session_id=session_id,
+                    audio_url=upload_data.audio_url,  # May be None in ghost mode
+                    company_id=str(session.company_id),
+                    request_id=str(uuid.uuid4())
+                )
+            )
+            logger.info(
+                f"Submitted sales visit {session_id} to async Shunya job {job.id}",
+                extra={"recording_session_id": session_id, "job_id": job.id}
+            )
+        except Exception as e:
+            logger.error(
+                f"Error submitting visit {session_id} to async Shunya: {str(e)}",
+                exc_info=True
+            )
+            # Fallback to old synchronous method if async fails
+            logger.warning(f"Falling back to synchronous Shunya processing for visit {session_id}")
+            from app.tasks.shunya_integration_tasks import process_visit_with_shunya
+            process_visit_with_shunya.delay(
+                recording_session_id=session_id,
+                audio_url=upload_data.audio_url,
+                company_id=str(session.company_id)
+            )
     
     return APIResponse(data={"status": "uploaded", "recording_session_id": session_id})
 

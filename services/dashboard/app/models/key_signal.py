@@ -44,6 +44,7 @@ class KeySignal(Base):
         Index("ix_signals_appointment", "appointment_id"),
         Index("ix_signals_type_severity", "signal_type", "severity"),
         Index("ix_signals_created", "created_at"),
+        Index("ix_signals_unique_key", "unique_key", "company_id"),  # For idempotency checks
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
@@ -67,6 +68,9 @@ class KeySignal(Base):
     )
     title = Column(String, nullable=False, comment="Signal title (e.g., 'Rep late to appointment')")
     description = Column(Text, nullable=True, comment="Detailed signal description")
+    
+    # Idempotency: natural key for duplicate detection
+    unique_key = Column(String, nullable=True, index=True, comment="Hash of (signal_type, title, contact_card_id) for duplicate detection")
     
     # Metadata
     metadata = Column(JSON, nullable=True, comment="Additional signal context")

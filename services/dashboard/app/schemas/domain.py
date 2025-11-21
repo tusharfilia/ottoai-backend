@@ -387,12 +387,47 @@ class LeadDetailExtended(LeadSummary):
 # Contact Card Detail Schema (Full Structure - Section 2)
 # ============================================================================
 
+class LeadStatusHistoryEntry(BaseModel):
+    """Entry in lead status history."""
+    from_status: Optional[str] = None
+    to_status: str
+    reason: Optional[str] = None
+    triggered_by: Optional[str] = None  # User ID or 'otto'
+    created_at: datetime
+    context: Optional[dict] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RepAssignmentHistoryEntry(BaseModel):
+    """Entry in rep assignment history."""
+    rep_id: str
+    rep_name: Optional[str] = None
+    assigned_by: Optional[str] = None
+    assignment_type: str  # requested/assigned/declined/revoked/unassigned/claimed/unclaimed
+    status: Optional[str] = None  # requested/assigned/declined/revoked
+    route_position: Optional[int] = None
+    route_group: Optional[str] = None
+    distance_from_previous_stop: Optional[float] = None
+    rep_claimed: bool = False
+    notes: Optional[str] = None
+    requested_at: Optional[datetime] = None
+    assigned_at: Optional[datetime] = None
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ContactCardTopSection(BaseModel):
     """Top Section - Current Status & Priority (Section 3)."""
     # Customer Snapshot (3.1)
     lead_source: Optional[str] = None
     lead_age_days: Optional[int] = None  # Computed from lead.created_at
     last_activity_at: Optional[datetime] = None
+    
+    # Lead Status (3.4) - Adaptive lead status engine
+    lead_status: Optional[str] = None  # new/warm/hot/dormant/abandoned
+    lead_status_history: List[LeadStatusHistoryEntry] = Field(default_factory=list)
     
     # Deal Status (3.2)
     deal_status: Optional[str] = None
@@ -408,9 +443,13 @@ class ContactCardTopSection(BaseModel):
     route_position: Optional[int] = None
     route_group: Optional[str] = None
     distance_from_previous_stop: Optional[float] = None
+    rep_assignment_history: List[RepAssignmentHistoryEntry] = Field(default_factory=list)
+    requested_by_reps: List[str] = Field(default_factory=list, description="Reps who requested this lead")
+    pool_status: Optional[str] = Field(None, description="Lead pool status: in_pool/assigned/closed/archived")
     
     # Tasks (3.5)
     tasks: List[TaskSummary] = Field(default_factory=list)
+    overdue_count: int = Field(0, description="Count of overdue tasks")
     
     # Key Signals (3.6)
     key_signals: List[KeySignalSummary] = Field(default_factory=list)
