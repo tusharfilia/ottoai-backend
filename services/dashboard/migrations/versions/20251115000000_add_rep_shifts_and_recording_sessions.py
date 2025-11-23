@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = '20251115000000'
-down_revision = '20251111000000'
+down_revision = '5a3b4c5d6e7f'  # This is the actual revision ID from 20251111000000_add_property_intelligence_fields.py
 branch_labels = None
 depends_on = None
 
