@@ -73,7 +73,7 @@ class KeySignal(Base):
     unique_key = Column(String, nullable=True, index=True, comment="Hash of (signal_type, title, contact_card_id) for duplicate detection")
     
     # Metadata
-    metadata = Column(JSON, nullable=True, comment="Additional signal context")
+    signal_metadata = Column(JSON, nullable=True, comment="Additional signal context")
     acknowledged = Column(Boolean, default=False, comment="Whether signal has been acknowledged")
     acknowledged_at = Column(DateTime, nullable=True)
     acknowledged_by = Column(String, nullable=True, comment="User ID who acknowledged")
