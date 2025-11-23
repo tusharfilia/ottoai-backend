@@ -2,7 +2,7 @@
 Recording Analysis model for storing AI coaching and analysis results from recording sessions.
 Always retained in Ghost Mode (aggregated data).
 """
-from sqlalchemy import Column, String, Integer, Float, DateTime, ForeignKey, JSON, Index
+from sqlalchemy import Column, String, Integer, Float, DateTime, ForeignKey, JSON, Index, Boolean
 from sqlalchemy.orm import relationship
 from ..database import Base
 from datetime import datetime
