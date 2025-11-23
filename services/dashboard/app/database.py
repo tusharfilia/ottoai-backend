@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.schema import CreateTable
@@ -146,7 +147,17 @@ def init_db():
     inspector = inspect(engine)
     
     # Create tables if they don't exist
-    Base.metadata.create_all(bind=engine)
+    # Catch duplicate index/table errors (common when migrations have already run)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except ProgrammingError as e:
+        # Ignore duplicate index/table errors - these are expected when migrations have run
+        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+        if "already exists" not in error_msg.lower():
+            # Re-raise if it's not a duplicate error
+            raise
+        # Log but don't fail on duplicate index/table errors
+        print(f"Note: Some indexes/tables already exist (expected if migrations ran): {error_msg[:100]}")
     
     # For each table, check and add missing columns
     for table_name, model in [
