@@ -132,41 +132,45 @@ class LiveMetricsService:
     async def _calculate_revenue_metrics(self, db: Session, tenant_id: str, today, week_start, month_start) -> Dict[str, Any]:
         """Calculate revenue metrics."""
         try:
-            # Today's revenue
+            # Today's revenue (from calls where bought = True)
             today_revenue = db.execute(text("""
-                SELECT COALESCE(SUM(amount), 0) as revenue
+                SELECT COALESCE(SUM(price_if_bought), 0) as revenue
                 FROM calls 
                 WHERE company_id = :tenant_id 
                 AND DATE(created_at) = :today
-                AND status = 'completed'
+                AND bought = true
+                AND price_if_bought IS NOT NULL
             """), {"tenant_id": tenant_id, "today": today}).scalar() or 0
             
             # This week's revenue
             week_revenue = db.execute(text("""
-                SELECT COALESCE(SUM(amount), 0) as revenue
+                SELECT COALESCE(SUM(price_if_bought), 0) as revenue
                 FROM calls 
                 WHERE company_id = :tenant_id 
                 AND DATE(created_at) >= :week_start
-                AND status = 'completed'
+                AND bought = true
+                AND price_if_bought IS NOT NULL
             """), {"tenant_id": tenant_id, "week_start": week_start}).scalar() or 0
             
             # This month's revenue
             month_revenue = db.execute(text("""
-                SELECT COALESCE(SUM(amount), 0) as revenue
+                SELECT COALESCE(SUM(price_if_bought), 0) as revenue
                 FROM calls 
                 WHERE company_id = :tenant_id 
                 AND DATE(created_at) >= :month_start
-                AND status = 'completed'
+                AND bought = true
+                AND price_if_bought IS NOT NULL
             """), {"tenant_id": tenant_id, "month_start": month_start}).scalar() or 0
             
             # Average deal size
             avg_deal_size = db.execute(text("""
-                SELECT COALESCE(AVG(amount), 0) as avg_deal
+                SELECT COALESCE(AVG(price_if_bought), 0) as avg_deal
                 FROM calls 
                 WHERE company_id = :tenant_id 
                 AND DATE(created_at) >= :week_start
-                AND status = 'completed'
-                AND amount > 0
+                AND bought = true
+                AND price_if_bought IS NOT NULL
+                AND price_if_bought > 0
             """), {"tenant_id": tenant_id, "week_start": week_start}).scalar() or 0
             
             return {
@@ -213,12 +217,13 @@ class LiveMetricsService:
             
             # Average call duration
             avg_duration = db.execute(text("""
-                SELECT COALESCE(AVG(duration), 0) as avg_duration
+                SELECT COALESCE(AVG(last_call_duration), 0) as avg_duration
                 FROM calls 
                 WHERE company_id = :tenant_id 
                 AND DATE(created_at) = :today
                 AND status = 'completed'
-                AND duration > 0
+                AND last_call_duration IS NOT NULL
+                AND last_call_duration > 0
             """), {"tenant_id": tenant_id, "today": today}).scalar() or 0
             
             return {
@@ -236,32 +241,30 @@ class LiveMetricsService:
     async def _calculate_lead_metrics(self, db: Session, tenant_id: str, today) -> Dict[str, Any]:
         """Calculate lead metrics."""
         try:
-            # Active leads (leads created today)
+            # Active leads (calls created today, treating all as potential leads)
             active_leads = db.execute(text("""
                 SELECT COUNT(*) as count
                 FROM calls 
                 WHERE company_id = :tenant_id 
                 AND DATE(created_at) = :today
-                AND call_type = 'inbound'
             """), {"tenant_id": tenant_id, "today": today}).scalar() or 0
             
-            # New leads today
+            # New leads today (unique phone numbers)
             new_leads = db.execute(text("""
-                SELECT COUNT(DISTINCT caller_number) as count
+                SELECT COUNT(DISTINCT phone_number) as count
                 FROM calls 
                 WHERE company_id = :tenant_id 
                 AND DATE(created_at) = :today
-                AND call_type = 'inbound'
+                AND phone_number IS NOT NULL
             """), {"tenant_id": tenant_id, "today": today}).scalar() or 0
             
-            # Lead conversion rate
+            # Lead conversion rate (calls that resulted in bookings)
             converted_leads = db.execute(text("""
                 SELECT COUNT(*) as count
                 FROM calls 
                 WHERE company_id = :tenant_id 
                 AND DATE(created_at) = :today
-                AND call_type = 'inbound'
-                AND status = 'completed'
+                AND booked = true
             """), {"tenant_id": tenant_id, "today": today}).scalar() or 0
             
             conversion_rate = (converted_leads / new_leads * 100) if new_leads > 0 else 0
