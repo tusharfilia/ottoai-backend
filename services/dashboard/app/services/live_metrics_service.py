@@ -85,9 +85,9 @@ class LiveMetricsService:
         """Get list of active tenants."""
         try:
             result = db.execute(text("""
-                SELECT DISTINCT company_id as id, name 
+                SELECT DISTINCT id, name 
                 FROM companies 
-                WHERE company_id IS NOT NULL
+                WHERE id IS NOT NULL
             """))
             return [{"id": row[0], "name": row[1]} for row in result.fetchall()]
         except Exception as e:
@@ -283,14 +283,15 @@ class LiveMetricsService:
             # Get top performing CSR
             top_csr = db.execute(text("""
                 SELECT 
-                    sr.name,
+                    u.name,
                     COUNT(c.call_id) as calls_handled,
                     ROUND(AVG(CASE WHEN c.status = 'completed' THEN 1 ELSE 0 END) * 100, 1) as success_rate
                 FROM sales_reps sr
-                LEFT JOIN calls c ON sr.sales_rep_id = c.sales_rep_id 
+                LEFT JOIN users u ON sr.user_id = u.id
+                LEFT JOIN calls c ON sr.user_id = c.assigned_rep_id 
                 AND DATE(c.created_at) = :today
                 WHERE sr.company_id = :tenant_id
-                GROUP BY sr.sales_rep_id, sr.name
+                GROUP BY sr.user_id, u.name
                 ORDER BY calls_handled DESC, success_rate DESC
                 LIMIT 1
             """), {"tenant_id": tenant_id, "today": today}).fetchone()
@@ -299,7 +300,7 @@ class LiveMetricsService:
             total_csr_calls = db.execute(text("""
                 SELECT COUNT(*) as count
                 FROM calls c
-                JOIN sales_reps sr ON c.sales_rep_id = sr.sales_rep_id
+                JOIN sales_reps sr ON c.assigned_rep_id = sr.user_id
                 WHERE sr.company_id = :tenant_id
                 AND DATE(c.created_at) = :today
             """), {"tenant_id": tenant_id, "today": today}).scalar() or 0
@@ -307,7 +308,7 @@ class LiveMetricsService:
             total_successful_calls = db.execute(text("""
                 SELECT COUNT(*) as count
                 FROM calls c
-                JOIN sales_reps sr ON c.sales_rep_id = sr.sales_rep_id
+                JOIN sales_reps sr ON c.assigned_rep_id = sr.user_id
                 WHERE sr.company_id = :tenant_id
                 AND DATE(c.created_at) = :today
                 AND c.status = 'completed'

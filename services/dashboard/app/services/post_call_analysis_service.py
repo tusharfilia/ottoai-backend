@@ -91,17 +91,18 @@ class PostCallAnalysisService:
                 SELECT 
                     c.call_id,
                     c.company_id,
-                    c.sales_rep_id,
-                    c.caller_number,
-                    c.duration,
+                    c.assigned_rep_id as sales_rep_id,
+                    c.phone_number as caller_number,
+                    c.last_call_duration as duration,
                     c.status,
                     c.created_at,
-                    c.recording_url,
-                    sr.name as sales_rep_name,
+                    NULL as recording_url,
+                    u.name as sales_rep_name,
                     comp.name as company_name
                 FROM calls c
-                LEFT JOIN sales_reps sr ON c.sales_rep_id = sr.sales_rep_id
-                LEFT JOIN companies comp ON c.company_id = comp.company_id
+                LEFT JOIN sales_reps sr ON c.assigned_rep_id = sr.user_id
+                LEFT JOIN users u ON sr.user_id = u.id
+                LEFT JOIN companies comp ON c.company_id = comp.id
                 WHERE c.status = 'completed'
                 AND c.created_at >= :since
                 AND c.call_id NOT IN (
