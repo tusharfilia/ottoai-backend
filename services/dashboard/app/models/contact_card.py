@@ -39,8 +39,8 @@ class ContactCard(Base):
 
     custom_metadata = Column("metadata", JSON, nullable=True)
     property_snapshot = Column(JSON, nullable=True)
-    property_snapshot_raw = Column(Text, nullable=True, description="Full original OpenAI response for property intelligence")
-    property_snapshot_updated_at = Column(DateTime, nullable=True, description="Timestamp when property snapshot was last updated")
+    property_snapshot_raw = Column(Text, nullable=True, comment="Full original OpenAI response for property intelligence")
+    property_snapshot_updated_at = Column(DateTime, nullable=True, comment="Timestamp when property snapshot was last updated")
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
