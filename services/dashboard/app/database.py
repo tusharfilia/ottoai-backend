@@ -1,5 +1,5 @@
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import ProgrammingError, NoSuchTableError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.schema import CreateTable
@@ -106,9 +106,12 @@ def get_db_legacy() -> Generator[Session, None, None]:
         db.close()
 
 def add_column(engine, table_name, column):
+    """Add a column to a table using SQLAlchemy 2.0 API."""
     column_name = column.compile(dialect=engine.dialect)
     column_type = column.type.compile(engine.dialect)
-    engine.execute(f'ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_type}')
+    sql = text(f'ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_type}')
+    with engine.begin() as conn:
+        conn.execute(sql)
 
 # Create tables
 def init_db():
@@ -190,7 +193,14 @@ def init_db():
         ("event_logs", event_log.EventLog),
         ("sop_compliance_results", sop_compliance_result.SopComplianceResult)
     ]:
-        existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
+        # Check if table exists before trying to get columns
+        try:
+            existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
+        except NoSuchTableError:
+            # Table doesn't exist yet, skip column checks (will be created by migrations or create_all)
+            print(f"Table {table_name} does not exist yet, skipping column checks")
+            continue
+        
         model_columns = model.__table__.columns
         
         for column in model_columns:
