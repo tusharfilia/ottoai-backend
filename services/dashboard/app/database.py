@@ -107,7 +107,8 @@ def get_db_legacy() -> Generator[Session, None, None]:
 
 def add_column(engine, table_name, column):
     """Add a column to a table using SQLAlchemy 2.0 API."""
-    column_name = column.compile(dialect=engine.dialect)
+    # Use column.name directly (not compiled) to avoid table-qualified names
+    column_name = column.name
     column_type = column.type.compile(engine.dialect)
     sql = text(f'ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_type}')
     with engine.begin() as conn:
