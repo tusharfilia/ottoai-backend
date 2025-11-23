@@ -67,6 +67,10 @@ class TenantContextMiddleware:
     
     def _should_skip_tenant_validation(self, request: Request) -> bool:
         """Check if tenant validation should be skipped for this request."""
+        # Skip OPTIONS requests (CORS preflight) - they don't include auth headers
+        if request.method == "OPTIONS":
+            return True
+        
         skip_paths = [
             "/health",
             "/docs",
