@@ -5,7 +5,7 @@ from datetime import datetime
 import enum
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, Text, JSON, Index
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, Text, JSON, Index, Integer
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -51,9 +51,6 @@ class EventType(str, enum.Enum):
     RECORDING_ENDED = "recording_ended"
     REP_DEPARTED = "rep_departed"  # Geofence exit
     APPOINTMENT_OUTCOME = "appointment_outcome"
-    
-    # Visit/recording events (Section 4.6)
-    INSPECTION_MILESTONE = "inspection_milestone"
     
     # CSR/Manual actions
     CSR_ACTION = "csr_action"
@@ -101,7 +98,7 @@ class EventLog(Base):
     timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     
     # Event metadata
-    metadata = Column(JSON, nullable=True, comment="Event-specific data as JSON")
+    event_metadata = Column(JSON, nullable=True, comment="Event-specific data as JSON")
     description = Column(Text, nullable=True, comment="Human-readable event description")
     
     # Actor (who/what triggered this event)
