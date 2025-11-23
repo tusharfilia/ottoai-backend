@@ -290,6 +290,26 @@ class MessageSummary(BaseModel):
 # Recording Session Schemas (Section 4.8)
 # ============================================================================
 
+class RecordingMode(str, Enum):
+    NORMAL = "normal"
+    GHOST = "ghost"
+    OFF = "off"
+
+
+class TranscriptionStatus(str, Enum):
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class AnalysisStatus(str, Enum):
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class RecordingSessionSummary(BaseModel):
     id: str
     appointment_id: str
@@ -632,30 +652,10 @@ class RepShiftResponse(BaseModel):
 # Recording Session Schemas
 # ============================================================================
 
-class RecordingMode(str, Enum):
-    NORMAL = "normal"
-    GHOST = "ghost"
-    OFF = "off"
-
-
 class AudioStorageMode(str, Enum):
     PERSISTENT = "persistent"
     EPHEMERAL = "ephemeral"
     NOT_STORED = "not_stored"
-
-
-class TranscriptionStatus(str, Enum):
-    NOT_STARTED = "not_started"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-class AnalysisStatus(str, Enum):
-    NOT_STARTED = "not_started"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 class LocationInput(BaseModel):
