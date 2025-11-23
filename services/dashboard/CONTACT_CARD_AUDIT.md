@@ -153,3 +153,4 @@
 1. Emit events for all ContactCard updates
 2. Ensure real-time updates trigger
 
+

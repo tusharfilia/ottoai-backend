@@ -113,6 +113,9 @@ class Settings:
         # Development/Testing Configuration
         self.DEV_EMIT_KEY = os.getenv("DEV_EMIT_KEY")
         
+        # Internal AI API Configuration (for Shunya/UWC integration)
+        self.AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "")
+        
         # Validate required settings
         self._validate_settings()
     

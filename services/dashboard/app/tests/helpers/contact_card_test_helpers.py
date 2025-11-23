@@ -388,3 +388,4 @@ def record_rep_assignment(
     db.refresh(history)
     return history
 
+

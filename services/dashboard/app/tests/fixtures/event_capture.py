@@ -119,3 +119,4 @@ def event_capture(monkeypatch):
     # Cleanup
     capture.clear()
 
+

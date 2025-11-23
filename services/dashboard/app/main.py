@@ -7,6 +7,8 @@ from .routes import company, user, backend, sales_rep, sales_manager, calls, bla
 from .routes import webhooks as webhooks_module
 from .routes.mobile_routes import mobile_router
 from .routes.webhook_handlers.uwc import router as uwc_webhooks
+from .routes.shunya_webhook import router as shunya_webhook
+from .routes.ai_internal import router as ai_internal_router
 from .services.bland_ai import BlandAI
 from .services.missing_reports_service import check_missing_reports
 from datetime import datetime, timedelta
@@ -102,6 +104,7 @@ from app.routes.lead_pool import router as lead_pool_router
 app.include_router(lead_pool_router)  # Lead pool management endpoints
 app.include_router(rep_shifts.router)  # Rep shift management endpoints
 app.include_router(recording_sessions.router)  # Recording session endpoints
+app.include_router(ai_internal_router)  # Internal AI API endpoints for Shunya/UWC
 
 # Include admin routes
 try:

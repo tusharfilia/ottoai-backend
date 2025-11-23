@@ -119,3 +119,4 @@ class RecordingAnalysis(Base):
         Index('ix_recording_analyses_uwc_job', 'uwc_job_id'),
     )
 
+

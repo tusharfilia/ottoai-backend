@@ -147,3 +147,4 @@ def downgrade():
     op.execute("DROP TYPE IF EXISTS analysis_status")
     op.execute("DROP TYPE IF EXISTS shift_config_source")
 
+

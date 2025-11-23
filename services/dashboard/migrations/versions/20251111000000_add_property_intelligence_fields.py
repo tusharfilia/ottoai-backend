@@ -31,3 +31,4 @@ def downgrade():
     op.drop_column("contact_cards", "property_snapshot_updated_at")
     op.drop_column("contact_cards", "property_snapshot_raw")
 
+

@@ -43,3 +43,4 @@ class LeadStatusHistory(Base):
     lead = relationship("Lead", back_populates="status_history")
     company = relationship("Company", foreign_keys=[company_id])
 
+

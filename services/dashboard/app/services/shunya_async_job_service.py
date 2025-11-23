@@ -352,3 +352,4 @@ class ShunyaAsyncJobService:
 # Global service instance
 shunya_async_job_service = ShunyaAsyncJobService()
 
+

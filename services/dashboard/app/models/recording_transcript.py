@@ -72,3 +72,4 @@ class RecordingTranscript(Base):
         Index('ix_recording_transcripts_appointment', 'appointment_id'),
     )
 
+

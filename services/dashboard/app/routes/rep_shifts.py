@@ -240,3 +240,4 @@ async def get_today_shift(
     
     return APIResponse(data=response)
 
+

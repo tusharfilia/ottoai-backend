@@ -258,3 +258,4 @@ This will:
 - [ ] Property intelligence scraping works (test via API)
 - [ ] All services are healthy (check `/health/detailed`)
 
+
