@@ -8,11 +8,11 @@ from app.middleware.rbac import require_role
 from app.schemas.responses import APIResponse
 from app.services.openai_client_manager import get_openai_client_manager
 
-router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+router = APIRouter(prefix="/api/v1/admin", tags=["manager"])
 
 
 @router.get("/openai/stats", response_model=APIResponse[Dict[str, Any]])
-@require_role("exec", "manager")
+@require_role("manager")
 async def get_openai_stats(request: Request) -> APIResponse[Dict[str, Any]]:
     """
     Get OpenAI API key usage statistics and health status.

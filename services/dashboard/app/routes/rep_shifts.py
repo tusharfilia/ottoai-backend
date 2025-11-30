@@ -62,7 +62,7 @@ def _get_rep_shift_config(rep: SalesRep, company_id: str) -> tuple[Optional[time
 
 
 @router.post("/{rep_id}/shifts/clock-in", response_model=APIResponse[RepShiftResponse])
-@require_role("rep", "manager", "exec")
+@require_role("sales_rep", "manager")
 async def clock_in(
     request: Request,
     rep_id: str,
@@ -146,7 +146,7 @@ async def clock_in(
 
 
 @router.post("/{rep_id}/shifts/clock-out", response_model=APIResponse[RepShiftBase])
-@require_role("rep", "manager", "exec")
+@require_role("sales_rep", "manager")
 async def clock_out(
     request: Request,
     rep_id: str,
@@ -196,7 +196,7 @@ async def clock_out(
 
 
 @router.get("/{rep_id}/shifts/today", response_model=APIResponse[RepShiftResponse])
-@require_role("rep", "manager", "exec")
+@require_role("sales_rep", "manager")
 async def get_today_shift(
     request: Request,
     rep_id: str,

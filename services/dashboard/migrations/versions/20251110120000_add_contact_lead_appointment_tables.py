@@ -8,6 +8,7 @@ Create Date: 2025-11-10 12:00:00
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision = "4f2f2c1b9c3d"
@@ -24,6 +25,7 @@ lead_status_enum = sa.Enum(
     "closed_won",
     "closed_lost",
     name="lead_status",
+    create_type=False,  # We create it manually with idempotency check
 )
 
 lead_source_enum = sa.Enum(
@@ -34,6 +36,7 @@ lead_source_enum = sa.Enum(
     "partner",
     "other",
     name="lead_source",
+    create_type=False,  # We create it manually with idempotency check
 )
 
 appointment_status_enum = sa.Enum(
@@ -43,6 +46,7 @@ appointment_status_enum = sa.Enum(
     "cancelled",
     "no_show",
     name="appointment_status",
+    create_type=False,  # We create it manually with idempotency check
 )
 
 appointment_outcome_enum = sa.Enum(
@@ -52,15 +56,51 @@ appointment_outcome_enum = sa.Enum(
     "no_show",
     "rescheduled",
     name="appointment_outcome",
+    create_type=False,  # We create it manually with idempotency check
 )
+
+
+def enum_exists(bind, enum_name: str) -> bool:
+    """Check if a PostgreSQL enum type exists."""
+    dialect = bind.dialect.name
+    if dialect == 'sqlite':
+        # SQLite doesn't have enums, SQLAlchemy handles them as strings
+        return False
+    result = bind.execute(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = :enum_name)"
+        ),
+        {"enum_name": enum_name}
+    )
+    return result.scalar()
 
 
 def upgrade():
     bind = op.get_bind()
-    lead_status_enum.create(bind, checkfirst=True)
-    lead_source_enum.create(bind, checkfirst=True)
-    appointment_status_enum.create(bind, checkfirst=True)
-    appointment_outcome_enum.create(bind, checkfirst=True)
+    dialect = bind.dialect.name
+    
+    # Create enum types only if they don't exist (PostgreSQL only)
+    # SQLite doesn't support enums - SQLAlchemy will handle them as strings
+    if dialect != 'sqlite':
+        if not enum_exists(bind, "lead_status"):
+            bind.execute(text(
+                "CREATE TYPE lead_status AS ENUM ('new', 'qualified_booked', 'qualified_unbooked', 'qualified_service_not_offered', 'nurturing', 'closed_won', 'closed_lost')"
+            ))
+        
+        if not enum_exists(bind, "lead_source"):
+            bind.execute(text(
+                "CREATE TYPE lead_source AS ENUM ('unknown', 'inbound_call', 'inbound_web', 'referral', 'partner', 'other')"
+            ))
+        
+        if not enum_exists(bind, "appointment_status"):
+            bind.execute(text(
+                "CREATE TYPE appointment_status AS ENUM ('scheduled', 'confirmed', 'completed', 'cancelled', 'no_show')"
+            ))
+        
+        if not enum_exists(bind, "appointment_outcome"):
+            bind.execute(text(
+                "CREATE TYPE appointment_outcome AS ENUM ('pending', 'won', 'lost', 'no_show', 'rescheduled')"
+            ))
 
     op.create_table(
         "contact_cards",
@@ -140,26 +180,52 @@ def upgrade():
     )
 
     # Calls → Contact/Lead links
-    op.add_column("calls", sa.Column("contact_card_id", sa.String(), nullable=True))
-    op.add_column("calls", sa.Column("lead_id", sa.String(), nullable=True))
-    op.create_index("ix_calls_contact_card_id", "calls", ["contact_card_id"])
-    op.create_index("ix_calls_lead_id", "calls", ["lead_id"])
-    op.create_foreign_key(
-        "fk_calls_contact_card",
-        "calls",
-        "contact_cards",
-        ["contact_card_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_foreign_key(
-        "fk_calls_lead",
-        "calls",
-        "leads",
-        ["lead_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
+    bind = op.get_bind()
+    dialect = bind.dialect.name
+    
+    if dialect == 'sqlite':
+        # SQLite requires batch mode for ALTER TABLE operations
+        with op.batch_alter_table("calls", schema=None) as batch_op:
+            batch_op.add_column(sa.Column("contact_card_id", sa.String(), nullable=True))
+            batch_op.add_column(sa.Column("lead_id", sa.String(), nullable=True))
+            batch_op.create_index("ix_calls_contact_card_id", ["contact_card_id"])
+            batch_op.create_index("ix_calls_lead_id", ["lead_id"])
+            batch_op.create_foreign_key(
+                "fk_calls_contact_card",
+                "contact_cards",
+                ["contact_card_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
+            batch_op.create_foreign_key(
+                "fk_calls_lead",
+                "leads",
+                ["lead_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
+    else:
+        # PostgreSQL: standard ALTER TABLE
+        op.add_column("calls", sa.Column("contact_card_id", sa.String(), nullable=True))
+        op.add_column("calls", sa.Column("lead_id", sa.String(), nullable=True))
+        op.create_index("ix_calls_contact_card_id", "calls", ["contact_card_id"])
+        op.create_index("ix_calls_lead_id", "calls", ["lead_id"])
+        op.create_foreign_key(
+            "fk_calls_contact_card",
+            "calls",
+            "contact_cards",
+            ["contact_card_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        op.create_foreign_key(
+            "fk_calls_lead",
+            "calls",
+            "leads",
+            ["lead_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
 
 
 def downgrade():
@@ -181,8 +247,11 @@ def downgrade():
     op.drop_table("contact_cards")
 
     bind = op.get_bind()
-    appointment_outcome_enum.drop(bind, checkfirst=True)
-    appointment_status_enum.drop(bind, checkfirst=True)
-    lead_source_enum.drop(bind, checkfirst=True)
-    lead_status_enum.drop(bind, checkfirst=True)
+    dialect = bind.dialect.name
+    # SQLite doesn't have enums, so skip dropping them
+    if dialect != 'sqlite':
+        appointment_outcome_enum.drop(bind, checkfirst=True)
+        appointment_status_enum.drop(bind, checkfirst=True)
+        lead_source_enum.drop(bind, checkfirst=True)
+        lead_status_enum.drop(bind, checkfirst=True)
 

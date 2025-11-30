@@ -68,7 +68,7 @@ class UserDataExportResponse(BaseModel):
 # Endpoints
 
 @router.post("/delete-user", response_model=APIResponse[DataDeletionResponse])
-@require_role("exec")
+@require_role("manager")
 async def delete_user_data(
     request: Request,
     deletion_request: DataDeletionRequest,
@@ -311,7 +311,7 @@ async def delete_user_data(
 
 
 @router.post("/export-user-data")
-@require_role("exec", "rep")
+@require_role("manager", "sales_rep")
 async def export_user_data(
     request: Request,
     user_id: str,
@@ -331,7 +331,7 @@ async def export_user_data(
     user_role = request.state.user_role
     
     # Reps can only export their own data
-    if user_role == "rep" and user_id != requester_id:
+    if user_role == "sales_rep" and user_id != requester_id:
         raise HTTPException(
             status_code=403,
             detail=create_error_response(
@@ -427,7 +427,7 @@ async def export_user_data(
 
 
 @router.delete("/tenant-data")
-@require_role("exec")
+@require_role("manager")
 async def delete_tenant_data(
     request: Request,
     confirm_company_name: str,

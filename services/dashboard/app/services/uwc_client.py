@@ -39,6 +39,48 @@ class UWCServerError(UWCClientError):
     pass
 
 
+class ShunyaAPIError(UWCClientError):
+    """
+    Structured exception for Shunya API canonical error envelope.
+    
+    Aligned with final Shunya contract:
+    {
+        "success": false,
+        "error": {
+            "error_code": "string",
+            "error_type": "string",
+            "message": "string",
+            "retryable": true,
+            "details": {},
+            "timestamp": "2025-11-28T10:15:42.123Z",
+            "request_id": "uuid"
+        }
+    }
+    """
+    def __init__(
+        self,
+        error_code: str,
+        error_type: str,
+        message: str,
+        retryable: bool = False,
+        details: Optional[Dict[str, Any]] = None,
+        timestamp: Optional[str] = None,
+        request_id: Optional[str] = None,
+        original_response: Optional[Dict[str, Any]] = None,
+    ):
+        self.error_code = error_code
+        self.error_type = error_type
+        self.message = message
+        self.retryable = retryable
+        self.details = details or {}
+        self.timestamp = timestamp
+        self.request_id = request_id
+        self.original_response = original_response
+        
+        # Use message as the exception message
+        super().__init__(f"[{error_code}] {message} (retryable={retryable})")
+
+
 class UWCClient:
     """
     Client for interacting with the Unified Workflow Composer (UWC) API.
@@ -72,6 +114,20 @@ class UWCClient:
         if not self.api_key:
             logger.warning("UWC_API_KEY not configured - UWC features will be disabled")
             self.api_key = None
+        
+        # HTTPS validation for production
+        if self.base_url and not self.base_url.startswith("https://"):
+            env = settings.ENVIRONMENT.lower() if hasattr(settings, "ENVIRONMENT") else "unknown"
+            if env == "production":
+                logger.error(
+                    f"UWC_BASE_URL must use HTTPS in production, got: {self.base_url}. "
+                    "This is a security risk!"
+                )
+            else:
+                logger.warning(
+                    f"UWC_BASE_URL should use HTTPS, got: {self.base_url}. "
+                    "This is insecure and should not be used in production."
+                )
         
         logger.info(
             f"UWC Client initialized: base_url={self.base_url}, "
@@ -242,9 +298,70 @@ class UWCClient:
                     f"UWC API success: {method} {endpoint} "
                     f"(status={response.status_code}, latency={latency_ms:.2f}ms)"
                 )
-                return response.json()
+                response_data = response.json()
+                
+                # Check if response indicates failure (canonical error envelope)
+                if isinstance(response_data, dict) and response_data.get("success") is False:
+                    error_obj = response_data.get("error") or {}
+                    raise self._parse_shunya_error_envelope(error_obj, response_data)
+                
+                return response_data
             
-            elif response.status_code in [401, 403]:
+            # Try to parse canonical error envelope for all error status codes
+            try:
+                response_data = response.json()
+                if isinstance(response_data, dict) and response_data.get("success") is False:
+                    error_obj = response_data.get("error") or {}
+                    shunya_error = self._parse_shunya_error_envelope(error_obj, response_data)
+                    
+                    # Map error to appropriate exception type based on status code
+                    if response.status_code in [401, 403]:
+                        logger.error(
+                            f"UWC API authentication error: {method} {endpoint} "
+                            f"(status={response.status_code}, error_code={shunya_error.error_code}, "
+                            f"retryable={shunya_error.retryable}, request_id={shunya_error.request_id})"
+                        )
+                        raise UWCAuthenticationError(str(shunya_error)) from shunya_error
+                    elif response.status_code == 429:
+                        logger.warning(
+                            f"UWC API rate limit exceeded: {method} {endpoint} "
+                            f"(retry={retry_count}/{self.max_retries}, request_id={shunya_error.request_id})"
+                        )
+                        if retry_count < self.max_retries and shunya_error.retryable:
+                            return await self._retry_request(
+                                method, endpoint, company_id, request_id, payload, retry_count
+                            )
+                        raise UWCRateLimitError(str(shunya_error)) from shunya_error
+                    elif response.status_code >= 500:
+                        logger.error(
+                            f"UWC API server error: {method} {endpoint} "
+                            f"(status={response.status_code}, error_code={shunya_error.error_code}, "
+                            f"retryable={shunya_error.retryable}, retry={retry_count}/{self.max_retries}, "
+                            f"request_id={shunya_error.request_id})"
+                        )
+                        if retry_count < self.max_retries and shunya_error.retryable:
+                            return await self._retry_request(
+                                method, endpoint, company_id, request_id, payload, retry_count
+                            )
+                        raise UWCServerError(str(shunya_error)) from shunya_error
+                    else:
+                        # Other 4xx errors - check if retryable
+                        logger.error(
+                            f"UWC API error: {method} {endpoint} "
+                            f"(status={response.status_code}, error_code={shunya_error.error_code}, "
+                            f"retryable={shunya_error.retryable}, request_id={shunya_error.request_id})"
+                        )
+                        if retry_count < self.max_retries and shunya_error.retryable:
+                            return await self._retry_request(
+                                method, endpoint, company_id, request_id, payload, retry_count
+                            )
+                        raise shunya_error
+            except (json.JSONDecodeError, KeyError, ValueError):
+                # Fallback to original error handling if error envelope parsing fails
+                pass
+            
+            # Fallback error handling (if error envelope parsing failed)
+            if response.status_code in [401, 403]:
                 logger.error(
                     f"UWC API authentication error: {method} {endpoint} "
                     f"(status={response.status_code}, response={response.text})"
@@ -306,7 +423,7 @@ class UWCClient:
                 )
             raise UWCClientError(f"Request timeout after {self.timeout}s")
         
-        except (UWCClientError, UWCAuthenticationError, UWCRateLimitError, UWCServerError):
+        except (UWCClientError, UWCAuthenticationError, UWCRateLimitError, UWCServerError, ShunyaAPIError):
             # Re-raise our own exceptions without wrapping
             raise
         
@@ -323,6 +440,54 @@ class UWCClient:
                 latency_ms=latency_ms
             )
             raise UWCClientError(f"Unexpected error: {str(e)}")
+    
+    def _parse_shunya_error_envelope(
+        self,
+        error_obj: Dict[str, Any],
+        full_response: Optional[Dict[str, Any]] = None
+    ) -> ShunyaAPIError:
+        """
+        Parse Shunya canonical error envelope into ShunyaAPIError exception.
+        
+        Expected format:
+        {
+            "success": false,
+            "error": {
+                "error_code": "string",
+                "error_type": "string",
+                "message": "string",
+                "retryable": true,
+                "details": {},
+                "timestamp": "2025-11-28T10:15:42.123Z",
+                "request_id": "uuid"
+            }
+        }
+        
+        Args:
+            error_obj: Error object from response["error"]
+            full_response: Full response dictionary (for debugging)
+        
+        Returns:
+            ShunyaAPIError exception with parsed fields
+        """
+        error_code = error_obj.get("error_code") or error_obj.get("code") or "UNKNOWN_ERROR"
+        error_type = error_obj.get("error_type") or error_obj.get("type") or "unknown"
+        message = error_obj.get("message") or "Unknown error"
+        retryable = error_obj.get("retryable", False)
+        details = error_obj.get("details") or {}
+        timestamp = error_obj.get("timestamp")
+        request_id = error_obj.get("request_id") or error_obj.get("requestId")
+        
+        return ShunyaAPIError(
+            error_code=str(error_code),
+            error_type=str(error_type),
+            message=str(message),
+            retryable=bool(retryable),
+            details=details if isinstance(details, dict) else {},
+            timestamp=timestamp,
+            request_id=request_id,
+            original_response=full_response,
+        )
     
     async def _retry_request(
         self,

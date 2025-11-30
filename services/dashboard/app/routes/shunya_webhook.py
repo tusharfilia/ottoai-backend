@@ -2,9 +2,11 @@
 Shunya webhook handler for job completion notifications.
 
 Handles webhook notifications from Shunya when jobs complete.
+Includes HMAC signature verification for security.
 """
 from datetime import datetime
 from typing import Optional, Dict, Any
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from sqlalchemy.orm import Session
@@ -14,6 +16,12 @@ from app.database import get_db
 from app.models.shunya_job import ShunyaJob, ShunyaJobStatus
 from app.services.shunya_job_service import shunya_job_service
 from app.services.shunya_response_normalizer import ShunyaResponseNormalizer
+from app.utils.shunya_webhook_security import (
+    verify_shunya_webhook_signature,
+    InvalidSignatureError,
+    MissingHeadersError,
+    TimestampExpiredError,
+)
 
 shunya_normalizer = ShunyaResponseNormalizer()
 from app.services.shunya_integration_service import ShunyaIntegrationService
@@ -33,57 +41,129 @@ async def shunya_webhook(
     db: Session = Depends(get_db),
     x_shunya_signature: Optional[str] = Header(None, alias="X-Shunya-Signature"),
     x_shunya_timestamp: Optional[str] = Header(None, alias="X-Shunya-Timestamp"),
+    x_shunya_task_id: Optional[str] = Header(None, alias="X-Shunya-Task-Id"),
 ) -> APIResponse[dict]:
     """
     Webhook endpoint for Shunya job completion notifications.
+    
+    Security:
+    - Verifies HMAC-SHA256 signature before processing (X-Shunya-Signature)
+    - Validates timestamp to prevent replay attacks (X-Shunya-Timestamp, epoch milliseconds)
+    - Uses X-Shunya-Task-Id for idempotency tracking
+    - Enforces tenant isolation
+    
+    Headers:
+    - X-Shunya-Signature: HMAC-SHA256 hex digest
+    - X-Shunya-Timestamp: Epoch milliseconds (string)
+    - X-Shunya-Task-Id: Task ID for idempotency (optional)
     
     Payload structure:
     {
         "shunya_job_id": "job_12345",
         "status": "completed" | "failed",
         "result": {...},  # Optional, if status is "completed"
-        "error": "...",   # Optional, if status is "failed"
-        "company_id": "...",  # Optional, for verification
+        "error": {...},   # Optional, if status is "failed" (canonical error envelope)
+        "company_id": "...",  # Required for tenant verification
     }
     
     Behavior:
-    - Look up ShunyaJob by shunya_job_id
-    - Update job_status
-    - If completed: fetch final result, normalize, persist (idempotent)
-    - Emit events (idempotent)
+    1. Read raw request body
+    2. Verify HMAC signature (if invalid → 401)
+    3. Parse JSON payload
+    4. Extract company_id and verify tenant isolation
+    5. Look up ShunyaJob by shunya_job_id (or use task_id for idempotency)
+    6. Verify company_id matches job.company_id (if mismatch → 403)
+    7. Update job_status
+    8. If completed: fetch final result, normalize, persist (idempotent)
+    9. Emit events (idempotent)
+    
+    Webhook delivery guarantees:
+    - At-least-once delivery (duplicates possible)
+    - Idempotency handled via ShunyaJob + output hash
     """
-    payload = await request.json()
+    # Step 1: Read raw body BEFORE parsing JSON (required for signature verification)
+    raw_body = await request.body()
+    
+    # Step 2: Verify signature BEFORE any processing
+    try:
+        verify_shunya_webhook_signature(
+            raw_body=raw_body,
+            signature=x_shunya_signature,
+            timestamp=x_shunya_timestamp,
+            task_id=x_shunya_task_id,  # Pass for logging/idempotency
+        )
+    except MissingHeadersError as e:
+        logger.warning(f"Shunya webhook missing required headers: {str(e)}")
+        raise HTTPException(
+            status_code=401,
+            detail={"success": False, "error": "invalid_signature", "message": "Missing required headers"}
+        )
+    except TimestampExpiredError as e:
+        logger.warning(f"Shunya webhook timestamp expired: {str(e)}")
+        raise HTTPException(
+            status_code=401,
+            detail={"success": False, "error": "invalid_signature", "message": "Webhook timestamp expired"}
+        )
+    except InvalidSignatureError as e:
+        logger.warning(f"Shunya webhook invalid signature: {str(e)}")
+        raise HTTPException(
+            status_code=401,
+            detail={"success": False, "error": "invalid_signature", "message": "Signature verification failed"}
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during signature verification: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=401,
+            detail={"success": False, "error": "invalid_signature", "message": "Signature verification error"}
+        )
+    
+    # Step 3: Parse JSON payload (now that signature is verified)
+    try:
+        payload = json.loads(raw_body.decode('utf-8'))
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in webhook payload: {str(e)}")
+        return APIResponse(
+            data={"success": False, "error": "invalid_payload", "message": "Invalid JSON format"}
+        )
     
     shunya_job_id = payload.get("shunya_job_id")
     status = payload.get("status", "").lower()
     company_id = payload.get("company_id")
     
+    # Step 4: Validate required fields
     if not shunya_job_id:
         logger.warning("Shunya webhook received without shunya_job_id")
-        raise HTTPException(status_code=400, detail="Missing shunya_job_id")
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "error": "invalid_payload", "message": "Missing shunya_job_id"}
+        )
     
-    # Find job by Shunya job ID
-    # If company_id provided, use it; otherwise search across companies
-    if company_id:
-        job = shunya_job_service.get_job_by_shunya_id(db, company_id, shunya_job_id)
-    else:
-        # Search across companies (less secure but handles missing company_id)
-        job = db.query(ShunyaJob).filter(
-            ShunyaJob.shunya_job_id == shunya_job_id
-        ).first()
+    if not company_id:
+        logger.warning(
+            "Shunya webhook received without company_id - required for tenant isolation",
+            extra={"shunya_job_id": shunya_job_id}
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "error": "invalid_payload", "message": "Missing company_id"}
+        )
+    
+    # Step 5: Find job by Shunya job ID (tenant-scoped lookup)
+    job = shunya_job_service.get_job_by_shunya_id(db, company_id, shunya_job_id)
     
     if not job:
         logger.warning(
             f"Shunya webhook for unknown job: {shunya_job_id}",
             extra={"shunya_job_id": shunya_job_id, "company_id": company_id}
         )
-        # Return 200 to prevent webhook retries
+        # Return 200 to prevent webhook retries (but log for security monitoring)
         return APIResponse(data={"status": "ignored", "reason": "Job not found"})
     
-    # Verify company_id matches if provided
-    if company_id and job.company_id != company_id:
+    # Step 6: Verify tenant isolation - company_id MUST match job.company_id
+    if job.company_id != company_id:
         logger.error(
-            f"Company ID mismatch in webhook: expected {job.company_id}, got {company_id}",
+            f"Company ID mismatch in webhook (potential cross-tenant attack): "
+            f"expected {job.company_id}, got {company_id}",
             extra={
                 "job_id": job.id,
                 "shunya_job_id": shunya_job_id,
@@ -91,7 +171,11 @@ async def shunya_webhook(
                 "received_company": company_id,
             }
         )
-        raise HTTPException(status_code=403, detail="Company ID mismatch")
+        # Return 403 to indicate security violation (cross-tenant attack attempt)
+        raise HTTPException(
+            status_code=403,
+            detail={"success": False, "error": "forbidden", "message": "Company ID mismatch"}
+        )
     
     # Check idempotency: don't process if already succeeded
     if job.job_status == ShunyaJobStatus.SUCCEEDED:

@@ -67,7 +67,7 @@ class CloneStatusResponse(BaseModel):
 # Endpoints
 
 @router.post("/train", response_model=APIResponse[JobStatusResponse])
-@require_role("admin", "rep")
+@require_role("manager", "sales_rep")
 async def train_personal_clone(
     request: Request,
     train_request: TrainCloneRequest,
@@ -120,7 +120,7 @@ async def train_personal_clone(
         )
     
     # Reps can only train their own clone
-    if user_role == "rep" and train_request.rep_id != user_id:
+    if user_role == "sales_rep" and train_request.rep_id != user_id:
         raise HTTPException(
             status_code=403,
             detail=create_error_response(
@@ -244,7 +244,7 @@ async def train_personal_clone(
 
 
 @router.get("/{rep_id}/status", response_model=APIResponse[CloneStatusResponse])
-@require_role("admin", "rep")
+@require_role("manager", "sales_rep")
 async def get_clone_status(
     request: Request,
     rep_id: str,
@@ -275,7 +275,7 @@ async def get_clone_status(
         )
     
     # Reps can only check their own clone status
-    if user_role == "rep" and rep_id != user_id:
+    if user_role == "sales_rep" and rep_id != user_id:
         raise HTTPException(
             status_code=403,
             detail=create_error_response(
@@ -322,7 +322,7 @@ async def get_clone_status(
 
 
 @router.get("/{rep_id}/history", response_model=PaginatedResponse[Dict])
-@require_role("admin")
+@require_role("manager")
 async def get_clone_training_history(
     request: Request,
     rep_id: str,
@@ -371,7 +371,7 @@ async def get_clone_training_history(
 
 
 @router.post("/{rep_id}/retry")
-@require_role("admin")
+@require_role("manager")
 async def retry_failed_training(
     request: Request,
     rep_id: str,

@@ -1,16 +1,19 @@
 import enum
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, date, timedelta
+from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_, or_, func
 
 from app.database import get_db
 from app.middleware.rbac import require_role
 from app.models.appointment import Appointment, AppointmentOutcome, AppointmentStatus
 from app.models.lead import Lead
+from app.models.task import Task, TaskStatus
 from app.schemas.domain import AppointmentDetail, AppointmentResponse, ContactCardBase, LeadSummary
+from app.schemas.appointments import AppointmentListItem, AppointmentListResponse
 from app.schemas.responses import APIResponse, ErrorCodes, create_error_response
 from app.services.domain_events import emit_domain_event
 
@@ -18,7 +21,7 @@ router = APIRouter(prefix="/api/v1/appointments", tags=["appointments"])
 
 
 @router.get("/{appointment_id}", response_model=APIResponse[AppointmentResponse])
-@require_role("exec", "manager", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def get_appointment(
     request: Request,
     appointment_id: str,
@@ -88,10 +91,166 @@ class AppointmentUpdateBody(BaseModel):
     service_type: Optional[str] = None
     notes: Optional[str] = None
     external_id: Optional[str] = None
+    deal_size: Optional[float] = Field(None, description="Deal size in dollars (required when outcome=won)")
+
+
+@router.get("", response_model=APIResponse[AppointmentListResponse])
+@require_role("manager", "csr", "sales_rep")
+async def list_appointments(
+    request: Request,
+    rep_id: Optional[str] = Query(None, description="Sales rep ID (defaults to authenticated user if rep)"),
+    date: Optional[str] = Query(None, description="Date filter (ISO format YYYY-MM-DD, defaults to today)"),
+    status: Optional[str] = Query(None, description="Filter by status (scheduled, confirmed, completed, cancelled, no_show)"),
+    outcome: Optional[str] = Query(None, description="Filter by outcome (pending, won, lost, no_show, rescheduled)"),
+    db: Session = Depends(get_db),
+) -> APIResponse[AppointmentListResponse]:
+    """
+    List appointments for a rep (or all appointments for managers).
+    
+    For reps: defaults to authenticated user's appointments for today.
+    For managers: can view all appointments, optionally filtered by rep_id.
+    """
+    tenant_id = getattr(request.state, "tenant_id", None)
+    user_id = getattr(request.state, "user_id", None)
+    user_role = getattr(request.state, "user_role", None)
+    
+    # Determine rep_id: use provided, or infer from auth context if rep
+    if not rep_id and user_role == "sales_rep":
+        rep_id = user_id
+    elif not rep_id and user_role in ["manager", "csr"]:
+        # Managers/CSRs can view all appointments if no rep_id specified
+        rep_id = None
+    
+    # Parse date filter (default to today in UTC)
+    if date:
+        try:
+            # Parse YYYY-MM-DD format
+            filter_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail=create_error_response(
+                    error_code=ErrorCodes.INVALID_REQUEST,
+                    message="Invalid date format. Use YYYY-MM-DD",
+                    details={"date": date},
+                    request_id=getattr(request.state, "trace_id", None),
+                ).dict(),
+            )
+    else:
+        filter_date = datetime.utcnow().date()
+    
+    # Build query
+    query = db.query(Appointment).filter(Appointment.company_id == tenant_id)
+    
+    # Filter by rep_id if provided
+    if rep_id:
+        query = query.filter(Appointment.assigned_rep_id == rep_id)
+    
+    # Filter by date (scheduled_start between start and end of day in UTC)
+    day_start = datetime.combine(filter_date, datetime.min.time())
+    day_end = datetime.combine(filter_date, datetime.max.time())
+    query = query.filter(
+        and_(
+            Appointment.scheduled_start >= day_start,
+            Appointment.scheduled_start < day_end + timedelta(days=1)
+        )
+    )
+    
+    # Filter by status
+    if status:
+        try:
+            status_enum = AppointmentStatus(status.lower())
+            query = query.filter(Appointment.status == status_enum)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=create_error_response(
+                    error_code=ErrorCodes.INVALID_REQUEST,
+                    message=f"Invalid status: {status}",
+                    details={"valid_statuses": [s.value for s in AppointmentStatus]},
+                    request_id=getattr(request.state, "trace_id", None),
+                ).dict(),
+            )
+    
+    # Filter by outcome
+    if outcome:
+        try:
+            outcome_enum = AppointmentOutcome(outcome.lower())
+            query = query.filter(Appointment.outcome == outcome_enum)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=create_error_response(
+                    error_code=ErrorCodes.INVALID_REQUEST,
+                    message=f"Invalid outcome: {outcome}",
+                    details={"valid_outcomes": [o.value for o in AppointmentOutcome]},
+                    request_id=getattr(request.state, "trace_id", None),
+                ).dict(),
+            )
+    
+    # Order by scheduled_start
+    query = query.order_by(Appointment.scheduled_start.asc())
+    
+    # Eager load relationships
+    appointments = query.options(
+        selectinload(Appointment.contact_card),
+        selectinload(Appointment.lead),
+    ).all()
+    
+    # Build response items
+    appointment_items = []
+    for appointment in appointments:
+        # Get customer name from contact card
+        customer_name = None
+        if appointment.contact_card:
+            name_parts = []
+            if appointment.contact_card.first_name:
+                name_parts.append(appointment.contact_card.first_name)
+            if appointment.contact_card.last_name:
+                name_parts.append(appointment.contact_card.last_name)
+            customer_name = " ".join(name_parts) if name_parts else None
+        
+        # Count pending tasks (cheap query)
+        pending_tasks_count = None
+        if appointment.id:
+            pending_count = db.query(func.count(Task.id)).filter(
+                Task.appointment_id == appointment.id,
+                Task.company_id == tenant_id,
+                Task.status.in_([TaskStatus.OPEN, TaskStatus.OVERDUE])
+            ).scalar()
+            pending_tasks_count = pending_count or 0
+        
+        # Determine if assigned to requesting user
+        is_assigned_to_me = appointment.assigned_rep_id == user_id if user_id else False
+        
+        item = AppointmentListItem(
+            appointment_id=appointment.id,
+            lead_id=appointment.lead_id,
+            contact_card_id=appointment.contact_card_id,
+            customer_name=customer_name,
+            address=appointment.location,
+            scheduled_start=appointment.scheduled_start,
+            scheduled_end=appointment.scheduled_end,
+            status=appointment.status.value,
+            outcome=appointment.outcome.value,
+            service_type=appointment.service_type,
+            is_assigned_to_me=is_assigned_to_me,
+            deal_size=appointment.deal_size,
+            pending_tasks_count=pending_tasks_count,
+        )
+        appointment_items.append(item)
+    
+    response = AppointmentListResponse(
+        appointments=appointment_items,
+        total=len(appointment_items),
+        date=filter_date.isoformat(),
+    )
+    
+    return APIResponse(data=response)
 
 
 @router.post("", response_model=APIResponse[AppointmentResponse])
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def create_appointment(
     request: Request,
     payload: AppointmentCreateBody,
@@ -190,7 +349,7 @@ async def create_appointment(
 
 
 @router.patch("/{appointment_id}", response_model=APIResponse[AppointmentResponse])
-@require_role("exec", "manager", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def update_appointment(
     request: Request,
     appointment_id: str,
@@ -221,16 +380,40 @@ async def update_appointment(
         )
 
     change_log = {}
-    for field in ["scheduled_start", "scheduled_end", "status", "outcome", "assigned_rep_id", "location", "service_type", "notes", "external_id"]:
+    outcome_changed_to_won = False
+    
+    # Process all fields first
+    for field in ["scheduled_start", "scheduled_end", "status", "outcome", "assigned_rep_id", "location", "service_type", "notes", "external_id", "deal_size"]:
         value = getattr(payload, field)
         if value is not None:
+            old_value = getattr(appointment, field, None)
             setattr(appointment, field, value)
             if isinstance(value, enum.Enum):
                 change_log[field] = value.value
+                if field == "outcome" and value == AppointmentOutcome.WON:
+                    outcome_changed_to_won = True
             elif isinstance(value, datetime):
                 change_log[field] = value.isoformat()
             else:
                 change_log[field] = value
+    
+    # Handle outcome = won logic (after all fields are set)
+    if outcome_changed_to_won:
+        # Update appointment status to completed when outcome is won
+        if appointment.status != AppointmentStatus.COMPLETED:
+            appointment.status = AppointmentStatus.COMPLETED
+            change_log["status"] = AppointmentStatus.COMPLETED.value
+        
+        # Sync deal_size to Lead if provided
+        deal_size_to_sync = payload.deal_size if payload.deal_size is not None else appointment.deal_size
+        if deal_size_to_sync is not None and appointment.lead:
+            appointment.lead.deal_size = deal_size_to_sync
+            appointment.lead.deal_status = "won"
+            appointment.lead.closed_at = datetime.utcnow()
+            from app.models.lead import LeadStatus
+            if appointment.lead.status != LeadStatus.CLOSED_WON:
+                appointment.lead.status = LeadStatus.CLOSED_WON
+            change_log["lead_deal_size"] = deal_size_to_sync
     
     # Auto-geocode address if location changed and coordinates are missing
     if payload.location and (not appointment.geo_lat or not appointment.geo_lng):

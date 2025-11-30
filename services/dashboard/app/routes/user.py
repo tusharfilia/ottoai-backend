@@ -99,7 +99,7 @@ async def add_user_to_organization(clerk_user_id: str, clerk_org_id: str, role: 
         return None
 
 @router.post("/")
-@require_role("admin")
+@require_role("manager")
 async def create_user(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Create a new user (either manager or rep)"""
     payload = await request.json()
@@ -189,7 +189,7 @@ async def create_user(request: Request, background_tasks: BackgroundTasks, db: S
     return {"success": True, "user_id": new_user.id}
 
 @router.get("/{user_id}")
-@require_role("admin", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def get_user(request: Request, user_id: int, db: Session = Depends(get_db)):
     """Get user details"""
     user_record = db.query(user.User).filter_by(id=user_id).first()
@@ -226,7 +226,7 @@ async def get_user(request: Request, user_id: int, db: Session = Depends(get_db)
     }
 
 @router.put("/{user_id}")
-@require_role("admin")
+@require_role("manager")
 async def update_user(request: Request, user_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Update user details"""
     payload = await request.json()
@@ -244,7 +244,7 @@ async def update_user(request: Request, user_id: int, background_tasks: Backgrou
         user_record.phone_number = payload["phone_number"]
     
     # If it's a rep and being promoted to manager
-    if user_record.role == "rep" and payload.get("role") == "manager":
+    if user_record.role == "sales_rep" and payload.get("role") == "manager":
         # Delete rep profile
         rep = db.query(sales_rep.SalesRep).filter_by(user_id=user_id).first()
         if rep:
@@ -286,7 +286,7 @@ async def update_user(request: Request, user_id: int, background_tasks: Backgrou
             user_record.role = "manager"
     
     # If it's a manager and being demoted to rep
-    elif user_record.role == "manager" and payload.get("role") == "rep":
+    elif user_record.role == "manager" and payload.get("role") == "sales_rep":
         # Delete manager profile
         manager = db.query(sales_manager.SalesManager).filter_by(user_id=user_id).first()
         if manager:
@@ -309,7 +309,7 @@ async def update_user(request: Request, user_id: int, background_tasks: Backgrou
             except Exception as e:
                 print(f"Failed to delete Clerk user: {str(e)}")
         
-        user_record.role = "rep"
+        user_record.role = "sales_rep"
     
     # If it's a manager with Clerk account, update Clerk data
     elif user_record.role == "manager" and user_record.clerk_id:
@@ -515,7 +515,7 @@ async def handle_clerk_webhook(request: Request, background_tasks: BackgroundTas
 
 # Route to sync a user from our database to Clerk
 @router.post("/{user_id}/sync-to-clerk")
-@require_role("admin")
+@require_role("manager")
 async def sync_user_to_clerk(user_id: int, db: Session = Depends(get_db)):
     """Force sync a user from database to Clerk"""
     user_record = db.query(user.User).filter_by(id=user_id).first()
@@ -637,7 +637,7 @@ async def update_user_metadata(user_id: str, request: Request, db: Session = Dep
         raise HTTPException(status_code=500, detail=error_detail)
 
 @router.get("/company")
-@require_role("admin", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def get_user_company(db: Session = Depends(get_db), current_user: dict = Depends(get_user_from_clerk_token)):
     """Get the company for the current authenticated user"""
     

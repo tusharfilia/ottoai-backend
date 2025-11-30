@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/v1/missed-calls", tags=["missed-calls", "queue"]
 missed_call_service = MissedCallQueueService()
 
 @router.post("/queue/{call_id}")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def add_missed_call_to_queue(
     request: Request,
     call_id: int,
@@ -70,7 +70,7 @@ async def add_missed_call_to_queue(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/queue/status")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def get_queue_status(
     request: Request,
     db: Session = Depends(get_db)
@@ -91,7 +91,7 @@ async def get_queue_status(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/queue/metrics")
-@require_role("exec", "manager")
+@require_role("manager", "csr")
 async def get_queue_metrics(
     request: Request,
     db: Session = Depends(get_db)
@@ -112,7 +112,7 @@ async def get_queue_metrics(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/queue/entries")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def get_queue_entries(
     request: Request,
     page: int = 1,
@@ -189,7 +189,7 @@ async def get_queue_entries(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/queue/entries/{queue_id}")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def get_queue_entry(
     request: Request,
     queue_id: int,
@@ -248,7 +248,7 @@ async def get_queue_entry(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/queue/entries/{queue_id}/process")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def process_queue_entry(
     request: Request,
     queue_id: int,
@@ -285,7 +285,7 @@ async def process_queue_entry(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/queue/entries/{queue_id}/escalate")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def escalate_queue_entry(
     request: Request,
     queue_id: int,
@@ -324,7 +324,7 @@ async def escalate_queue_entry(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/processor/status")
-@require_role("exec", "manager")
+@require_role("manager")
 async def get_processor_status():
     """Get background processor status and statistics"""
     try:
@@ -336,7 +336,7 @@ async def get_processor_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/processor/start")
-@require_role("exec", "manager")
+@require_role("manager")
 async def start_processor():
     """Start the background queue processor"""
     try:
@@ -351,7 +351,7 @@ async def start_processor():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/processor/stop")
-@require_role("exec", "manager")
+@require_role("manager")
 async def stop_processor():
     """Stop the background queue processor"""
     try:

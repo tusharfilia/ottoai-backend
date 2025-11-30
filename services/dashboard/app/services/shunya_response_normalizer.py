@@ -361,22 +361,60 @@ class ShunyaResponseNormalizer:
     
     @staticmethod
     def normalize_meeting_segmentation(response: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize meeting segmentation response for sales visits."""
+        """
+        Normalize meeting segmentation response for sales visits.
+        
+        Aligned with final Shunya contract structure:
+        {
+            "success": true,
+            "call_id": 3070,
+            "part1": {"start_time": 0, "end_time": 240, "duration": 240, "content": "...", "key_points": [...]},
+            "part2": {"start_time": 240, "end_time": 420, "duration": 180, "content": "...", "key_points": [...]},
+            "segmentation_confidence": 0.8,
+            "transition_point": 240,
+            "transition_indicators": [...],
+            "meeting_structure_score": 4,
+            "call_type": "sales_appointment",
+            "created_at": null
+        }
+        """
         if not isinstance(response, dict):
             return {
                 "part1": {},
                 "part2": {},
-                "outcome": None,
                 "segmentation_confidence": None,
+                "transition_point": None,
             }
         
+        # Extract part1 and part2 (tolerant of missing fields)
+        part1_raw = response.get("part1") or {}
+        part2_raw = response.get("part2") or {}
+        
         return {
-            "part1": response.get("part1") or {},
-            "part2": response.get("part2") or {},
-            "outcome": (response.get("outcome") or "").lower(),
+            "success": response.get("success", True),
+            "call_id": response.get("call_id"),
+            "part1": {
+                "start_time": part1_raw.get("start_time"),
+                "end_time": part1_raw.get("end_time"),
+                "duration": part1_raw.get("duration"),
+                "content": part1_raw.get("content") or part1_raw.get("summary") or "",
+                "key_points": part1_raw.get("key_points") or part1_raw.get("key_topics") or [],
+            },
+            "part2": {
+                "start_time": part2_raw.get("start_time"),
+                "end_time": part2_raw.get("end_time"),
+                "duration": part2_raw.get("duration"),
+                "content": part2_raw.get("content") or part2_raw.get("summary") or "",
+                "key_points": part2_raw.get("key_points") or part2_raw.get("key_topics") or [],
+            },
             "segmentation_confidence": ShunyaResponseNormalizer._normalize_float(response.get("segmentation_confidence")),
             "transition_point": response.get("transition_point"),
+            "transition_indicators": response.get("transition_indicators") or [],
             "meeting_structure_score": response.get("meeting_structure_score"),
+            "call_type": response.get("call_type"),
+            "created_at": response.get("created_at") or response.get("analyzed_at"),
+            # Legacy fields (for backward compatibility)
+            "outcome": (response.get("outcome") or "").lower() if response.get("outcome") else None,
         }
 
 

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/live-metrics", tags=["live-metrics", "real-ti
 logger = get_logger(__name__)
 
 @router.get("/current")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def get_current_metrics(
     request,
     db: Session = Depends(get_db)
@@ -48,7 +48,7 @@ async def get_current_metrics(
         raise HTTPException(status_code=500, detail="Failed to retrieve live metrics")
 
 @router.get("/revenue")
-@require_role("exec", "manager")
+@require_role("manager")
 async def get_revenue_metrics(
     request,
     period: str = Query("today", description="Time period: today, week, month"),
@@ -90,7 +90,7 @@ async def get_revenue_metrics(
         raise HTTPException(status_code=500, detail="Failed to retrieve revenue metrics")
 
 @router.get("/calls")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def get_call_metrics(
     request,
     db: Session = Depends(get_db)
@@ -118,7 +118,7 @@ async def get_call_metrics(
         raise HTTPException(status_code=500, detail="Failed to retrieve call metrics")
 
 @router.get("/leads")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def get_lead_metrics(
     request,
     db: Session = Depends(get_db)
@@ -146,7 +146,7 @@ async def get_lead_metrics(
         raise HTTPException(status_code=500, detail="Failed to retrieve lead metrics")
 
 @router.get("/csr-performance")
-@require_role("exec", "manager")
+@require_role("manager")
 async def get_csr_performance_metrics(
     request,
     db: Session = Depends(get_db)

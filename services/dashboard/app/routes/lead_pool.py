@@ -75,7 +75,7 @@ class AssignLeadResponse(BaseModel):
 
 
 @router.get("", response_model=APIResponse[LeadPoolListResponse])
-@require_role("exec", "manager", "rep", "csr")
+@require_role("manager", "sales_rep", "csr")
 async def list_pool_leads(
     request: Request,
     status: Optional[str] = None,  # in_pool, assigned, closed
@@ -115,7 +115,7 @@ async def list_pool_leads(
             )
     else:
         # Default: show in_pool leads, but managers see all
-        if user_role not in ["exec", "manager"]:
+        if user_role not in ["manager", "manager"]:
             # Reps only see in_pool leads or their own assigned leads
             query = query.filter(
                 or_(
@@ -207,7 +207,7 @@ async def list_pool_leads(
 
 
 @router.post("/{lead_id}/request", response_model=APIResponse[RequestLeadResponse])
-@require_role("rep")
+@require_role("sales_rep")
 async def request_lead(
     request: Request,
     lead_id: str,
@@ -325,7 +325,7 @@ async def request_lead(
 
 
 @router.post("/{lead_id}/assign", response_model=APIResponse[AssignLeadResponse])
-@require_role("exec", "manager")
+@require_role("manager")
 async def assign_lead(
     request: Request,
     lead_id: str,

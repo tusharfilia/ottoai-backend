@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1/post-call-analysis", tags=["post-call-analysi
 logger = get_logger(__name__)
 
 @router.get("/call/{call_id}")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def get_call_analysis(
     call_id: int,
     request,
@@ -50,7 +50,7 @@ async def get_call_analysis(
         raise HTTPException(status_code=500, detail="Failed to retrieve call analysis")
 
 @router.get("/sales-rep/{sales_rep_id}/performance")
-@require_role("exec", "manager")
+@require_role("manager")
 async def get_sales_rep_performance(
     sales_rep_id: str,
     days: int = Query(30, description="Number of days to analyze", ge=1, le=365),
@@ -85,7 +85,7 @@ async def get_sales_rep_performance(
         raise HTTPException(status_code=500, detail="Failed to retrieve performance analysis")
 
 @router.get("/coaching-recommendations")
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def get_coaching_recommendations(
     sales_rep_id: Optional[str] = Query(None, description="Filter by sales rep ID"),
     category: Optional[str] = Query(None, description="Filter by recommendation category"),
@@ -189,7 +189,7 @@ async def get_coaching_recommendations(
         raise HTTPException(status_code=500, detail="Failed to retrieve coaching recommendations")
 
 @router.get("/performance-summary")
-@require_role("exec", "manager")
+@require_role("manager")
 async def get_performance_summary(
     days: int = Query(7, description="Number of days to analyze", ge=1, le=30),
     request=None,

@@ -3,7 +3,7 @@ from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
-from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics, post_call_analysis, contact_cards, leads, appointments, rep_shifts, recording_sessions
+from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics, post_call_analysis, contact_cards, leads, appointments, rep_shifts, recording_sessions, tasks, key_signals, message_threads, rep_settings, wins_feed, reviews
 from .routes import webhooks as webhooks_module
 from .routes.mobile_routes import mobile_router
 from .routes.webhook_handlers.uwc import router as uwc_webhooks
@@ -92,7 +92,8 @@ app.include_router(bland.router)
 app.include_router(call_rail.router)
 app.include_router(scheduled_tasks.router)
 app.include_router(delete.router)
-app.include_router(sms_handler.router)  # SMS handling endpoints
+app.include_router(sms_handler.router)  # SMS API endpoints (/api/v1/sms)
+app.include_router(sms_handler.webhook_router)  # SMS webhook endpoints (/sms) for external services
 app.include_router(enhanced_callrail.router)  # Enhanced CallRail webhook handlers
 app.include_router(missed_call_queue.router)  # Missed call queue management
 app.include_router(live_metrics.router)  # Live metrics and real-time KPIs
@@ -105,6 +106,14 @@ app.include_router(lead_pool_router)  # Lead pool management endpoints
 app.include_router(rep_shifts.router)  # Rep shift management endpoints
 app.include_router(recording_sessions.router)  # Recording session endpoints
 app.include_router(ai_internal_router)  # Internal AI API endpoints for Shunya/UWC
+from app.routes.ai_search import router as ai_search_router
+app.include_router(ai_search_router)  # Internal AI search endpoint for Ask Otto
+app.include_router(tasks.router)  # Tasks CRUD endpoints
+app.include_router(key_signals.router)  # KeySignals list + acknowledge endpoints
+app.include_router(message_threads.router)  # Message thread (SMS) read endpoints
+app.include_router(rep_settings.router)  # Rep settings (ghost mode) endpoints
+app.include_router(wins_feed.router)  # Wins feed endpoints
+app.include_router(reviews.router)  # Review follow-up trigger endpoints
 
 # Include admin routes
 try:

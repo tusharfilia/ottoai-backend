@@ -2,8 +2,9 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import or_
 
 from app.database import get_db
 from app.middleware.rbac import require_role
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/v1/leads", tags=["leads"])
 
 
 @router.get("/{lead_id}", response_model=APIResponse[LeadResponse])
-@require_role("exec", "manager", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def get_lead(
     request: Request,
     lead_id: str,
@@ -112,7 +113,7 @@ class LeadUpdateBody(BaseModel):
 
 
 @router.post("", response_model=APIResponse[LeadResponse])
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def create_lead(
     request: Request,
     payload: LeadCreateBody,
@@ -197,7 +198,7 @@ async def create_lead(
 
 
 @router.patch("/{lead_id}", response_model=APIResponse[LeadResponse])
-@require_role("exec", "manager", "csr")
+@require_role("manager", "csr")
 async def update_lead(
     request: Request,
     lead_id: str,
@@ -263,5 +264,130 @@ async def update_lead(
         },
     )
 
+    return APIResponse(data=response)
+
+
+@router.get("", response_model=APIResponse[dict])
+@require_role("manager", "csr", "sales_rep")
+async def list_leads(
+    request: Request,
+    status: Optional[str] = Query(None, description="Filter by status (comma-separated for multiple)"),
+    rep_id: Optional[str] = Query(None, description="Filter by assigned rep ID"),
+    source: Optional[str] = Query(None, description="Filter by source"),
+    date_from: Optional[datetime] = Query(None, description="Filter leads created after this date"),
+    date_to: Optional[datetime] = Query(None, description="Filter leads created before this date"),
+    search: Optional[str] = Query(None, description="Search by name or phone number"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    db: Session = Depends(get_db),
+) -> APIResponse[dict]:
+    """
+    List leads with optional filters.
+    """
+    tenant_id = getattr(request.state, "tenant_id", None)
+    
+    # Build query
+    query = db.query(Lead).join(ContactCard).filter(Lead.company_id == tenant_id)
+    
+    # Filter by status (support comma-separated list)
+    if status:
+        status_list = [s.strip() for s in status.split(",")]
+        try:
+            status_enums = [LeadStatus(s.lower()) for s in status_list]
+            query = query.filter(Lead.status.in_(status_enums))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=create_error_response(
+                    error_code=ErrorCodes.INVALID_REQUEST,
+                    message=f"Invalid status value: {str(e)}",
+                    details={"valid_statuses": [s.value for s in LeadStatus]},
+                    request_id=getattr(request.state, "trace_id", None),
+                ).dict(),
+            )
+    
+    # Filter by rep_id
+    if rep_id:
+        query = query.filter(Lead.assigned_rep_id == rep_id)
+    
+    # Filter by source
+    if source:
+        try:
+            source_enum = LeadSource(source.lower())
+            query = query.filter(Lead.source == source_enum)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=create_error_response(
+                    error_code=ErrorCodes.INVALID_REQUEST,
+                    message=f"Invalid source: {source}",
+                    details={"valid_sources": [s.value for s in LeadSource]},
+                    request_id=getattr(request.state, "trace_id", None),
+                ).dict(),
+            )
+    
+    # Filter by date range (on created_at)
+    if date_from:
+        query = query.filter(Lead.created_at >= date_from)
+    if date_to:
+        query = query.filter(Lead.created_at <= date_to)
+    
+    # Search by name or phone
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                ContactCard.first_name.ilike(search_term),
+                ContactCard.last_name.ilike(search_term),
+                ContactCard.primary_phone.ilike(search_term),
+                ContactCard.secondary_phone.ilike(search_term),
+            )
+        )
+    
+    # Get total count before pagination
+    total_count = query.count()
+    
+    # Apply pagination
+    query = query.order_by(Lead.created_at.desc()).offset(offset).limit(limit)
+    
+    # Eager load contact cards
+    leads = query.options(selectinload(Lead.contact_card)).all()
+    
+    # Build response items
+    lead_items = []
+    for lead in leads:
+        contact = lead.contact_card
+        contact_name = None
+        if contact:
+            name_parts = []
+            if contact.first_name:
+                name_parts.append(contact.first_name)
+            if contact.last_name:
+                name_parts.append(contact.last_name)
+            contact_name = " ".join(name_parts) if name_parts else None
+        
+        lead_items.append({
+            "lead_id": lead.id,
+            "status": lead.status.value,
+            "source": lead.source.value,
+            "priority": lead.priority,
+            "score": lead.score,
+            "last_contacted_at": lead.last_contacted_at.isoformat() if lead.last_contacted_at else None,
+            "contact": {
+                "name": contact_name,
+                "primary_phone": contact.primary_phone if contact else None,
+                "city": contact.city if contact else None,
+                "state": contact.state if contact else None,
+            },
+            "created_at": lead.created_at.isoformat(),
+        })
+    
+    response = {
+        "leads": lead_items,
+        "total": total_count,
+        "limit": limit,
+        "offset": offset,
+    }
+    
     return APIResponse(data=response)
 

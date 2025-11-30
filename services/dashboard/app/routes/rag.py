@@ -93,7 +93,7 @@ class DocumentUploadResponse(BaseModel):
 # Endpoints
 
 @router.post("/query", response_model=APIResponse[RAGQueryResponse])
-@require_role("exec", "manager", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def query_ask_otto(
     request: Request,
     query: RAGQueryRequest,
@@ -122,7 +122,7 @@ async def query_ask_otto(
         }
         
         # Reps only see their own data
-        if user_role == "rep":
+        if user_role == "sales_rep":
             context["user_id"] = user_id
         
         # CSRs see calls/leads but not rep appointments
@@ -255,7 +255,7 @@ async def query_ask_otto(
 
 
 @router.get("/queries", response_model=PaginatedResponse[Dict])
-@require_role("exec", "manager")
+@require_role("manager")
 async def get_query_history(
     request: Request,
     page: int = 1,
@@ -307,7 +307,7 @@ async def get_query_history(
 
 
 @router.post("/queries/{query_id}/feedback")
-@require_role("exec", "manager", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def submit_query_feedback(
     request: Request,
     query_id: str,
@@ -354,7 +354,7 @@ async def submit_query_feedback(
 
 
 @router.get("/documents", response_model=PaginatedResponse[Dict])
-@require_role("exec", "manager")
+@require_role("manager")
 async def list_documents(
     request: Request,
     page: int = 1,
@@ -419,7 +419,7 @@ async def list_documents(
 
 
 @router.get("/documents/{document_id}")
-@require_role("exec", "manager")
+@require_role("manager")
 async def get_document(
     request: Request,
     document_id: str,
@@ -447,7 +447,7 @@ async def get_document(
 
 
 @router.delete("/documents/{document_id}")
-@require_role("exec", "manager")
+@require_role("manager")
 async def delete_document(
     request: Request,
     document_id: str,
@@ -519,7 +519,7 @@ async def delete_document(
 
 
 @router.post("/documents/upload", response_model=APIResponse[DocumentUploadResponse])
-@require_role("exec", "manager")
+@require_role("manager")
 async def upload_document(
     request: Request,
     file: UploadFile = File(...),
@@ -726,7 +726,7 @@ def mock_rag_response(query: str, max_results: int = 10) -> Dict[str, Any]:
              "similarity_score": 0.88, "timestamp": 125.5}
         ]
     
-    elif "rep" in query_lower or "performance" in query_lower:
+    elif "sales_rep" in query_lower or "performance" in query_lower:
         answer = """Based on recent data:
 
 **Top Performer**: Bradley Cohurst - 65% close rate, consistently sets agenda and handles objections well

@@ -155,7 +155,7 @@ def get_rep_metadata(
         name=name,
         email=email,
         phone=phone,
-        role="rep",  # Default role
+        role="sales_rep",  # Default role
         region=None,  # Not stored in SalesRep model
         active=rep.allow_location_tracking and rep.allow_recording,  # Use permissions as proxy for active
     )

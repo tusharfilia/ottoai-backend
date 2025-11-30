@@ -54,7 +54,7 @@ class AudioMetadata(BaseModel):
 
 
 @router.post("/start", response_model=APIResponse[RecordingSessionStartResponse])
-@require_role("rep", "manager", "exec")
+@require_role("sales_rep", "manager")
 async def start_recording_session(
     request: Request,
     body: RecordingSessionStartRequest,
@@ -205,7 +205,7 @@ async def start_recording_session(
 
 
 @router.post("/{session_id}/stop", response_model=APIResponse[RecordingSessionResponse])
-@require_role("rep", "manager", "exec")
+@require_role("sales_rep", "manager")
 async def stop_recording_session(
     request: Request,
     session_id: str,
@@ -280,7 +280,7 @@ async def stop_recording_session(
 
 
 @router.post("/{session_id}/upload-audio", status_code=200)
-@require_role("rep", "manager", "exec")
+@require_role("sales_rep", "manager")
 async def upload_audio_complete(
     request: Request,
     session_id: str,
@@ -362,7 +362,7 @@ async def upload_audio_complete(
 
 
 @router.post("/{session_id}/metadata", response_model=APIResponse[RecordingSessionResponse])
-@require_role("rep", "manager", "exec")
+@require_role("sales_rep", "manager")
 async def update_audio_metadata(
     request: Request,
     session_id: str,
@@ -402,7 +402,7 @@ async def update_audio_metadata(
 
 
 @router.get("/{session_id}", response_model=APIResponse[RecordingSessionResponse])
-@require_role("rep", "manager", "exec")
+@require_role("sales_rep", "manager")
 async def get_recording_session(
     request: Request,
     session_id: str,

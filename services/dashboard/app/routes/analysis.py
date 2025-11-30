@@ -71,7 +71,7 @@ class ObjectionAnalyticsResponse(BaseModel):
 # Endpoints
 
 @router.post("/{call_id}/analyze", response_model=APIResponse[JobStatusResponse])
-@require_role("admin", "rep")
+@require_role("manager", "sales_rep")
 async def analyze_call(
     request: Request,
     call_id: int,
@@ -111,7 +111,7 @@ async def analyze_call(
         )
     
     # Verify rep can only analyze their own calls
-    if user_role == "rep" and call.assigned_rep_id != user_id:
+    if user_role == "sales_rep" and call.assigned_rep_id != user_id:
         raise HTTPException(
             status_code=403,
             detail=create_error_response(
@@ -232,7 +232,7 @@ async def analyze_call(
 
 
 @router.get("/{call_id}/analysis", response_model=APIResponse[CallAnalysisResponse])
-@require_role("admin", "rep")
+@require_role("manager", "sales_rep")
 async def get_call_analysis(
     request: Request,
     call_id: int,
@@ -269,7 +269,7 @@ async def get_call_analysis(
         )
     
     # Reps can only view their own call analysis
-    if user_role == "rep" and call.assigned_rep_id != user_id:
+    if user_role == "sales_rep" and call.assigned_rep_id != user_id:
         raise HTTPException(
             status_code=403,
             detail=create_error_response(
@@ -324,7 +324,7 @@ async def get_call_analysis(
 
 
 @router.post("/analyze-batch", response_model=APIResponse[List[JobStatusResponse]])
-@require_role("admin")
+@require_role("manager")
 async def analyze_batch(
     request: Request,
     call_ids: List[int],
@@ -414,7 +414,7 @@ async def analyze_batch(
 
 
 @router.get("/analytics/objections", response_model=APIResponse[ObjectionAnalyticsResponse])
-@require_role("admin")
+@require_role("manager")
 async def get_objection_analytics(
     request: Request,
     date_range: str = "last_30_days",

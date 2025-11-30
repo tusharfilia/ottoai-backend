@@ -38,12 +38,21 @@ class TenantContextMiddleware:
             # Extract tenant context (tenant_id, user_id, user_role)
             context = await self._extract_tenant_context(request)
             if not context or not context.get("tenant_id"):
-                response = JSONResponse(
-                    status_code=403,
-                    content={"detail": "Missing or invalid tenant_id in JWT claims"}
-                )
-                await response(scope, receive, send)
-                return
+                # In dev mode, use test company/user if no auth token provided
+                if settings.DEV_MODE:
+                    logger.info("DEV_MODE enabled: Using test company/user for unauthenticated request")
+                    context = {
+                        "tenant_id": settings.DEV_TEST_COMPANY_ID,
+                        "user_id": settings.DEV_TEST_USER_ID,
+                        "user_role": "manager"  # Default to manager in dev mode for full access
+                    }
+                else:
+                    response = JSONResponse(
+                        status_code=403,
+                        content={"detail": "Missing or invalid tenant_id in JWT claims"}
+                    )
+                    await response(scope, receive, send)
+                    return
             
             # Attach context to request state
             request.state.tenant_id = context["tenant_id"]
@@ -56,12 +65,19 @@ class TenantContextMiddleware:
             
         except Exception as e:
             logger.error(f"Error extracting tenant_id: {str(e)}")
-            response = JSONResponse(
-                status_code=403,
-                content={"detail": "Invalid authentication token"}
-            )
-            await response(scope, receive, send)
-            return
+            # In dev mode, fall back to test company/user on error
+            if settings.DEV_MODE:
+                logger.info("DEV_MODE enabled: Using test company/user after error")
+                request.state.tenant_id = settings.DEV_TEST_COMPANY_ID
+                request.state.user_id = settings.DEV_TEST_USER_ID
+                request.state.user_role = "manager"  # Default to manager in dev mode for full access
+            else:
+                response = JSONResponse(
+                    status_code=403,
+                    content={"detail": "Invalid authentication token"}
+                )
+                await response(scope, receive, send)
+                return
         
         await self.app(scope, receive, send)
     
@@ -97,9 +113,12 @@ class TenantContextMiddleware:
         Returns:
             dict with tenant_id, user_id, user_role, or None if extraction fails
         """
-        # Get Authorization header
+        # In dev mode, if no auth header, return None to trigger dev mode fallback
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
+            if settings.DEV_MODE:
+                logger.debug("DEV_MODE: No Authorization header, will use test company/user")
+                return None
             logger.warning("No Authorization header found")
             return None
         
@@ -138,20 +157,21 @@ class TenantContextMiddleware:
             
             # Extract user_id and role
             user_id = decoded_token.get("sub") or decoded_token.get("user_id")
-            clerk_role = decoded_token.get("org_role") or decoded_token.get("role") or "rep"
+            clerk_role = decoded_token.get("org_role") or decoded_token.get("role") or "sales_rep"
             
-            # Map Clerk roles to Otto's 3-role system
-            # Clerk may use: admin, org:admin, exec, manager, csr, rep
-            # Otto uses: leadership, csr, rep
+            # Map Clerk roles to Otto's standardized 3-role system
+            # Clerk may use: admin, org:admin, exec, manager, csr, rep, sales_rep
+            # Otto uses: manager, csr, sales_rep
             role_mapping = {
-                "admin": "leadership",
-                "org:admin": "leadership",
-                "exec": "leadership",
-                "manager": "leadership",
+                "admin": "manager",
+                "org:admin": "manager",
+                "exec": "manager",
+                "manager": "manager",
                 "csr": "csr",
-                "rep": "rep"
+                "rep": "sales_rep",
+                "sales_rep": "sales_rep"
             }
-            user_role = role_mapping.get(clerk_role.lower(), "rep")  # Default to rep if unknown
+            user_role = role_mapping.get(clerk_role.lower(), "sales_rep")  # Default to sales_rep if unknown
             
             return {
                 "tenant_id": tenant_id,

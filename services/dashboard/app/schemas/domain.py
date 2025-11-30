@@ -151,6 +151,10 @@ class TaskSummary(BaseModel):
     status: TaskStatus
     completed_at: Optional[datetime] = None
     priority: Optional[str] = None
+    contact_card_id: Optional[str] = None
+    lead_id: Optional[str] = None
+    appointment_id: Optional[str] = None
+    call_id: Optional[int] = None
     created_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
@@ -181,6 +185,11 @@ class KeySignalSummary(BaseModel):
     title: str
     description: Optional[str] = None
     acknowledged: bool = False
+    acknowledged_at: Optional[datetime] = None
+    acknowledged_by: Optional[str] = None
+    contact_card_id: str
+    lead_id: Optional[str] = None
+    appointment_id: Optional[str] = None
     created_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
@@ -593,6 +602,7 @@ class LeadDetail(LeadSummary):
 class AppointmentDetail(AppointmentSummary):
     notes: Optional[str] = None
     external_id: Optional[str] = None
+    deal_size: Optional[float] = Field(None, description="Deal size in dollars (when outcome is won)")
 class LeadResponse(BaseModel):
     lead: LeadDetail
     contact: Optional[ContactCardBase] = None

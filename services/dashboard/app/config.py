@@ -112,6 +112,9 @@ class Settings:
         
         # Development/Testing Configuration
         self.DEV_EMIT_KEY = os.getenv("DEV_EMIT_KEY")
+        self.DEV_MODE = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
+        self.DEV_TEST_COMPANY_ID = os.getenv("DEV_TEST_COMPANY_ID", "dev-test-company")
+        self.DEV_TEST_USER_ID = os.getenv("DEV_TEST_USER_ID", "dev-test-user")
         
         # Internal AI API Configuration (for Shunya/UWC integration)
         self.AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "")

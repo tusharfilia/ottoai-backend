@@ -1,5 +1,5 @@
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import ProgrammingError, NoSuchTableError
+from sqlalchemy.exc import ProgrammingError, OperationalError, NoSuchTableError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.schema import CreateTable
@@ -110,9 +110,31 @@ def add_column(engine, table_name, column):
     # Use column.name directly (not compiled) to avoid table-qualified names
     column_name = column.name
     column_type = column.type.compile(engine.dialect)
-    sql = text(f'ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_type}')
+    
+    # SQLite doesn't support IF NOT EXISTS in ALTER TABLE ADD COLUMN
+    # Check if column exists first for SQLite
+    dialect = engine.dialect.name
+    if dialect == 'sqlite':
+        inspector = inspect(engine)
+        try:
+            existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
+            if column_name in existing_columns:
+                return  # Column already exists, skip
+        except NoSuchTableError:
+            pass  # Table doesn't exist, will be created by migrations
+        sql = text(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}')
+    else:
+        # PostgreSQL supports IF NOT EXISTS
+        sql = text(f'ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_type}')
+    
     with engine.begin() as conn:
-        conn.execute(sql)
+        try:
+            conn.execute(sql)
+        except (ProgrammingError, OperationalError) as e:
+            # Ignore if column already exists
+            error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+            if "already exists" not in error_msg.lower() and "duplicate" not in error_msg.lower():
+                raise
 
 # Create tables
 def init_db():
@@ -152,12 +174,13 @@ def init_db():
     
     # Create tables if they don't exist
     # Catch duplicate index/table errors (common when migrations have already run)
+    # SQLite raises OperationalError, PostgreSQL raises ProgrammingError
     try:
         Base.metadata.create_all(bind=engine)
-    except ProgrammingError as e:
+    except (ProgrammingError, OperationalError) as e:
         # Ignore duplicate index/table errors - these are expected when migrations have run
         error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
-        if "already exists" not in error_msg.lower():
+        if "already exists" not in error_msg.lower() and "duplicate" not in error_msg.lower():
             # Re-raise if it's not a duplicate error
             raise
         # Log but don't fail on duplicate index/table errors

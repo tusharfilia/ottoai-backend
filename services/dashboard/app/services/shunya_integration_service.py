@@ -910,6 +910,15 @@ class ShunyaIntegrationService:
                         extra={"appointment_id": appointment.id, "task_description": action_text[:50]}
                     )
         
+        # Create key signals from visit analysis (idempotent: use unique keys)
+        if appointment.contact_card_id:
+            await self._create_key_signals_from_visit_analysis(
+                db=db,
+                appointment=appointment,
+                company_id=company_id,
+                complete_analysis=complete_analysis
+            )
+        
         # Emit appointment outcome event (only if outcome changed)
         if outcome_changed:
             emit(
@@ -1022,7 +1031,7 @@ class ShunyaIntegrationService:
         complete_analysis: Dict[str, Any]
     ):
         """
-        Create KeySignal entries from Shunya analysis.
+        Create KeySignal entries from Shunya CSR call analysis.
         
         Idempotent: Uses unique keys to prevent duplicate signals.
         """
@@ -1099,6 +1108,76 @@ class ShunyaIntegrationService:
                 logger.debug(
                     f"Key signal already exists for call {call.call_id}, skipping duplicate",
                     extra={"call_id": call.call_id, "signal_title": signal_data["title"]}
+                )
+    
+    async def _create_key_signals_from_visit_analysis(
+        self,
+        db: Session,
+        appointment: Appointment,
+        company_id: str,
+        complete_analysis: Dict[str, Any]
+    ):
+        """
+        Create KeySignal entries from Shunya sales visit analysis.
+        
+        Idempotent: Uses unique keys to prevent duplicate signals.
+        """
+        from uuid import uuid4
+        from app.utils.idempotency import (
+            generate_signal_unique_key,
+            signal_exists_by_unique_key,
+        )
+        
+        if not appointment.contact_card_id:
+            return  # Cannot create signals without contact card
+        
+        signals = []
+        
+        # Missed opportunities from visit analysis
+        missed_opportunities = complete_analysis.get("missed_opportunities", [])
+        if missed_opportunities:
+            for opp_text in missed_opportunities[:3]:  # Limit to first 3
+                opp_text_str = opp_text if isinstance(opp_text, str) else str(opp_text)
+                signals.append({
+                    "type": SignalType.OPPORTUNITY,
+                    "severity": SignalSeverity.MEDIUM,
+                    "title": f"Missed Opportunity: {opp_text_str[:50]}",
+                    "description": opp_text_str
+                })
+        
+        # Create signal records (idempotent: use unique keys)
+        for signal_data in signals:
+            # Generate unique key for this signal
+            signal_unique_key = generate_signal_unique_key(
+                signal_type=signal_data["type"],
+                title=signal_data["title"],
+                contact_card_id=appointment.contact_card_id,
+            )
+            
+            # Check if signal already exists (idempotency)
+            if not signal_exists_by_unique_key(db, company_id, signal_unique_key):
+                signal = KeySignal(
+                    id=str(uuid4()),
+                    company_id=company_id,
+                    contact_card_id=appointment.contact_card_id,
+                    lead_id=appointment.lead_id,
+                    appointment_id=appointment.id,
+                    signal_type=signal_data["type"],
+                    severity=signal_data["severity"],
+                    title=signal_data["title"],
+                    description=signal_data.get("description"),
+                    unique_key=signal_unique_key,
+                    acknowledged=False
+                )
+                db.add(signal)
+                logger.debug(
+                    f"Created key signal for visit appointment {appointment.id}",
+                    extra={"appointment_id": appointment.id, "signal_title": signal_data["title"]}
+                )
+            else:
+                logger.debug(
+                    f"Key signal already exists for visit appointment {appointment.id}, skipping duplicate",
+                    extra={"appointment_id": appointment.id, "signal_title": signal_data["title"]}
                 )
 
 

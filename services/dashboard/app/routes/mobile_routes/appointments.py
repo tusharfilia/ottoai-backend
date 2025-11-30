@@ -14,7 +14,7 @@ router = APIRouter(prefix="/appointments")
 logger = logging.getLogger(__name__)
 
 @router.get("")
-@require_role("rep")
+@require_role("sales_rep")
 async def get_appointments(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_user_from_clerk_token),
@@ -120,7 +120,7 @@ async def get_appointments(
 
 
 @router.get("/company")
-@require_role("admin")
+@require_role("manager")
 async def get_company_appointments(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_user_from_clerk_token)
@@ -197,7 +197,7 @@ async def get_company_appointments(
 
 
 @router.get("/{appointment_id}")
-@require_role("admin", "rep")
+@require_role("manager", "sales_rep")
 async def get_appointment_details(
     appointment_id: int,
     db: Session = Depends(get_db),

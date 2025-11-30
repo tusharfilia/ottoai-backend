@@ -3,11 +3,9 @@ Role-Based Access Control (RBAC) decorators for OttoAI backend.
 Enforces role-based permissions on protected endpoints.
 
 Otto uses 3 roles:
-- admin: Business owners, executives, and sales managers (full management access)
+- manager: Business owners, executives, and sales managers (full management access)
 - csr: Customer service representatives (call handling, booking)
-- rep: Sales representatives (appointments, follow-ups)
-
-Fixed circular import issue - removed self-import.
+- sales_rep: Sales representatives (appointments, follow-ups)
 """
 import logging
 from functools import wraps
@@ -17,19 +15,19 @@ from app.obs.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Role definitions (updated to 3-role model)
-ROLE_ADMIN = "admin"  # Owners + Executives + Managers (merged for simplicity)
-ROLE_CSR = "csr"      # Customer Service Representatives
-ROLE_REP = "rep"      # Sales Representatives
+# Role definitions (standardized 3-role model)
+ROLE_MANAGER = "manager"    # Business owners, executives, sales managers
+ROLE_CSR = "csr"            # Customer service representatives
+ROLE_SALES_REP = "sales_rep"  # Sales representatives
 
 # Valid roles
-VALID_ROLES = {ROLE_ADMIN, ROLE_CSR, ROLE_REP}
+VALID_ROLES = {ROLE_MANAGER, ROLE_CSR, ROLE_SALES_REP}
 
 # Role hierarchy for permission inheritance
 ROLE_HIERARCHY = {
-    ROLE_ADMIN: [ROLE_ADMIN, ROLE_CSR, ROLE_REP],  # Admin can access all
-    ROLE_CSR: [ROLE_CSR],                          # CSR can access CSR endpoints
-    ROLE_REP: [ROLE_REP]                           # Rep can access Rep endpoints
+    ROLE_MANAGER: [ROLE_MANAGER, ROLE_CSR, ROLE_SALES_REP],  # Manager can access all
+    ROLE_CSR: [ROLE_CSR],                                    # CSR can access CSR endpoints
+    ROLE_SALES_REP: [ROLE_SALES_REP]                         # Sales rep can access rep endpoints
 }
 
 
@@ -97,7 +95,22 @@ def require_role(*allowed_roles: str):
             
             # Check if user's role is in allowed roles (with hierarchy support)
             user_allowed_roles = ROLE_HIERARCHY.get(user_role, [user_role])
-            has_permission = any(role in allowed_roles for role in user_allowed_roles)
+            # Normalize role names for backwards compatibility
+            # Map old role names to new standardized names
+            role_aliases = {
+                "admin": "manager",
+                "leadership": "manager",
+                "exec": "manager",
+                "rep": "sales_rep"
+            }
+            normalized_allowed_roles = set()
+            for role in allowed_roles:
+                normalized_role = role_aliases.get(role, role)
+                normalized_allowed_roles.add(normalized_role)
+            # Also normalize user_role
+            normalized_user_role = role_aliases.get(user_role, user_role)
+            normalized_user_allowed_roles = [role_aliases.get(r, r) for r in user_allowed_roles]
+            has_permission = any(role in normalized_allowed_roles for role in normalized_user_allowed_roles)
             
             if not has_permission:
                 logger.warning(

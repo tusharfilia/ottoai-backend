@@ -19,21 +19,35 @@ depends_on = None
 
 
 def upgrade():
-    # Use raw SQL to disable constraints and drop tables with CASCADE
+    # Use raw SQL to drop tables
     conn = op.get_bind()
+    dialect = conn.dialect.name
     
-    # Disable all constraints
-    conn.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+    # SQLite doesn't support SET CONSTRAINTS or CASCADE
+    # For SQLite, we just drop tables in reverse dependency order
+    # For PostgreSQL, we can use CASCADE but skip SET CONSTRAINTS for compatibility
     
     # Drop all tables defined in the migration (in reverse dependency order)
-    conn.execute(text('DROP TABLE IF EXISTS "users" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "transcript_analyses" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "services" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "scheduled_calls" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "sales_reps" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "sales_managers" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "companies" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "calls" CASCADE'))
+    if dialect == 'sqlite':
+        # SQLite: drop without CASCADE
+        conn.execute(text('DROP TABLE IF EXISTS "users"'))
+        conn.execute(text('DROP TABLE IF EXISTS "transcript_analyses"'))
+        conn.execute(text('DROP TABLE IF EXISTS "services"'))
+        conn.execute(text('DROP TABLE IF EXISTS "scheduled_calls"'))
+        conn.execute(text('DROP TABLE IF EXISTS "sales_reps"'))
+        conn.execute(text('DROP TABLE IF EXISTS "sales_managers"'))
+        conn.execute(text('DROP TABLE IF EXISTS "companies"'))
+        conn.execute(text('DROP TABLE IF EXISTS "calls"'))
+    else:
+        # PostgreSQL: use CASCADE
+        conn.execute(text('DROP TABLE IF EXISTS "users" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "transcript_analyses" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "services" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "scheduled_calls" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "sales_reps" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "sales_managers" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "companies" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "calls" CASCADE'))
 
     # Create all tables in dependency order
     op.create_table(
@@ -204,20 +218,34 @@ def upgrade():
     op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
     op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
 
-    # Re-enable constraints
-    conn.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    # SQLite doesn't support SET CONSTRAINTS, so skip for SQLite
+    if dialect != 'sqlite':
+        conn.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
 
 
 def downgrade():
-    # Drop all tables with CASCADE
+    # Drop all tables
     conn = op.get_bind()
-    conn.execute(text("SET CONSTRAINTS ALL DEFERRED"))
-    conn.execute(text('DROP TABLE IF EXISTS "calls" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "companies" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "sales_managers" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "sales_reps" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "scheduled_calls" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "services" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "transcript_analyses" CASCADE'))
-    conn.execute(text('DROP TABLE IF EXISTS "users" CASCADE'))
-    conn.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    dialect = conn.dialect.name
+    
+    # SQLite doesn't support SET CONSTRAINTS or CASCADE
+    if dialect == 'sqlite':
+        conn.execute(text('DROP TABLE IF EXISTS "calls"'))
+        conn.execute(text('DROP TABLE IF EXISTS "companies"'))
+        conn.execute(text('DROP TABLE IF EXISTS "sales_managers"'))
+        conn.execute(text('DROP TABLE IF EXISTS "sales_reps"'))
+        conn.execute(text('DROP TABLE IF EXISTS "scheduled_calls"'))
+        conn.execute(text('DROP TABLE IF EXISTS "services"'))
+        conn.execute(text('DROP TABLE IF EXISTS "transcript_analyses"'))
+        conn.execute(text('DROP TABLE IF EXISTS "users"'))
+    else:
+        conn.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+        conn.execute(text('DROP TABLE IF EXISTS "calls" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "companies" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "sales_managers" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "sales_reps" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "scheduled_calls" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "services" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "transcript_analyses" CASCADE'))
+        conn.execute(text('DROP TABLE IF EXISTS "users" CASCADE'))
+        conn.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))

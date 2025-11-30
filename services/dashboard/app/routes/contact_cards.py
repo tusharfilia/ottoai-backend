@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/v1/contact-cards", tags=["contact-cards"])
 
 
 @router.get("/{contact_id}", response_model=APIResponse[ContactCardDetail])
-@require_role("exec", "manager", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def get_contact_card(
     request: Request,
     contact_id: str,
@@ -64,7 +64,7 @@ async def get_contact_card(
 
 
 @router.get("/by-phone", response_model=APIResponse[ContactCardDetail])
-@require_role("exec", "manager", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def get_contact_card_by_phone(
     request: Request,
     company_id: str,
@@ -124,7 +124,7 @@ async def get_contact_card_by_phone(
 
 
 @router.post("/{contact_id}/refresh-property")
-@require_role("exec", "manager", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def refresh_property_intelligence(
     request: Request,
     contact_id: str,

@@ -20,7 +20,12 @@ from typing import Dict, Optional
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+
+# API router for authenticated endpoints (with /api/v1 prefix)
+router = APIRouter(prefix="/api/v1/sms", tags=["sms"])
+
+# Webhook router for external services (without /api/v1 prefix)
+webhook_router = APIRouter(prefix="/sms", tags=["sms-webhooks"])
 
 # Initialize services
 twilio_service = TwilioService()
@@ -40,7 +45,7 @@ class SMSResponse(BaseModel):
     lead_created: bool = False
     auto_reply_sent: bool = False
 
-@router.post("/sms/callrail-webhook")
+@webhook_router.post("/callrail-webhook")
 @limits(tenant="30/minute")
 async def handle_callrail_sms_webhook(
     request: Request,
@@ -107,7 +112,7 @@ async def handle_callrail_sms_webhook(
         logger.error(f"CallRail SMS webhook error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"SMS processing failed: {str(e)}")
 
-@router.post("/sms/twilio-webhook")
+@webhook_router.post("/twilio-webhook")
 @limits(tenant="30/minute")
 async def handle_twilio_sms_webhook(
     request: Request,
@@ -421,7 +426,7 @@ We're here to help! 🏠"""
         logger.error(f"Error sending welcome message: {str(e)}")
         return False
 
-@router.get("/sms/conversations/{call_id}")
+@router.get("/conversations/{call_id}")
 async def get_sms_conversation(
     call_id: int,
     db: Session = Depends(get_db)
@@ -446,7 +451,7 @@ async def get_sms_conversation(
         logger.error(f"Error getting SMS conversation: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/sms/send")
+@router.post("/send")
 async def send_sms_to_customer(
     call_id: int,
     message: str,

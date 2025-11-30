@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Note: Delete endpoints have been moved to delete.py
 
 @router.get("/call/{call_id}")
-@require_role("leadership", "csr", "rep")
+@require_role("manager", "csr", "sales_rep")
 async def get_call_details(
     request: Request,
     call_id: int,
@@ -73,7 +73,7 @@ async def get_call_details(
     return call_data
 
 @router.get("/unassigned-calls")
-@require_role("leadership")
+@require_role("manager")
 async def get_unassigned_calls(
     request: Request, 
     tenant_id: str = Depends(get_tenant_id),
@@ -109,7 +109,7 @@ async def get_unassigned_calls(
 
 
 @router.post("/add-call")
-@require_role("leadership", "csr")
+@require_role("manager", "csr")
 async def add_call(
     request: Request,
     background_tasks: BackgroundTasks,

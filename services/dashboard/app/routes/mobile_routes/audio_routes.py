@@ -39,7 +39,7 @@ def get_uwc_client():
 transcripts = {}
 
 @router.post("/start-recording")
-@require_role("rep")
+@require_role("sales_rep")
 async def start_recording(
     trigger_type: str,  # "location", "time", "both", or "manual"
     call_id: int,
@@ -93,7 +93,7 @@ async def start_recording(
     return {"recording_id": recording_id}
 
 @router.post("/upload/{recording_id}")
-@require_role("rep")
+@require_role("sales_rep")
 async def upload_audio(
     recording_id: str,
     background_tasks: BackgroundTasks,

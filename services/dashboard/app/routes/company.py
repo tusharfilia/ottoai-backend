@@ -221,7 +221,7 @@ router = APIRouter(prefix="/company", tags=["Companies"])
     },
     tags=["Companies"]
 )
-@require_role("leadership")
+@require_role("manager")
 async def create_company(
     request: Request,
     name: str = Query(..., description="Company name (e.g., 'RoofCo LLC')"),
@@ -434,7 +434,7 @@ async def get_company(
     },
     tags=["Companies"]
 )
-@require_role("leadership")
+@require_role("manager")
 @require_tenant_ownership("company_id")
 async def update_company(
     request: Request,
@@ -645,7 +645,7 @@ async def add_user_to_organization(
     },
     tags=["Companies", "Integrations"]
 )
-@require_role("leadership")
+@require_role("manager")
 @require_tenant_ownership("company_id")
 async def set_callrail_api_key(
     request: Request,
@@ -675,7 +675,7 @@ async def set_callrail_api_key(
     }
 
 @router.post("/set-callrail-account-id/{company_id}")
-@require_role("leadership")
+@require_role("manager")
 @require_tenant_ownership("company_id")
 async def set_callrail_account_id(
     request: Request,
