@@ -396,7 +396,7 @@ In the meantime, you can:
 - Let us know your preferred appointment time
 - Ask any questions about our services
 
-We're here to help! 🏠"""
+We're here to help!"""
         
         # Send SMS via Twilio
         sms_result = await twilio_service.send_sms(
@@ -908,7 +908,7 @@ In the meantime, you can:
 - Let us know your preferred appointment time
 - Ask any questions about our services
 
-We're here to help! 🏠"""
+We're here to help!"""
         
         # Send SMS via Twilio
         sms_result = await twilio_service.send_sms(
@@ -1420,7 +1420,7 @@ In the meantime, you can:
 - Let us know your preferred appointment time
 - Ask any questions about our services
 
-We're here to help! 🏠"""
+We're here to help!"""
         
         # Send SMS via Twilio
         sms_result = await twilio_service.send_sms(
