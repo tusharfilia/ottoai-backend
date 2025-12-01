@@ -19,6 +19,7 @@ requests==2.31.0  # Explicitly include requests
 schedule==1.2.1  # For BlandAI scheduling functionality
 twilio==8.5.0  # For Twilio SMS and phone call integration
 pydantic==2.0.3  # Required by FastAPI
+email-validator==2.1.0  # Required for Pydantic EmailStr validation
 python-dateutil==2.8.2  # For better date handling
 deepgram-sdk==2.*
 pytz==2023.3  # For timezone handling
