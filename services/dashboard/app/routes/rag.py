@@ -222,7 +222,10 @@ async def query_ask_otto(
             result_count=len(citations)
         ).inc()
         
-        metrics.rag_query_latency_ms.observe(latency_ms)
+        metrics.rag_query_latency_ms.labels(
+            tenant_id=tenant_id,
+            user_role=user_role
+        ).observe(latency_ms)
         
         # Build response
         response = RAGQueryResponse(
