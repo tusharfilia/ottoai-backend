@@ -138,7 +138,7 @@ class InvitationService:
         
         invited_users = []
         for event in events:
-            metadata = event.metadata or {}
+            metadata = event.metadata_json or {}
             invited_users.append({
                 "invite_id": event.id,
                 "email": metadata.get("email"),

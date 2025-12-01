@@ -1258,3 +1258,1373 @@ def get_uwc_client() -> UWCClient:
         _uwc_client = UWCClient()
     return _uwc_client
 
+
+            Transcription response with task_id/job_id/transcript_id for async tracking
+            Response format: {"success": True, "task_id": "...", "transcript_id": ..., "message": "..."}
+        """
+        payload = {
+            "call_id": 0,  # Will be set by caller if known
+            "audio_url": audio_url,
+            "call_type": "csr_call",  # Default, caller can override
+        }
+        if language:
+            payload["language"] = language
+        if model:
+            payload["model"] = model
+        
+        # OpenAPI path: /api/v1/transcription/transcribe
+        response = await self._make_request(
+            "POST",
+            "/api/v1/transcription/transcribe",
+            company_id,
+            request_id,
+            payload
+        )
+        
+        # Extract job ID from response (may be task_id, transcript_id, or job_id)
+        # Return response as-is - job ID extraction handled by caller
+        return response
+
+    async def get_transcription_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        return await self._make_request(
+            "GET",
+            f"/api/v1/transcription/status/{call_id}",
+            company_id,
+            request_id,
+        )
+
+    async def get_transcript(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        return await self._make_request(
+            "GET",
+            f"/api/v1/transcription/transcript/{call_id}",
+            company_id,
+            request_id,
+        )
+    
+    # RAG Query (per OpenAPI /api/v1/search/)
+    async def query_rag(
+        self,
+        company_id: str,
+        request_id: str,
+        query: str,
+        context: Dict[str, Any],
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Query RAG system for contextual information.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            query: Natural language query
+            context: Context dict with tenant_id, rep_id, meeting_id
+            options: Optional RAG options (max_results, similarity_threshold, etc.)
+        
+        Returns:
+            RAG query response with results and metadata
+        """
+        payload = {
+            "query": query,
+            "document_types": options.get("document_types") if options else None,
+            "limit": (options or {}).get("limit", 10),
+            "score_threshold": (options or {}).get("score_threshold", 0),
+            "filters": (options or {}).get("filters"),
+        }
+        return await self._make_request(
+            "POST",
+            "/api/v1/search/",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    # Document Indexing (legacy - kept for backward compatibility)
+    async def index_documents(
+        self,
+        company_id: str,
+        request_id: str,
+        documents: List[Dict[str, Any]],
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Index documents for RAG system (legacy method).
+        Use ingest_document() for new implementations.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            documents: List of documents with content and metadata
+            options: Optional indexing options (chunk_size, overlap, etc.)
+        
+        Returns:
+            Document indexing response with job_id and status
+        """
+        payload = {
+            "request_id": request_id,
+            "company_id": company_id,
+            "documents": documents,
+            "options": options or {
+                "chunk_size": 1000,
+                "overlap": 200,
+                "embedding_model": "text-embedding-ada-002"
+            }
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/uwc/v1/documents/index",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    # Document Ingestion to UWC (per OpenAPI /api/v1/ingestion/documents/upload)
+    async def ingest_document(
+        self,
+        company_id: str,
+        request_id: str,
+        file_url: str,
+        document_type: str,
+        filename: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Ingest a document to UWC for processing.
+        Call this after uploading file to S3.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            file_url: S3 URL or public URL of the document
+            document_type: Type of document (sop, training, reference)
+            filename: Original filename
+            metadata: Optional document metadata
+        
+        Returns:
+            Ingestion response with document_id, status, job_id
+        """
+        payload = {
+            "company_id": company_id,
+            "document_name": filename,
+            "document_type": document_type,
+            "url": file_url,
+            "metadata": metadata or {}
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/api/v1/ingestion/documents/upload",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    async def get_document_status(
+        self,
+        company_id: str,
+        request_id: str,
+        document_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get document processing status from UWC.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            document_id: Document ID returned from ingestion
+        
+        Returns:
+            Document status response
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/ingestion/{document_id}/status",
+            company_id,
+            request_id
+        )
+    
+    # Training Job Submission
+    async def submit_training_job(
+        self,
+        company_id: str,
+        request_id: str,
+        training_data: Dict[str, Any],
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Submit training job for personal clone model.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            training_data: Training data with media_urls and transcripts
+            options: Optional training options (model_type, epochs, etc.)
+        
+        Returns:
+            Training job response with job_id and status
+        """
+        payload = {
+            "request_id": request_id,
+            "company_id": company_id,
+            "training_data": training_data,
+            "options": options or {
+                "model_type": "personal_clone",
+                "training_epochs": 10,
+                "learning_rate": 0.001
+            }
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/uwc/v1/training/submit",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    # Follow-up Draft Generation (keep for future when available)
+    async def generate_followup_draft(
+        self,
+        company_id: str,
+        request_id: str,
+        rep_id: str,
+        call_context: Dict[str, Any],
+        draft_type: str = "sms",
+        tone: str = "professional",
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate personalized follow-up draft for a rep.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            rep_id: Sales rep ID to generate draft for
+            call_context: Context about the call (customer info, objections, etc.)
+            draft_type: Type of draft (sms, email, call_script)
+            tone: Tone of the message (professional, friendly, urgent)
+            options: Optional generation options (length, style, etc.)
+        
+        Returns:
+            Follow-up draft response with content and metadata
+        """
+        payload = {
+            "request_id": request_id,
+            "company_id": company_id,
+            "rep_id": rep_id,
+            "call_context": call_context,
+            "draft_type": draft_type,
+            "tone": tone,
+            "options": options or {
+                "max_length": 160 if draft_type == "sms" else 500,
+                "include_personalization": True,
+                "include_callback_request": True
+            }
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/uwc/v1/followups/generate",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    # Call Summarization (per OpenAPI /api/v1/summarization/summarize)
+    async def summarize_call(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Summarize a call transcript using UWC.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID to summarize
+            options: Optional summarization options (length, focus, etc.)
+        
+        Returns:
+            Summarization response with summary, key_points, action_items
+        """
+        payload = {
+            "call_id": call_id
+        }
+        if options:
+            payload.update(options)
+        
+        return await self._make_request(
+            "POST",
+            "/api/v1/summarization/summarize",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    async def get_summarization_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get summarization status for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Summarization status response
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/summarization/status/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Objections (per OpenAPI /api/v1/analysis/objections/{call_id})
+    async def detect_objections(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Detect objections in a call transcript.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Objections response with detected objections list
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/objections/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Lead Qualification (per OpenAPI /api/v1/analysis/qualification/{call_id})
+    async def qualify_lead(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Qualify a lead from a call transcript.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Lead qualification response with BANT scores and qualification level
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/qualification/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - SOP Compliance (per OpenAPI /api/v1/analysis/compliance/{call_id})
+    async def check_compliance(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Check SOP compliance for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Compliance check response with compliance score, violations, recommendations
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/compliance/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Complete Analysis (per OpenAPI /api/v1/analysis/complete/{call_id})
+    async def get_complete_analysis(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get complete analysis results for a call (summary, objections, qualification, compliance).
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Complete analysis response with all analysis types
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/complete/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Start Analysis (per OpenAPI /api/v1/analysis/start/{call_id})
+    async def start_analysis(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Start analysis pipeline for a call.
+        
+        Returns a job ID for async tracking.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Analysis start response with job_id/task_id for async tracking
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/v1/analysis/start/{call_id}",
+            company_id,
+            request_id
+        )
+        
+        # Return response as-is - job ID extraction handled by caller
+        return response
+    
+    async def get_job_status(
+        self,
+        company_id: str,
+        request_id: str,
+        job_id: str,
+        job_type: str = "analysis",
+    ) -> Dict[str, Any]:
+        """
+        Get status of a Shunya job.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            job_id: Shunya job/task ID
+            job_type: Type of job ("analysis", "transcription", "segmentation")
+        
+        Returns:
+            Job status response with status, progress, etc.
+        """
+        # Map job type to endpoint
+        if job_type == "transcription":
+            # For transcription, we use call_id or job_id
+            # Try to use analysis status endpoint if call_id available
+            # Otherwise, use a generic status endpoint
+            return await self._make_request(
+                "GET",
+                f"/api/v1/transcription/status/{job_id}",  # Using job_id as call_id temporarily
+                company_id,
+                request_id,
+            )
+        elif job_type == "segmentation":
+            return await self._make_request(
+                "GET",
+                f"/api/v1/meeting-segmentation/status/{job_id}",
+                company_id,
+                request_id,
+            )
+        else:
+            # Analysis status
+            return await self._make_request(
+                "GET",
+                f"/api/v1/analysis/status/{job_id}",
+                company_id,
+                request_id,
+            )
+    
+    async def get_job_result(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+        job_type: str = "analysis",
+    ) -> Dict[str, Any]:
+        """
+        Get result of a completed Shunya job.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID (used for result retrieval)
+            job_type: Type of job ("analysis", "transcription", "segmentation")
+        
+        Returns:
+            Job result (normalized if possible)
+        """
+        if job_type == "transcription":
+            return await self.get_transcript(company_id, request_id, call_id)
+        elif job_type == "segmentation":
+            return await self.get_meeting_segmentation_analysis(company_id, request_id, call_id)
+        else:
+            # Complete analysis
+            return await self.get_complete_analysis(company_id, request_id, call_id)
+    
+    async def get_segmentation_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        """Get meeting segmentation status."""
+        return await self.get_meeting_segmentation_status(company_id, request_id, call_id)
+    
+    async def get_segmentation_result(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        """Get meeting segmentation result."""
+        return await self.get_meeting_segmentation_analysis(company_id, request_id, call_id)
+    
+    async def get_analysis_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get analysis status for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Analysis status response with status per analysis type
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/status/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    async def get_call_summary(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get call summary (alternative endpoint).
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Call summary response
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/summary/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Meeting Segmentation (per OpenAPI /api/v1/meeting-segmentation/analyze)
+    async def analyze_meeting_segmentation(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+        analysis_type: str = "full"
+    ) -> Dict[str, Any]:
+        """
+        Analyze meeting segmentation for a sales appointment.
+        
+        Segments appointment into:
+        - Part 1: Rapport/Agenda (relationship building, agenda setting)
+        - Part 2: Proposal/Close (presentation, proposal, closing)
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID (for sales appointment)
+            analysis_type: "full" or "quick"
+        
+        Returns:
+            Meeting segmentation response with part1, part2, transition point, etc.
+        """
+        payload = {
+            "call_id": call_id,
+            "analysis_type": analysis_type
+        }
+        return await self._make_request(
+            "POST",
+            "/api/v1/meeting-segmentation/analyze",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    async def get_meeting_segmentation_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """Get meeting segmentation status."""
+        return await self._make_request(
+            "GET",
+            f"/api/v1/meeting-segmentation/status/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    async def get_meeting_segmentation_analysis(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """Get full meeting segmentation analysis."""
+        return await self._make_request(
+            "GET",
+            f"/api/v1/meeting-segmentation/analysis/{call_id}",
+            company_id,
+            request_id
+        )
+
+
+# Singleton instance
+_uwc_client: Optional[UWCClient] = None
+
+
+def get_uwc_client() -> UWCClient:
+    """Get or create UWC client singleton instance."""
+    global _uwc_client
+    if _uwc_client is None:
+        _uwc_client = UWCClient()
+    return _uwc_client
+
+
+            Transcription response with task_id/job_id/transcript_id for async tracking
+            Response format: {"success": True, "task_id": "...", "transcript_id": ..., "message": "..."}
+        """
+        payload = {
+            "call_id": 0,  # Will be set by caller if known
+            "audio_url": audio_url,
+            "call_type": "csr_call",  # Default, caller can override
+        }
+        if language:
+            payload["language"] = language
+        if model:
+            payload["model"] = model
+        
+        # OpenAPI path: /api/v1/transcription/transcribe
+        response = await self._make_request(
+            "POST",
+            "/api/v1/transcription/transcribe",
+            company_id,
+            request_id,
+            payload
+        )
+        
+        # Extract job ID from response (may be task_id, transcript_id, or job_id)
+        # Return response as-is - job ID extraction handled by caller
+        return response
+
+    async def get_transcription_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        return await self._make_request(
+            "GET",
+            f"/api/v1/transcription/status/{call_id}",
+            company_id,
+            request_id,
+        )
+
+    async def get_transcript(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        return await self._make_request(
+            "GET",
+            f"/api/v1/transcription/transcript/{call_id}",
+            company_id,
+            request_id,
+        )
+    
+    # RAG Query (per OpenAPI /api/v1/search/)
+    async def query_rag(
+        self,
+        company_id: str,
+        request_id: str,
+        query: str,
+        context: Dict[str, Any],
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Query RAG system for contextual information.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            query: Natural language query
+            context: Context dict with tenant_id, rep_id, meeting_id
+            options: Optional RAG options (max_results, similarity_threshold, etc.)
+        
+        Returns:
+            RAG query response with results and metadata
+        """
+        payload = {
+            "query": query,
+            "document_types": options.get("document_types") if options else None,
+            "limit": (options or {}).get("limit", 10),
+            "score_threshold": (options or {}).get("score_threshold", 0),
+            "filters": (options or {}).get("filters"),
+        }
+        return await self._make_request(
+            "POST",
+            "/api/v1/search/",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    # Document Indexing (legacy - kept for backward compatibility)
+    async def index_documents(
+        self,
+        company_id: str,
+        request_id: str,
+        documents: List[Dict[str, Any]],
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Index documents for RAG system (legacy method).
+        Use ingest_document() for new implementations.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            documents: List of documents with content and metadata
+            options: Optional indexing options (chunk_size, overlap, etc.)
+        
+        Returns:
+            Document indexing response with job_id and status
+        """
+        payload = {
+            "request_id": request_id,
+            "company_id": company_id,
+            "documents": documents,
+            "options": options or {
+                "chunk_size": 1000,
+                "overlap": 200,
+                "embedding_model": "text-embedding-ada-002"
+            }
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/uwc/v1/documents/index",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    # Document Ingestion to UWC (per OpenAPI /api/v1/ingestion/documents/upload)
+    async def ingest_document(
+        self,
+        company_id: str,
+        request_id: str,
+        file_url: str,
+        document_type: str,
+        filename: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Ingest a document to UWC for processing.
+        Call this after uploading file to S3.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            file_url: S3 URL or public URL of the document
+            document_type: Type of document (sop, training, reference)
+            filename: Original filename
+            metadata: Optional document metadata
+        
+        Returns:
+            Ingestion response with document_id, status, job_id
+        """
+        payload = {
+            "company_id": company_id,
+            "document_name": filename,
+            "document_type": document_type,
+            "url": file_url,
+            "metadata": metadata or {}
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/api/v1/ingestion/documents/upload",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    async def get_document_status(
+        self,
+        company_id: str,
+        request_id: str,
+        document_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get document processing status from UWC.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            document_id: Document ID returned from ingestion
+        
+        Returns:
+            Document status response
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/ingestion/{document_id}/status",
+            company_id,
+            request_id
+        )
+    
+    # Training Job Submission
+    async def submit_training_job(
+        self,
+        company_id: str,
+        request_id: str,
+        training_data: Dict[str, Any],
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Submit training job for personal clone model.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            training_data: Training data with media_urls and transcripts
+            options: Optional training options (model_type, epochs, etc.)
+        
+        Returns:
+            Training job response with job_id and status
+        """
+        payload = {
+            "request_id": request_id,
+            "company_id": company_id,
+            "training_data": training_data,
+            "options": options or {
+                "model_type": "personal_clone",
+                "training_epochs": 10,
+                "learning_rate": 0.001
+            }
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/uwc/v1/training/submit",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    # Follow-up Draft Generation (keep for future when available)
+    async def generate_followup_draft(
+        self,
+        company_id: str,
+        request_id: str,
+        rep_id: str,
+        call_context: Dict[str, Any],
+        draft_type: str = "sms",
+        tone: str = "professional",
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate personalized follow-up draft for a rep.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            rep_id: Sales rep ID to generate draft for
+            call_context: Context about the call (customer info, objections, etc.)
+            draft_type: Type of draft (sms, email, call_script)
+            tone: Tone of the message (professional, friendly, urgent)
+            options: Optional generation options (length, style, etc.)
+        
+        Returns:
+            Follow-up draft response with content and metadata
+        """
+        payload = {
+            "request_id": request_id,
+            "company_id": company_id,
+            "rep_id": rep_id,
+            "call_context": call_context,
+            "draft_type": draft_type,
+            "tone": tone,
+            "options": options or {
+                "max_length": 160 if draft_type == "sms" else 500,
+                "include_personalization": True,
+                "include_callback_request": True
+            }
+        }
+        
+        return await self._make_request(
+            "POST",
+            "/uwc/v1/followups/generate",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    # Call Summarization (per OpenAPI /api/v1/summarization/summarize)
+    async def summarize_call(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Summarize a call transcript using UWC.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID to summarize
+            options: Optional summarization options (length, focus, etc.)
+        
+        Returns:
+            Summarization response with summary, key_points, action_items
+        """
+        payload = {
+            "call_id": call_id
+        }
+        if options:
+            payload.update(options)
+        
+        return await self._make_request(
+            "POST",
+            "/api/v1/summarization/summarize",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    async def get_summarization_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get summarization status for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Summarization status response
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/summarization/status/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Objections (per OpenAPI /api/v1/analysis/objections/{call_id})
+    async def detect_objections(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Detect objections in a call transcript.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Objections response with detected objections list
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/objections/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Lead Qualification (per OpenAPI /api/v1/analysis/qualification/{call_id})
+    async def qualify_lead(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Qualify a lead from a call transcript.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Lead qualification response with BANT scores and qualification level
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/qualification/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - SOP Compliance (per OpenAPI /api/v1/analysis/compliance/{call_id})
+    async def check_compliance(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Check SOP compliance for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Compliance check response with compliance score, violations, recommendations
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/compliance/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Complete Analysis (per OpenAPI /api/v1/analysis/complete/{call_id})
+    async def get_complete_analysis(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get complete analysis results for a call (summary, objections, qualification, compliance).
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Complete analysis response with all analysis types
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/complete/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Call Analysis - Start Analysis (per OpenAPI /api/v1/analysis/start/{call_id})
+    async def start_analysis(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Start analysis pipeline for a call.
+        
+        Returns a job ID for async tracking.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Analysis start response with job_id/task_id for async tracking
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/v1/analysis/start/{call_id}",
+            company_id,
+            request_id
+        )
+        
+        # Return response as-is - job ID extraction handled by caller
+        return response
+    
+    async def get_job_status(
+        self,
+        company_id: str,
+        request_id: str,
+        job_id: str,
+        job_type: str = "analysis",
+    ) -> Dict[str, Any]:
+        """
+        Get status of a Shunya job.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            job_id: Shunya job/task ID
+            job_type: Type of job ("analysis", "transcription", "segmentation")
+        
+        Returns:
+            Job status response with status, progress, etc.
+        """
+        # Map job type to endpoint
+        if job_type == "transcription":
+            # For transcription, we use call_id or job_id
+            # Try to use analysis status endpoint if call_id available
+            # Otherwise, use a generic status endpoint
+            return await self._make_request(
+                "GET",
+                f"/api/v1/transcription/status/{job_id}",  # Using job_id as call_id temporarily
+                company_id,
+                request_id,
+            )
+        elif job_type == "segmentation":
+            return await self._make_request(
+                "GET",
+                f"/api/v1/meeting-segmentation/status/{job_id}",
+                company_id,
+                request_id,
+            )
+        else:
+            # Analysis status
+            return await self._make_request(
+                "GET",
+                f"/api/v1/analysis/status/{job_id}",
+                company_id,
+                request_id,
+            )
+    
+    async def get_job_result(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+        job_type: str = "analysis",
+    ) -> Dict[str, Any]:
+        """
+        Get result of a completed Shunya job.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID (used for result retrieval)
+            job_type: Type of job ("analysis", "transcription", "segmentation")
+        
+        Returns:
+            Job result (normalized if possible)
+        """
+        if job_type == "transcription":
+            return await self.get_transcript(company_id, request_id, call_id)
+        elif job_type == "segmentation":
+            return await self.get_meeting_segmentation_analysis(company_id, request_id, call_id)
+        else:
+            # Complete analysis
+            return await self.get_complete_analysis(company_id, request_id, call_id)
+    
+    async def get_segmentation_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        """Get meeting segmentation status."""
+        return await self.get_meeting_segmentation_status(company_id, request_id, call_id)
+    
+    async def get_segmentation_result(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+    ) -> Dict[str, Any]:
+        """Get meeting segmentation result."""
+        return await self.get_meeting_segmentation_analysis(company_id, request_id, call_id)
+    
+    async def get_analysis_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get analysis status for a call.
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Analysis status response with status per analysis type
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/status/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    async def get_call_summary(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get call summary (alternative endpoint).
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID
+        
+        Returns:
+            Call summary response
+        """
+        return await self._make_request(
+            "GET",
+            f"/api/v1/analysis/summary/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    # Meeting Segmentation (per OpenAPI /api/v1/meeting-segmentation/analyze)
+    async def analyze_meeting_segmentation(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int,
+        analysis_type: str = "full"
+    ) -> Dict[str, Any]:
+        """
+        Analyze meeting segmentation for a sales appointment.
+        
+        Segments appointment into:
+        - Part 1: Rapport/Agenda (relationship building, agenda setting)
+        - Part 2: Proposal/Close (presentation, proposal, closing)
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            call_id: Call ID (for sales appointment)
+            analysis_type: "full" or "quick"
+        
+        Returns:
+            Meeting segmentation response with part1, part2, transition point, etc.
+        """
+        payload = {
+            "call_id": call_id,
+            "analysis_type": analysis_type
+        }
+        return await self._make_request(
+            "POST",
+            "/api/v1/meeting-segmentation/analyze",
+            company_id,
+            request_id,
+            payload
+        )
+    
+    async def get_meeting_segmentation_status(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """Get meeting segmentation status."""
+        return await self._make_request(
+            "GET",
+            f"/api/v1/meeting-segmentation/status/{call_id}",
+            company_id,
+            request_id
+        )
+    
+    async def get_meeting_segmentation_analysis(
+        self,
+        company_id: str,
+        request_id: str,
+        call_id: int
+    ) -> Dict[str, Any]:
+        """Get full meeting segmentation analysis."""
+        return await self._make_request(
+            "GET",
+            f"/api/v1/meeting-segmentation/analysis/{call_id}",
+            company_id,
+            request_id
+        )
+
+
+# Singleton instance
+_uwc_client: Optional[UWCClient] = None
+
+
+def get_uwc_client() -> UWCClient:
+    """Get or create UWC client singleton instance."""
+    global _uwc_client
+    if _uwc_client is None:
+        _uwc_client = UWCClient()
+    return _uwc_client
+

@@ -73,7 +73,7 @@ class DocumentService:
             role_target=request.role_target,
             s3_url=s3_url,
             ingestion_status=IngestionStatus.PENDING,
-            metadata=request.metadata or {}
+            metadata_json=request.metadata or {}
         )
         db.add(document)
         db.commit()

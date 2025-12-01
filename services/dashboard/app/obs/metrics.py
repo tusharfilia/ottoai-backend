@@ -377,3 +377,37 @@ def record_ws_message_dropped(reason: str):
 def record_ws_subscription(channel: str):
     """Record WebSocket channel subscription."""
     ws_subscriptions_total.labels(channel=channel).inc()
+
+    ws_connections.labels(tenant_id=tenant_id).set(count)
+
+
+def record_ws_message_sent(channel: str):
+    """Record WebSocket message sent."""
+    ws_messages_sent_total.labels(channel=channel).inc()
+
+
+def record_ws_message_dropped(reason: str):
+    """Record WebSocket message dropped."""
+    ws_messages_dropped_total.labels(reason=reason).inc()
+
+
+def record_ws_subscription(channel: str):
+    """Record WebSocket channel subscription."""
+    ws_subscriptions_total.labels(channel=channel).inc()
+
+    ws_connections.labels(tenant_id=tenant_id).set(count)
+
+
+def record_ws_message_sent(channel: str):
+    """Record WebSocket message sent."""
+    ws_messages_sent_total.labels(channel=channel).inc()
+
+
+def record_ws_message_dropped(reason: str):
+    """Record WebSocket message dropped."""
+    ws_messages_dropped_total.labels(reason=reason).inc()
+
+
+def record_ws_subscription(channel: str):
+    """Record WebSocket channel subscription."""
+    ws_subscriptions_total.labels(channel=channel).inc()

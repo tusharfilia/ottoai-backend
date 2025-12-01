@@ -49,7 +49,7 @@ class Document(Base):
         nullable=False,
         default=IngestionStatus.PENDING
     )
-    metadata = Column(JSON, nullable=True)  # Additional document metadata
+    metadata_json = Column(JSON, nullable=True)  # Additional document metadata
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -66,7 +66,7 @@ class OnboardingEvent(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=True)
     step = Column(String, nullable=False)  # "company_basics", "call_tracking", etc.
     action = Column(String, nullable=False)  # "started", "completed", "failed", etc.
-    metadata = Column(JSON, nullable=True)  # Additional event metadata
+    metadata_json = Column(JSON, nullable=True)  # Additional event metadata
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     # Relationships

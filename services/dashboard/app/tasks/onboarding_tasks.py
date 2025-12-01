@@ -92,7 +92,7 @@ def ingest_document_with_shunya(
                         metadata={
                             "document_id": document_id,
                             "role_target": document.role_target,
-                            **document.metadata or {}
+                            **document.metadata_json or {}
                         }
                     )
                 )

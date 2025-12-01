@@ -210,3 +210,17 @@ def get_tenant_id(request: Request) -> str:
             detail="Tenant context not found. Ensure you're authenticated with a valid organization."
         )
     return request.state.tenant_id
+
+    if not hasattr(request.state, 'tenant_id') or not request.state.tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Tenant context not found. Ensure you're authenticated with a valid organization."
+        )
+    return request.state.tenant_id
+
+    if not hasattr(request.state, 'tenant_id') or not request.state.tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Tenant context not found. Ensure you're authenticated with a valid organization."
+        )
+    return request.state.tenant_id
