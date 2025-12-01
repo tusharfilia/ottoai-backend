@@ -167,7 +167,8 @@ def init_db():
         lead_status_history,
         rep_assignment_history,
         event_log,
-        sop_compliance_result
+        sop_compliance_result,
+        onboarding
     )
     
     inspector = inspect(engine)
@@ -215,159 +216,9 @@ def init_db():
         ("lead_status_history", lead_status_history.LeadStatusHistory),
         ("rep_assignment_history", rep_assignment_history.RepAssignmentHistory),
         ("event_logs", event_log.EventLog),
-        ("sop_compliance_results", sop_compliance_result.SopComplianceResult)
-    ]:
-        # Check if table exists before trying to get columns
-        try:
-            existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
-        except NoSuchTableError:
-            # Table doesn't exist yet, skip column checks (will be created by migrations or create_all)
-            print(f"Table {table_name} does not exist yet, skipping column checks")
-            continue
-        
-        model_columns = model.__table__.columns
-        
-        for column in model_columns:
-            if column.name not in existing_columns:
-                try:
-                    add_column(engine, table_name, column)
-                    print(f"Added column {column.name} to table {table_name}")
-                except Exception as e:
-                    print(f"Error adding column {column.name} to {table_name}: {str(e)}") 
-        rep_shift,
-        recording_session,
-        recording_transcript,
-        recording_analysis,
-        task,
-        key_signal,
-        lead_status_history,
-        rep_assignment_history,
-        event_log,
-        sop_compliance_result
-    )
-    
-    inspector = inspect(engine)
-    
-    # Create tables if they don't exist
-    # Catch duplicate index/table errors (common when migrations have already run)
-    # SQLite raises OperationalError, PostgreSQL raises ProgrammingError
-    try:
-        Base.metadata.create_all(bind=engine)
-    except (ProgrammingError, OperationalError) as e:
-        # Ignore duplicate index/table errors - these are expected when migrations have run
-        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
-        if "already exists" not in error_msg.lower() and "duplicate" not in error_msg.lower():
-            # Re-raise if it's not a duplicate error
-            raise
-        # Log but don't fail on duplicate index/table errors
-        print(f"Note: Some indexes/tables already exist (expected if migrations ran): {error_msg[:100]}")
-    
-    # For each table, check and add missing columns
-    for table_name, model in [
-        ("calls", call.Call),
-        ("sales_reps", sales_rep.SalesRep),
-        ("sales_managers", sales_manager.SalesManager),
-        ("services", service.Service),
-        ("scheduled_calls", scheduled_call.ScheduledCall),
-        ("companies", company.Company),
-        ("users", user.User),
-        ("transcript_analyses", transcript_analysis.TranscriptAnalysis),
-        ("call_transcripts", call_transcript.CallTranscript),
-        ("call_analysis", call_analysis.CallAnalysis),
-        ("rag_documents", rag_document.RAGDocument),
-        ("rag_queries", rag_query.RAGQuery),
-        ("followup_drafts", followup_draft.FollowUpDraft),
-        ("personal_clone_jobs", personal_clone_job.PersonalCloneJob),
-        ("audit_logs", audit_log.AuditLog),
-        ("contact_cards", contact_card.ContactCard),
-        ("leads", lead.Lead),
-        ("appointments", appointment.Appointment),
-        ("rep_shifts", rep_shift.RepShift),
-        ("recording_sessions", recording_session.RecordingSession),
-        ("recording_transcripts", recording_transcript.RecordingTranscript),
-        ("recording_analyses", recording_analysis.RecordingAnalysis),
-        ("tasks", task.Task),
-        ("key_signals", key_signal.KeySignal),
-        ("lead_status_history", lead_status_history.LeadStatusHistory),
-        ("rep_assignment_history", rep_assignment_history.RepAssignmentHistory),
-        ("event_logs", event_log.EventLog),
-        ("sop_compliance_results", sop_compliance_result.SopComplianceResult)
-    ]:
-        # Check if table exists before trying to get columns
-        try:
-            existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
-        except NoSuchTableError:
-            # Table doesn't exist yet, skip column checks (will be created by migrations or create_all)
-            print(f"Table {table_name} does not exist yet, skipping column checks")
-            continue
-        
-        model_columns = model.__table__.columns
-        
-        for column in model_columns:
-            if column.name not in existing_columns:
-                try:
-                    add_column(engine, table_name, column)
-                    print(f"Added column {column.name} to table {table_name}")
-                except Exception as e:
-                    print(f"Error adding column {column.name} to {table_name}: {str(e)}") 
-        rep_shift,
-        recording_session,
-        recording_transcript,
-        recording_analysis,
-        task,
-        key_signal,
-        lead_status_history,
-        rep_assignment_history,
-        event_log,
-        sop_compliance_result
-    )
-    
-    inspector = inspect(engine)
-    
-    # Create tables if they don't exist
-    # Catch duplicate index/table errors (common when migrations have already run)
-    # SQLite raises OperationalError, PostgreSQL raises ProgrammingError
-    try:
-        Base.metadata.create_all(bind=engine)
-    except (ProgrammingError, OperationalError) as e:
-        # Ignore duplicate index/table errors - these are expected when migrations have run
-        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
-        if "already exists" not in error_msg.lower() and "duplicate" not in error_msg.lower():
-            # Re-raise if it's not a duplicate error
-            raise
-        # Log but don't fail on duplicate index/table errors
-        print(f"Note: Some indexes/tables already exist (expected if migrations ran): {error_msg[:100]}")
-    
-    # For each table, check and add missing columns
-    for table_name, model in [
-        ("calls", call.Call),
-        ("sales_reps", sales_rep.SalesRep),
-        ("sales_managers", sales_manager.SalesManager),
-        ("services", service.Service),
-        ("scheduled_calls", scheduled_call.ScheduledCall),
-        ("companies", company.Company),
-        ("users", user.User),
-        ("transcript_analyses", transcript_analysis.TranscriptAnalysis),
-        ("call_transcripts", call_transcript.CallTranscript),
-        ("call_analysis", call_analysis.CallAnalysis),
-        ("rag_documents", rag_document.RAGDocument),
-        ("rag_queries", rag_query.RAGQuery),
-        ("followup_drafts", followup_draft.FollowUpDraft),
-        ("personal_clone_jobs", personal_clone_job.PersonalCloneJob),
-        ("audit_logs", audit_log.AuditLog),
-        ("contact_cards", contact_card.ContactCard),
-        ("leads", lead.Lead),
-        ("appointments", appointment.Appointment),
-        ("rep_shifts", rep_shift.RepShift),
-        ("recording_sessions", recording_session.RecordingSession),
-        ("recording_transcripts", recording_transcript.RecordingTranscript),
-        ("recording_analyses", recording_analysis.RecordingAnalysis),
-        ("tasks", task.Task),
-        ("key_signals", key_signal.KeySignal),
-        ("lead_status_history", lead_status_history.LeadStatusHistory),
-        ("rep_assignment_history", rep_assignment_history.RepAssignmentHistory),
-        ("event_logs", event_log.EventLog),
-        ("sop_compliance_results", sop_compliance_result.SopComplianceResult)
+        ("sop_compliance_results", sop_compliance_result.SopComplianceResult),
+        ("documents", onboarding.Document),
+        ("onboarding_events", onboarding.OnboardingEvent)
     ]:
         # Check if table exists before trying to get columns
         try:
