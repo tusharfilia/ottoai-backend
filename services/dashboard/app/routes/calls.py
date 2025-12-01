@@ -285,30 +285,4 @@ async def update_call_status(request: Request, background_tasks: BackgroundTasks
         "status": "success",
         "message": f"Call {call_record.call_id} status updated successfully",
         "geofence_removed": should_remove_geofence
-    } 
-                    # Clear geofence data from the call
-                    call_record.geofence = None
-                    
-                    print(f"Removed geofence for call {call_record.call_id} from rep {sales_rep.user_id}")
-    
-    # Save changes
-    db.commit()
-    
-    return {
-        "status": "success",
-        "message": f"Call {call_record.call_id} status updated successfully",
-        "geofence_removed": should_remove_geofence
-    } 
-                    # Clear geofence data from the call
-                    call_record.geofence = None
-                    
-                    print(f"Removed geofence for call {call_record.call_id} from rep {sales_rep.user_id}")
-    
-    # Save changes
-    db.commit()
-    
-    return {
-        "status": "success",
-        "message": f"Call {call_record.call_id} status updated successfully",
-        "geofence_removed": should_remove_geofence
-    } 
+    }
