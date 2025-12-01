@@ -20,6 +20,12 @@ class GhostModeStorage(str, enum.Enum):
     EPHEMERAL = "ephemeral"  # Temporarily stored with TTL
 
 
+class CallProvider(str, enum.Enum):
+    """Call tracking provider enum."""
+    CALLRAIL = "callrail"
+    TWILIO = "twilio"
+
+
 class Company(Base):
     __tablename__ = "companies"
 
@@ -33,6 +39,31 @@ class Company(Base):
     # CallRail integration fields
     callrail_api_key = Column(String, nullable=True)
     callrail_account_id = Column(String, nullable=True)
+    
+    # Onboarding fields
+    industry = Column(String, nullable=True)
+    timezone = Column(String, nullable=True, default="America/New_York")
+    domain = Column(String, nullable=True)
+    domain_verified = Column(Boolean, nullable=False, default=False)
+    
+    # Call tracking provider
+    call_provider = Column(
+        Enum(CallProvider, native_enum=False, name="call_provider"),
+        nullable=True
+    )
+    twilio_account_sid = Column(String, nullable=True)
+    twilio_auth_token = Column(String, nullable=True)
+    primary_tracking_number = Column(String, nullable=True)
+    
+    # Onboarding progress
+    onboarding_step = Column(String, nullable=False, default="company_basics")
+    onboarding_completed = Column(Boolean, nullable=False, default=False)
+    onboarding_completed_at = Column(DateTime, nullable=True)
+    
+    # Subscription fields
+    subscription_status = Column(String, nullable=False, default="trialing")  # trialing, active, past_due, canceled
+    trial_ends_at = Column(DateTime, nullable=True)
+    max_seats = Column(Integer, nullable=False, default=5)
     
     # Recording & Privacy Configuration
     require_recording_consent = Column(Boolean, nullable=False, default=True)
@@ -72,4 +103,6 @@ class Company(Base):
     tasks = relationship("Task", back_populates="company", foreign_keys="Task.company_id")
     key_signals = relationship("KeySignal", back_populates="company", foreign_keys="KeySignal.company_id")
     event_logs = relationship("EventLog", back_populates="company", foreign_keys="EventLog.company_id")
-    sop_compliance_results = relationship("SopComplianceResult", back_populates="company", foreign_keys="SopComplianceResult.company_id") 
+    sop_compliance_results = relationship("SopComplianceResult", back_populates="company", foreign_keys="SopComplianceResult.company_id")
+    documents = relationship("Document", back_populates="company")
+    onboarding_events = relationship("OnboardingEvent", back_populates="company") 
