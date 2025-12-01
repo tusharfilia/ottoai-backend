@@ -98,29 +98,3 @@ if settings.ENVIRONMENT == "production":
         task_send_sent_event=True,
     )
 
-
-            "schedule": 3600.0,  # Hourly
-        },
-    },
-)
-
-# Optional: Configure task monitoring
-if settings.ENVIRONMENT == "production":
-    celery_app.conf.update(
-        worker_send_task_events=True,
-        task_send_sent_event=True,
-    )
-
-
-            "schedule": 3600.0,  # Hourly
-        },
-    },
-)
-
-# Optional: Configure task monitoring
-if settings.ENVIRONMENT == "production":
-    celery_app.conf.update(
-        worker_send_task_events=True,
-        task_send_sent_event=True,
-    )
-
