@@ -237,29 +237,3 @@ def get_user_context(request: Request) -> dict:
         "meeting_id": getattr(request.state, 'meeting_id', None),
     }
 
-
-            "rep_id": Optional[str],
-            "meeting_id": Optional[str]
-        }
-    """
-    return {
-        "user_id": getattr(request.state, 'user_id', None),
-        "tenant_id": getattr(request.state, 'tenant_id', None),
-        "user_role": getattr(request.state, 'user_role', None),
-        "rep_id": getattr(request.state, 'rep_id', None),
-        "meeting_id": getattr(request.state, 'meeting_id', None),
-    }
-
-
-            "rep_id": Optional[str],
-            "meeting_id": Optional[str]
-        }
-    """
-    return {
-        "user_id": getattr(request.state, 'user_id', None),
-        "tenant_id": getattr(request.state, 'tenant_id', None),
-        "user_role": getattr(request.state, 'user_role', None),
-        "rep_id": getattr(request.state, 'rep_id', None),
-        "meeting_id": getattr(request.state, 'meeting_id', None),
-    }
-
