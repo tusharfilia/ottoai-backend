@@ -184,33 +184,3 @@ class Settings:
 
 # Global settings instance
 settings = Settings()
-
-            self.ENABLE_UWC_SUMMARIZATION
-        ])
-    
-    def is_storage_configured(self) -> bool:
-        """Check if S3 storage is properly configured."""
-        return bool(
-            self.AWS_ACCESS_KEY_ID and 
-            self.AWS_SECRET_ACCESS_KEY and 
-            self.S3_BUCKET
-        )
-
-
-# Global settings instance
-settings = Settings()
-
-            self.ENABLE_UWC_SUMMARIZATION
-        ])
-    
-    def is_storage_configured(self) -> bool:
-        """Check if S3 storage is properly configured."""
-        return bool(
-            self.AWS_ACCESS_KEY_ID and 
-            self.AWS_SECRET_ACCESS_KEY and 
-            self.S3_BUCKET
-        )
-
-
-# Global settings instance
-settings = Settings()
