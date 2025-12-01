@@ -387,16 +387,15 @@ async def send_welcome_message(
     """Send welcome message to new SMS lead"""
     try:
         # Create welcome message
-        welcome_message = f"""Hi! Thanks for reaching out to {company_record.name}. 
-
-We received your message and will get back to you shortly. 
-
-In the meantime, you can:
-- Reply with your address for a quick quote
-- Let us know your preferred appointment time
-- Ask any questions about our services
-
-We're here to help!"""
+        welcome_message = (
+            f"Hi! Thanks for reaching out to {company_record.name}.\n\n"
+            "We received your message and will get back to you shortly.\n\n"
+            "In the meantime, you can:\n"
+            "- Reply with your address for a quick quote\n"
+            "- Let us know your preferred appointment time\n"
+            "- Ask any questions about our services\n\n"
+            "We're here to help!"
+        )
         
         # Send SMS via Twilio
         sms_result = await twilio_service.send_sms(
@@ -899,16 +898,15 @@ async def send_welcome_message(
     """Send welcome message to new SMS lead"""
     try:
         # Create welcome message
-        welcome_message = f"""Hi! Thanks for reaching out to {company_record.name}. 
-
-We received your message and will get back to you shortly. 
-
-In the meantime, you can:
-- Reply with your address for a quick quote
-- Let us know your preferred appointment time
-- Ask any questions about our services
-
-We're here to help!"""
+        welcome_message = (
+            f"Hi! Thanks for reaching out to {company_record.name}.\n\n"
+            "We received your message and will get back to you shortly.\n\n"
+            "In the meantime, you can:\n"
+            "- Reply with your address for a quick quote\n"
+            "- Let us know your preferred appointment time\n"
+            "- Ask any questions about our services\n\n"
+            "We're here to help!"
+        )
         
         # Send SMS via Twilio
         sms_result = await twilio_service.send_sms(
@@ -1411,16 +1409,15 @@ async def send_welcome_message(
     """Send welcome message to new SMS lead"""
     try:
         # Create welcome message
-        welcome_message = f"""Hi! Thanks for reaching out to {company_record.name}. 
-
-We received your message and will get back to you shortly. 
-
-In the meantime, you can:
-- Reply with your address for a quick quote
-- Let us know your preferred appointment time
-- Ask any questions about our services
-
-We're here to help!"""
+        welcome_message = (
+            f"Hi! Thanks for reaching out to {company_record.name}.\n\n"
+            "We received your message and will get back to you shortly.\n\n"
+            "In the meantime, you can:\n"
+            "- Reply with your address for a quick quote\n"
+            "- Let us know your preferred appointment time\n"
+            "- Ask any questions about our services\n\n"
+            "We're here to help!"
+        )
         
         # Send SMS via Twilio
         sms_result = await twilio_service.send_sms(
