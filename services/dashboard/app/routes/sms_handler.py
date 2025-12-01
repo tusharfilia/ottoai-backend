@@ -392,9 +392,9 @@ async def send_welcome_message(
 We received your message and will get back to you shortly. 
 
 In the meantime, you can:
-• Reply with your address for a quick quote
-• Let us know your preferred appointment time
-• Ask any questions about our services
+- Reply with your address for a quick quote
+- Let us know your preferred appointment time
+- Ask any questions about our services
 
 We're here to help! 🏠"""
         
@@ -904,9 +904,9 @@ async def send_welcome_message(
 We received your message and will get back to you shortly. 
 
 In the meantime, you can:
-• Reply with your address for a quick quote
-• Let us know your preferred appointment time
-• Ask any questions about our services
+- Reply with your address for a quick quote
+- Let us know your preferred appointment time
+- Ask any questions about our services
 
 We're here to help! 🏠"""
         
@@ -1416,9 +1416,9 @@ async def send_welcome_message(
 We received your message and will get back to you shortly. 
 
 In the meantime, you can:
-• Reply with your address for a quick quote
-• Let us know your preferred appointment time
-• Ask any questions about our services
+- Reply with your address for a quick quote
+- Let us know your preferred appointment time
+- Ask any questions about our services
 
 We're here to help! 🏠"""
         
