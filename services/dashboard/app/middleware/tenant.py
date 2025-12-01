@@ -2,18 +2,14 @@
 Tenant context middleware for OttoAI backend.
 Extracts and validates tenant_id from Clerk JWT claims.
 """
-import base64
-import json
 import logging
 from typing import Optional
 
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
-import httpx
-import jwt
-from jwt.algorithms import RSAAlgorithm
 
 from app.config import settings
+from app.routes.dependencies import verify_clerk_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -130,59 +126,8 @@ class TenantContextMiddleware:
         token = auth_header.split(" ")[1]
         
         try:
-            # Get JWKS for token verification
-            jwks = await self._get_jwks()
-            if not jwks:
-                logger.error("Failed to get JWKS")
-                return None
-
-            # Decode token header (unverified) to get kid
-            token_parts = token.split(".")
-            if len(token_parts) != 3:
-                logger.warning("JWT token does not have 3 parts (header.payload.signature)")
-                return None
-
-            header_b64 = token_parts[0]
-            # Add padding if needed
-            if len(header_b64) % 4 != 0:
-                header_b64 += "=" * (4 - len(header_b64) % 4)
-            try:
-                header_bytes = base64.urlsafe_b64decode(header_b64)
-                header = json.loads(header_bytes.decode("utf-8"))
-            except Exception as e:
-                logger.warning(f"Failed to decode JWT header: {e}")
-                return None
-
-            kid = header.get("kid")
-            if not kid:
-                logger.warning("No 'kid' found in JWT header")
-                return None
-
-            # Find matching JWK
-            jwk = None
-            for key in jwks.get("keys", []):
-                if key.get("kid") == kid:
-                    jwk = key
-                    break
-
-            if not jwk:
-                logger.warning(f"No JWK found for kid={kid}")
-                return None
-
-            # Convert JWK to RSA public key that PyJWT can use
-            try:
-                public_key = RSAAlgorithm.from_jwk(json.dumps(jwk))
-            except Exception as e:
-                logger.error(f"Failed to convert JWK to public key: {e}")
-                return None
-
-            # Decode and verify the JWT using the resolved key
-            decoded_token = jwt.decode(
-                token,
-                public_key,
-                algorithms=["RS256"],
-                options={"verify_exp": True, "verify_aud": False},
-            )
+            # Use shared Clerk JWT verification helper to decode the token
+            decoded_token = await verify_clerk_jwt(token)
             
             # Extract tenant_id from claims
             # Clerk stores organization / tenant info in different places
@@ -221,42 +166,12 @@ class TenantContextMiddleware:
             return {
                 "tenant_id": tenant_id,
                 "user_id": user_id,
-                "user_role": user_role
+                "user_role": user_role,
             }
             
-        except jwt.ExpiredSignatureError:
-            logger.warning("JWT token has expired")
-            return None
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"Invalid JWT token: {str(e)}")
-            return None
         except Exception as e:
-            logger.error(f"Error decoding JWT: {str(e)}")
-            return None
-    
-    async def _get_jwks(self) -> Optional[dict]:
-        """Get JWKS from Clerk for JWT verification."""
-        import time
-        
-        # Check cache first
-        current_time = time.time()
-        if (self.jwks_cache and 
-            current_time - self.jwks_cache_time < self.cache_duration):
-            return self.jwks_cache
-        
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(settings.clerk_jwks_url)
-                response.raise_for_status()
-                
-                jwks_data = response.json()
-                self.jwks_cache = jwks_data
-                self.jwks_cache_time = current_time
-                
-                return jwks_data
-            
-        except Exception as e:
-            logger.error(f"Failed to fetch JWKS: {str(e)}")
+            # verify_clerk_jwt already logs; here we just treat as auth failure
+            logger.warning(f"Failed to verify Clerk JWT in tenant middleware: {e}")
             return None
     
     async def _get_user_default_organization(self, user_id: str) -> Optional[str]:
