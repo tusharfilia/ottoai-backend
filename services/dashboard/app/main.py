@@ -9,6 +9,7 @@ from .routes.mobile_routes import mobile_router
 from .routes.webhook_handlers.uwc import router as uwc_webhooks
 from .routes.shunya_webhook import router as shunya_webhook
 from .routes.ai_internal import router as ai_internal_router
+from .routes.onboarding import router as onboarding_router
 from .services.bland_ai import BlandAI
 from .services.missing_reports_service import check_missing_reports
 from datetime import datetime, timedelta
@@ -142,136 +143,6 @@ async def check_missing_reports_task():
             try:
                 # Check for missing reports
                 notifications_sent = check_missing_reports(db)
-                logger.info(f"Missing reports check completed. Sent {notifications_sent} notifications.")
-            finally:
-                # Close the database session
-                db.close()
-                
-            # Wait for 6 hours before checking again
-            await asyncio.sleep(6 * 60 * 60)  # 6 hours in seconds
-        except Exception as e:
-            logger.error(f"Error in missing reports checker: {str(e)}")
-            # Still wait before trying again to avoid runaway errors
-            await asyncio.sleep(30 * 60)  # 30 minutes in seconds
-
-# Initialize database tables and scheduler on startup
-@app.on_event("startup")
-async def startup_event():
-    init_db()
-    # Start the schedulers after the application has started
-    # bland_ai_service.start_scheduler()
-    # bland_ai_service.start_scheduled_calls_checker()
-    
-    # Start the missing reports checker in the background
-    asyncio.create_task(check_missing_reports_task())
-    logger.info("Started missing reports checker task")
-    
-    # Start the missed call queue processor
-    from app.services.queue_processor import queue_processor
-    await queue_processor.start()
-    logger.info("Started missed call queue processor")
-    
-    # Start the live metrics service
-    from app.services.live_metrics_service import live_metrics_service
-    await live_metrics_service.start()
-    logger.info("Started live metrics service")
-    
-    # Start the post-call analysis service
-    from app.services.post_call_analysis_service import post_call_analysis_service
-    await post_call_analysis_service.start()
-    logger.info("Started post-call analysis service")
-
-@app.get("/metrics")
-async def metrics_endpoint():
-    """Prometheus metrics endpoint."""
-    return metrics_collector.get_metrics_response()
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on application shutdown."""
-    # Stop the live metrics service
-    from app.services.live_metrics_service import live_metrics_service
-    await live_metrics_service.stop()
-    logger.info("Stopped live metrics service")
-    
-    # Stop the post-call analysis service
-    from app.services.post_call_analysis_service import post_call_analysis_service
-    await post_call_analysis_service.stop()
-    logger.info("Stopped post-call analysis service")
-    
-    # Stop the missed call queue processor
-    from app.services.queue_processor import queue_processor
-    await queue_processor.stop()
-    logger.info("Stopped missed call queue processor")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
-                logger.info(f"Missing reports check completed. Sent {notifications_sent} notifications.")
-            finally:
-                # Close the database session
-                db.close()
-                
-            # Wait for 6 hours before checking again
-            await asyncio.sleep(6 * 60 * 60)  # 6 hours in seconds
-        except Exception as e:
-            logger.error(f"Error in missing reports checker: {str(e)}")
-            # Still wait before trying again to avoid runaway errors
-            await asyncio.sleep(30 * 60)  # 30 minutes in seconds
-
-# Initialize database tables and scheduler on startup
-@app.on_event("startup")
-async def startup_event():
-    init_db()
-    # Start the schedulers after the application has started
-    # bland_ai_service.start_scheduler()
-    # bland_ai_service.start_scheduled_calls_checker()
-    
-    # Start the missing reports checker in the background
-    asyncio.create_task(check_missing_reports_task())
-    logger.info("Started missing reports checker task")
-    
-    # Start the missed call queue processor
-    from app.services.queue_processor import queue_processor
-    await queue_processor.start()
-    logger.info("Started missed call queue processor")
-    
-    # Start the live metrics service
-    from app.services.live_metrics_service import live_metrics_service
-    await live_metrics_service.start()
-    logger.info("Started live metrics service")
-    
-    # Start the post-call analysis service
-    from app.services.post_call_analysis_service import post_call_analysis_service
-    await post_call_analysis_service.start()
-    logger.info("Started post-call analysis service")
-
-@app.get("/metrics")
-async def metrics_endpoint():
-    """Prometheus metrics endpoint."""
-    return metrics_collector.get_metrics_response()
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on application shutdown."""
-    # Stop the live metrics service
-    from app.services.live_metrics_service import live_metrics_service
-    await live_metrics_service.stop()
-    logger.info("Stopped live metrics service")
-    
-    # Stop the post-call analysis service
-    from app.services.post_call_analysis_service import post_call_analysis_service
-    await post_call_analysis_service.stop()
-    logger.info("Stopped post-call analysis service")
-    
-    # Stop the missed call queue processor
-    from app.services.queue_processor import queue_processor
-    await queue_processor.stop()
-    logger.info("Stopped missed call queue processor")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
                 logger.info(f"Missing reports check completed. Sent {notifications_sent} notifications.")
             finally:
                 # Close the database session
