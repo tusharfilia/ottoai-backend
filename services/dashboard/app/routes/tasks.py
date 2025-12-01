@@ -61,6 +61,8 @@ async def list_tasks(
     overdue: Optional[bool] = Query(None, description="Filter by overdue status"),
     due_before: Optional[datetime] = Query(None, description="Filter tasks due before this date"),
     due_after: Optional[datetime] = Query(None, description="Filter tasks due after this date"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of tasks to return"),
+    offset: int = Query(0, ge=0, description="Number of tasks to skip"),
     db: Session = Depends(get_db),
 ) -> APIResponse[TaskListResponse]:
     """
@@ -135,22 +137,28 @@ async def list_tasks(
         Task.created_at.desc()
     )
     
-    tasks = query.all()
+    # Get total count before pagination
+    total_count = query.count()
     
-    # Calculate overdue count
+    # Calculate overdue count (before pagination to get accurate count)
     now = datetime.utcnow()
-    overdue_count = sum(
-        1 for task in tasks
-        if task.due_at and task.due_at < now
-        and task.status not in [TaskStatus.COMPLETED, TaskStatus.CANCELLED]
+    overdue_query = query.filter(
+        and_(
+            Task.due_at < now,
+            Task.status.notin_([TaskStatus.COMPLETED, TaskStatus.CANCELLED])
+        )
     )
+    overdue_count = overdue_query.count()
+    
+    # Apply pagination
+    tasks = query.offset(offset).limit(limit).all()
     
     # Build response
     task_summaries = [TaskSummary.from_orm(task) for task in tasks]
     
     response = TaskListResponse(
         tasks=task_summaries,
-        total=len(task_summaries),
+        total=total_count,
         overdue_count=overdue_count,
     )
     

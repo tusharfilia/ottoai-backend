@@ -22,6 +22,20 @@ http_request_duration_ms = Histogram(
     buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
 )
 
+# Ask Otto / RAG Metrics
+rag_queries_total = Counter(
+    'rag_queries_total',
+    'Total number of Ask Otto RAG queries',
+    ['tenant_id', 'user_role', 'result_count']
+)
+
+rag_query_latency_ms = Histogram(
+    'rag_query_latency_ms',
+    'Ask Otto RAG query latency in milliseconds',
+    ['tenant_id', 'user_role'],
+    buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
+)
+
 # Celery Task Metrics
 worker_task_total = Counter(
     'worker_task_total',
@@ -155,6 +169,9 @@ class MetricsCollector:
     
     def __init__(self):
         self.start_time = time.time()
+        # Expose RAG metrics so callers can use metrics.rag_queries_total / rag_query_latency_ms
+        self.rag_queries_total = rag_queries_total
+        self.rag_query_latency_ms = rag_query_latency_ms
     
     def record_http_request(self, route: str, method: str, status_code: int, duration_ms: float):
         """Record HTTP request metrics."""

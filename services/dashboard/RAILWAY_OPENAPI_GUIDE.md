@@ -70,3 +70,4 @@ cat openapi.json | jq '.paths | keys'
 
 **Note:** Railway auto-generates the OpenAPI spec from your FastAPI code - no additional configuration needed!
 
+

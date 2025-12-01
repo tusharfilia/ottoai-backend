@@ -115,3 +115,4 @@ Dev mode is **automatically disabled** in production (it only works when explici
 - Restart your backend after setting the env var
 - Check backend logs for "DEV_MODE enabled" messages
 
+

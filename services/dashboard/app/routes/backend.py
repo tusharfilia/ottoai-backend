@@ -4,7 +4,7 @@ from app.models import call, company, sales_rep, sales_manager, scheduled_call, 
 from app.models.call_analysis import CallAnalysis
 from app.models.appointment import Appointment
 from app.models.lead import Lead
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload, joinedload
 import json
 from sqlalchemy import func, text, and_, or_, cast, Date
 from datetime import datetime, timedelta
@@ -390,6 +390,8 @@ async def get_calls(
     status: str,
     company_id: str,
     request: Request,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of calls to return"),
+    offset: int = Query(0, ge=0, description="Number of calls to skip"),
     db: Session = Depends(get_db)
 ):
     # Validate tenant_id from JWT matches company_id from query
@@ -404,38 +406,8 @@ async def get_calls(
     if status == "cancelled":
         query = query.filter_by(cancelled=True)
     elif status == "awaiting_quote":
-        print(f"=== QUERYING AWAITING_QUOTE CALLS ===")
-        # Debug all calls for this company first
-        all_company_calls = db.query(call.Call).filter_by(company_id=company_id).all()
-        print(f"Total calls for company {company_id}: {len(all_company_calls)}")
-        
-        # Check each call against criteria 
-        for c in all_company_calls:
-            booked_status = "✓" if c.booked else "✗"
-            bought_status = "✓" if c.bought else "✗" 
-            deciding_status = "✓" if c.still_deciding else "✗"
-            cancelled_status = "✓" if c.cancelled else "✗"
-            lost_status = "✓" if c.reason_for_lost_sale else "✗"
-            
-            # Calculate if it meets all awaiting_quote criteria
-            meets_criteria = (
-                c.booked and 
-                not c.bought and 
-                not c.still_deciding and 
-                not c.cancelled and 
-                not c.reason_for_lost_sale
-            )
-            criteria_status = "MEETS CRITERIA ✓" if meets_criteria else "FAILS CRITERIA ✗"
-            
-            print(f"Call ID: {c.call_id} | Booked: {booked_status} | Bought: {bought_status} | " +
-                  f"Still Deciding: {deciding_status} | Cancelled: {cancelled_status} | " +
-                  f"Lost Sale Reason: {lost_status} | {criteria_status}")
-        
-        # Now apply filters
+        # Apply filters directly (removed debug loop that loaded all calls)
         query = query.filter_by(booked=True, bought=False, still_deciding=False, cancelled=False, reason_for_lost_sale=None)
-        # Get the filtered count for debugging
-        awaiting_count = query.count()
-        print(f"After filtering, {awaiting_count} calls match awaiting_quote criteria")
     elif status == "still_deciding":
         query = query.filter_by(booked=True, still_deciding=True)
     elif status == "purchased":
@@ -454,8 +426,16 @@ async def get_calls(
             text("(transcript_discrepancies::json->>'has_discrepancies') = 'true'")
         )
     
-    calls = query.order_by(call.Call.created_at.desc()).all()
-    return {"calls": calls}
+    # Apply pagination
+    total_count = query.count()
+    calls = query.order_by(call.Call.created_at.desc()).offset(offset).limit(limit).all()
+    
+    return {
+        "calls": calls,
+        "total": total_count,
+        "limit": limit,
+        "offset": offset
+    }
 
 @router.get("/sales-managers")
 @require_role("manager", "csr", "sales_rep")  # All authenticated roles can view managers
@@ -517,22 +497,22 @@ async def get_sales_reps(
     for rep in all_reps:
         print(f"  Rep user_id: {rep.user_id}, company_id: {rep.company_id}")
     
-    # Now get sales reps for this company
-    sales_reps = db.query(sales_rep.SalesRep).filter(sales_rep.SalesRep.company_id == company_id).all()
-    print(f"Found {len(sales_reps)} sales reps for company {company_id!r}")
-    for sr in sales_reps:
-        user_obj = db.query(user.User).filter(user.User.id == sr.user_id).first()
-        if user_obj:
-            print(f"  Rep user_id: {sr.user_id}, name: {user_obj.name}, company_id: {sr.company_id}")
-        else:
-            print(f"  Rep user_id: {sr.user_id}, NO USER FOUND, company_id: {sr.company_id}")
+    # Get sales reps with eager loading to avoid N+1 queries
+    # Use joinedload to fetch user relationship in single query
+    sales_reps = (
+        db.query(sales_rep.SalesRep)
+        .options(joinedload(sales_rep.SalesRep.user))
+        .filter(sales_rep.SalesRep.company_id == company_id)
+        .all()
+    )
     
+    # Build response (user is already loaded, no additional queries)
     return {
         "sales_reps": [
             {
                 "id": sr.user_id,
-                "name": db.query(user.User).filter(user.User.id == sr.user_id).first().name if db.query(user.User).filter(user.User.id == sr.user_id).first() else "Unknown",
-                "phone_number": db.query(user.User).filter(user.User.id == sr.user_id).first().phone_number if db.query(user.User).filter(user.User.id == sr.user_id).first() else None, 
+                "name": sr.user.name if sr.user else "Unknown",
+                "phone_number": sr.user.phone_number if sr.user else None,
                 "manager_id": sr.manager_id
             } for sr in sales_reps
         ]

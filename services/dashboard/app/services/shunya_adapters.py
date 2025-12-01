@@ -248,3 +248,4 @@ webhook_adapter = ShunyaWebhookAdapter()
 segmentation_adapter = ShunyaSegmentationAdapter()
 error_adapter = ShunyaErrorAdapter()
 
+

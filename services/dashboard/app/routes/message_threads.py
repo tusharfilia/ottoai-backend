@@ -47,6 +47,8 @@ class MessageThreadResponse(BaseModel):
 async def get_message_thread(
     request: Request,
     contact_card_id: str,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of messages to return"),
+    offset: int = Query(0, ge=0, description="Number of messages to skip"),
     db: Session = Depends(get_db),
 ) -> APIResponse[MessageThreadResponse]:
     """
@@ -71,11 +73,13 @@ async def get_message_thread(
             ).dict(),
         )
     
-    # Query MessageThread records
-    threads = db.query(MessageThread).filter(
+    # Query MessageThread records with pagination
+    threads_query = db.query(MessageThread).filter(
         MessageThread.contact_card_id == contact_card_id,
         MessageThread.company_id == tenant_id
-    ).order_by(MessageThread.created_at.asc()).all()
+    )
+    total_count = threads_query.count()
+    threads = threads_query.order_by(MessageThread.created_at.asc()).offset(offset).limit(limit).all()
     
     # Build message items
     message_items = []
@@ -126,7 +130,7 @@ async def get_message_thread(
     response = MessageThreadResponse(
         contact_card_id=contact_card_id,
         messages=message_items,
-        total=len(message_items),
+        total=total_count,  # Use total_count from query, not len(message_items) which is paginated
     )
     
     return APIResponse(data=response)

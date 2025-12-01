@@ -358,3 +358,4 @@ def ensure_idempotent_mapping(mapping_func, *args, **kwargs):
     # Can add caching or validation here if needed
     return mapping_func(*args, **kwargs)
 
+

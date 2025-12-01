@@ -122,3 +122,4 @@ def update_contact_address(
     return maybe_trigger_property_scrape(db, contact.id, previous_address)
 
 
+

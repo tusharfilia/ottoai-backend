@@ -122,3 +122,4 @@ class AIServiceCatalogResponse(BaseModel):
         from_attributes = True
 
 
+

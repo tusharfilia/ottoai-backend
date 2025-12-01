@@ -110,3 +110,4 @@ curl http://localhost:8000/openapi.json | jq > openapi.json
 
 The OpenAPI spec is **generated at runtime** from your FastAPI route definitions. FastAPI introspects your code automatically - just access `/openapi.json` on any running instance!
 
+

@@ -65,3 +65,4 @@ echo "   3. Check database for queue entry:"
 echo "      SELECT * FROM missed_call_queue WHERE customer_phone = '$CALLER_NUMBER' ORDER BY created_at DESC LIMIT 1;"
 echo ""
 
+

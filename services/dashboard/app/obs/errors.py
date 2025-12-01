@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.obs.logging import get_logger, log_error
 from app.obs.tracing import get_current_trace_id
@@ -109,7 +110,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     
     return JSONResponse(
         status_code=exc.status_code,
-        content=problem.to_dict()
+        content=jsonable_encoder(problem.to_dict())
     )
 
 
@@ -139,7 +140,7 @@ async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPE
     
     return JSONResponse(
         status_code=exc.status_code,
-        content=problem.to_dict()
+        content=jsonable_encoder(problem.to_dict())
     )
 
 
@@ -173,7 +174,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     
     return JSONResponse(
         status_code=422,
-        content=problem.to_dict()
+        content=jsonable_encoder(problem.to_dict())
     )
 
 
@@ -204,7 +205,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
     
     return JSONResponse(
         status_code=500,
-        content=problem.to_dict()
+        content=jsonable_encoder(problem.to_dict())
     )
 
 

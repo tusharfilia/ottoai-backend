@@ -28,3 +28,4 @@ echo "   1. Backend is running with DEV_MODE=true"
 echo "   2. You've run: python3 scripts/seed_dev_data.py"
 echo "   3. Backend URL is correct: $BACKEND_URL"
 
+

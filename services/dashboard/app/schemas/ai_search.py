@@ -84,3 +84,4 @@ class AISearchResponse(BaseModel):
     class Config:
         from_attributes = True
 
+

@@ -377,18 +377,15 @@ async def handle_call_completed(
         if recording_url and call_record:
             # Use new async job system
             from app.services.shunya_async_job_service import shunya_async_job_service
-            import asyncio
             
             try:
-                # Submit async job (non-blocking)
-                job = asyncio.run(
-                    shunya_async_job_service.submit_csr_call_job(
-                        db=db,
-                        call_id=call_record.call_id,
-                        audio_url=recording_url,
-                        company_id=str(company_record.id),
-                        request_id=getattr(request.state, 'trace_id', str(uuid.uuid4()))
-                    )
+                # Submit async job (non-blocking) - use await directly in async handler
+                job = await shunya_async_job_service.submit_csr_call_job(
+                    db=db,
+                    call_id=call_record.call_id,
+                    audio_url=recording_url,
+                    company_id=str(company_record.id),
+                    request_id=getattr(request.state, 'trace_id', str(uuid.uuid4()))
                 )
                 logger.info(
                     f"Submitted CSR call {call_record.call_id} to async Shunya job {job.id}",

@@ -327,18 +327,15 @@ async def upload_audio_complete(
         # Trigger Shunya visit analysis if audio URL is available (or ghost mode)
         # Use new async job system
         from app.services.shunya_async_job_service import shunya_async_job_service
-        import asyncio
         
         try:
-            # Submit async job (non-blocking)
-            job = asyncio.run(
-                shunya_async_job_service.submit_sales_visit_job(
-                    db=db,
-                    recording_session_id=session_id,
-                    audio_url=upload_data.audio_url,  # May be None in ghost mode
-                    company_id=str(session.company_id),
-                    request_id=str(uuid.uuid4())
-                )
+            # Submit async job (non-blocking) - use await directly in async handler
+            job = await shunya_async_job_service.submit_sales_visit_job(
+                db=db,
+                recording_session_id=session_id,
+                audio_url=upload_data.audio_url,  # May be None in ghost mode
+                company_id=str(session.company_id),
+                request_id=str(uuid.uuid4())
             )
             logger.info(
                 f"Submitted sales visit {session_id} to async Shunya job {job.id}",

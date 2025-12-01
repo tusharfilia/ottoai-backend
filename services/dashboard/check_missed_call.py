@@ -189,3 +189,4 @@ if __name__ == "__main__":
     db_url = args.database_url or os.getenv("DATABASE_URL")
     check_missed_calls(db_url, args.company_id, args.minutes)
 
+

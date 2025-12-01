@@ -33,3 +33,4 @@ class AppointmentListResponse(BaseModel):
     total: int = Field(..., description="Total count matching filters")
     date: Optional[str] = Field(None, description="Date filter applied (ISO format)")
 
+
