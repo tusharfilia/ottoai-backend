@@ -4,12 +4,14 @@ Extracts and validates tenant_id from Clerk JWT claims.
 """
 import logging
 from typing import Optional
+import httpx
 
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.routes.dependencies import verify_clerk_jwt
+from jose import jwt, JWTError
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,19 @@ class TenantContextMiddleware:
         try:
             # Extract tenant context (tenant_id, user_id, user_role)
             context = await self._extract_tenant_context(request)
+            
+            # Check if token expired
+            if context and context.get("_expired"):
+                response = JSONResponse(
+                    status_code=401,
+                    content={
+                        "detail": "JWT token has expired. Please refresh your authentication token from Clerk and retry the request.",
+                        "error_code": "TOKEN_EXPIRED"
+                    }
+                )
+                await response(scope, receive, send)
+                return
+            
             if not context or not context.get("tenant_id"):
                 # In dev mode, use test company/user if no auth token provided
                 if settings.DEV_MODE:
@@ -48,9 +63,20 @@ class TenantContextMiddleware:
                         "user_role": "manager"  # Default to manager in dev mode for full access
                     }
                 else:
+                    # Check if the error was due to token expiration
+                    auth_header = request.headers.get("Authorization")
+                    error_detail = "Missing or invalid tenant_id in JWT claims"
+                    error_code = "MISSING_TENANT_ID"
+                    if auth_header and auth_header.startswith("Bearer "):
+                        error_detail = "Invalid JWT token. Please ensure you're using a valid authentication token from Clerk."
+                        error_code = "INVALID_TOKEN"
+                    
                     response = JSONResponse(
-                        status_code=403,
-                        content={"detail": "Missing or invalid tenant_id in JWT claims"}
+                        status_code=401,
+                        content={
+                            "detail": error_detail,
+                            "error_code": error_code
+                        }
                     )
                     await response(scope, receive, send)
                     return
@@ -169,6 +195,11 @@ class TenantContextMiddleware:
                 "user_role": user_role,
             }
             
+        except jwt.ExpiredSignatureError:
+            # Token expired - this is a specific error that should be handled differently
+            logger.warning("Clerk JWT has expired")
+            # Return a special marker so the middleware knows it's an expiration
+            return {"_expired": True}
         except Exception as e:
             # verify_clerk_jwt already logs; here we just treat as auth failure
             logger.warning(f"Failed to verify Clerk JWT in tenant middleware: {e}")
@@ -204,20 +235,6 @@ class TenantContextMiddleware:
 
 def get_tenant_id(request: Request) -> str:
     """Get tenant_id from request state. Raises HTTPException if not found."""
-    if not hasattr(request.state, 'tenant_id') or not request.state.tenant_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Tenant context not found. Ensure you're authenticated with a valid organization."
-        )
-    return request.state.tenant_id
-
-    if not hasattr(request.state, 'tenant_id') or not request.state.tenant_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Tenant context not found. Ensure you're authenticated with a valid organization."
-        )
-    return request.state.tenant_id
-
     if not hasattr(request.state, 'tenant_id') or not request.state.tenant_id:
         raise HTTPException(
             status_code=403,
