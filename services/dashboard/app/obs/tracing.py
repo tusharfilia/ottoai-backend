@@ -6,7 +6,7 @@ import os
 from typing import Optional, Dict, Any
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter, NoOpSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.resources import Resource
@@ -46,13 +46,18 @@ def setup_tracing():
     
     # Configure exporter
     otlp_endpoint = getattr(settings, 'OTEL_EXPORTER_OTLP_ENDPOINT', None)
+    environment = getattr(settings, 'ENVIRONMENT', 'development').lower()
     
     if otlp_endpoint:
         # Use OTLP exporter for production
         exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
-    else:
-        # Use console exporter for development
+    elif environment == 'development':
+        # Use console exporter only in development
         exporter = ConsoleSpanExporter()
+    else:
+        # Use no-op exporter in production when no OTLP endpoint is configured
+        # This prevents verbose console logging in production
+        exporter = NoOpSpanExporter()
     
     # Add span processor
     span_processor = BatchSpanProcessor(exporter)
