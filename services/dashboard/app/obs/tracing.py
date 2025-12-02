@@ -6,7 +6,7 @@ import os
 from typing import Optional, Dict, Any
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace.export import ConsoleSpanExporter, NoOpSpanExporter
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SpanExporter, SpanExportResult
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.resources import Resource
@@ -19,6 +19,18 @@ from opentelemetry.propagators.composite import CompositeHTTPPropagator
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.propagators.b3 import B3MultiFormat
 from app.config import settings
+
+
+class NoOpSpanExporter(SpanExporter):
+    """A no-op span exporter that discards all spans."""
+    
+    def export(self, spans):
+        """Export spans (does nothing)."""
+        return SpanExportResult.SUCCESS
+    
+    def shutdown(self):
+        """Shutdown the exporter (does nothing)."""
+        pass
 
 
 def setup_tracing():
