@@ -176,7 +176,7 @@ class TenantContextMiddleware:
             clerk_role = decoded_token.get("org_role") or decoded_token.get("role") or "sales_rep"
             
             # Map Clerk roles to Otto's standardized 3-role system
-            # Clerk may use: admin, org:admin, exec, manager, csr, rep, sales_rep
+            # Clerk may use: admin, org:admin, exec, manager, csr, org:csr, rep, sales_rep
             # Otto uses: manager, csr, sales_rep
             role_mapping = {
                 "admin": "manager",
@@ -184,8 +184,10 @@ class TenantContextMiddleware:
                 "exec": "manager",
                 "manager": "manager",
                 "csr": "csr",
+                "org:csr": "csr",  # Clerk org-scoped CSR role
                 "rep": "sales_rep",
-                "sales_rep": "sales_rep"
+                "sales_rep": "sales_rep",
+                "org:sales_rep": "sales_rep",  # Clerk org-scoped sales rep role
             }
             user_role = role_mapping.get(clerk_role.lower(), "sales_rep")  # Default to sales_rep if unknown
             
