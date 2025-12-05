@@ -285,5 +285,4 @@ async def update_call_status(request: Request, background_tasks: BackgroundTasks
         "status": "success",
         "message": f"Call {call_record.call_id} status updated successfully",
         "geofence_removed": should_remove_geofence
-    }
     } 
