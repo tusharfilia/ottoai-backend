@@ -94,12 +94,14 @@ async def get_queue_status(
 @require_role("manager", "csr")
 async def get_queue_metrics(
     request: Request,
+    start_date: Optional[str] = Query(None, description="Start date (ISO format YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (ISO format YYYY-MM-DD)"),
     db: Session = Depends(get_db)
 ):
     """Get queue performance metrics"""
     try:
         company_id = request.state.tenant_id
-        metrics = await missed_call_service.get_queue_metrics(company_id, db)
+        metrics = await missed_call_service.get_queue_metrics(company_id, db, start_date=start_date, end_date=end_date)
         
         return APIResponse(data={
             "company_id": company_id,
@@ -469,12 +471,14 @@ async def get_queue_status(
 @require_role("manager", "csr")
 async def get_queue_metrics(
     request: Request,
+    start_date: Optional[str] = Query(None, description="Start date (ISO format YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (ISO format YYYY-MM-DD)"),
     db: Session = Depends(get_db)
 ):
     """Get queue performance metrics"""
     try:
         company_id = request.state.tenant_id
-        metrics = await missed_call_service.get_queue_metrics(company_id, db)
+        metrics = await missed_call_service.get_queue_metrics(company_id, db, start_date=start_date, end_date=end_date)
         
         return APIResponse(data={
             "company_id": company_id,
@@ -739,6 +743,7 @@ async def stop_processor():
     except Exception as e:
         logger.error(f"Error stopping processor: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
