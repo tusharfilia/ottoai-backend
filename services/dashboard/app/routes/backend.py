@@ -1078,4 +1078,3 @@ async def get_diagnostics(request: Request, db: Session = Depends(get_db)):
     return {
         "total_companies": len(all_companies),
         "companies": companies_data
-    }

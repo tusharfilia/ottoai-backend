@@ -60,3 +60,5 @@ class RepAssignmentHistory(Base):
     rep = relationship("SalesRep", foreign_keys=[rep_id])
     company = relationship("Company", foreign_keys=[company_id])
 
+
+

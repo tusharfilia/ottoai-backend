@@ -79,3 +79,5 @@ class SopComplianceResult(Base):
     appointment = relationship("Appointment", back_populates="sop_compliance_results")
     company = relationship("Company", foreign_keys=[company_id])
 
+
+

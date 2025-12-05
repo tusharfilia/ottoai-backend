@@ -84,10 +84,6 @@ celery_app.conf.update(
             "task": "app.tasks.cleanup_tasks.cleanup_old_tasks",
             "schedule": 3600.0,  # Hourly
         },
-        "cleanup-ephemeral-sessions": {
-            "task": "app.tasks.recording_session_tasks.cleanup_ephemeral_sessions",
-            "schedule": 3600.0,  # Hourly
-        },
     },
 )
 

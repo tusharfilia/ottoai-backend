@@ -57,3 +57,5 @@ class ContactCard(Base):
             return f"{self.first_name} {self.last_name}"
         return self.first_name or self.last_name
 
+
+

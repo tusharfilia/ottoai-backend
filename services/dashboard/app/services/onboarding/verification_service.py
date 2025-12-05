@@ -157,3 +157,6 @@ class VerificationService:
         
         return (csr_count + rep_count) > 0
 
+
+
+

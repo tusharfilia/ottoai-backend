@@ -27,3 +27,5 @@ async def get_openai_stats(request: Request) -> APIResponse[Dict[str, Any]]:
     stats = manager.get_stats()
     
     return APIResponse(data=stats)
+
+

@@ -106,17 +106,12 @@ class Task(Base):
     appointment = relationship("Appointment", back_populates="tasks")
     company = relationship("Company", foreign_keys=[company_id])
 
-    priority = Column(String, nullable=True, comment="high/medium/low")
-    task_metadata = Column(Text, nullable=True, comment="Additional context as JSON")
-    
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
     # Relationships
-    contact_card = relationship("ContactCard", back_populates="tasks")
-    lead = relationship("Lead", back_populates="tasks")
-    appointment = relationship("Appointment", back_populates="tasks")
-    company = relationship("Company", foreign_keys=[company_id])
+    company = relationship("Company")
+    contact_card = relationship("ContactCard")
+    lead = relationship("Lead")
+    appointment = relationship("Appointment")
+    call = relationship("Call")
 
     priority = Column(String, nullable=True, comment="high/medium/low")
     task_metadata = Column(Text, nullable=True, comment="Additional context as JSON")
@@ -129,3 +124,4 @@ class Task(Base):
     lead = relationship("Lead", back_populates="tasks")
     appointment = relationship("Appointment", back_populates="tasks")
     company = relationship("Company", foreign_keys=[company_id])
+

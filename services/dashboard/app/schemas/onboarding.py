@@ -203,3 +203,6 @@ class OnboardingStatusResponse(BaseModel):
     onboarding_completed_at: Optional[datetime] = None
     progress: Dict[str, Any] = Field(..., description="Progress details for each step")
 
+
+
+

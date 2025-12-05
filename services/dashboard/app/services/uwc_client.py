@@ -1257,5 +1257,3 @@ def get_uwc_client() -> UWCClient:
     if _uwc_client is None:
         _uwc_client = UWCClient()
     return _uwc_client
-
-

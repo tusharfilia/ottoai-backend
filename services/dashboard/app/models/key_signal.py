@@ -87,3 +87,5 @@ class KeySignal(Base):
     appointment = relationship("Appointment", back_populates="key_signals")
     company = relationship("Company", foreign_keys=[company_id])
 
+
+

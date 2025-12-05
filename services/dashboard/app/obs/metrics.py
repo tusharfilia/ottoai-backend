@@ -377,7 +377,6 @@ def record_ws_message_dropped(reason: str):
 def record_ws_subscription(channel: str):
     """Record WebSocket channel subscription."""
     ws_subscriptions_total.labels(channel=channel).inc()
-
     ws_connections.labels(tenant_id=tenant_id).set(count)
 
 
@@ -411,3 +410,4 @@ def record_ws_message_dropped(reason: str):
 def record_ws_subscription(channel: str):
     """Record WebSocket channel subscription."""
     ws_subscriptions_total.labels(channel=channel).inc()
+

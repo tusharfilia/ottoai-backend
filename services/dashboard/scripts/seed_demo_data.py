@@ -1285,7 +1285,10 @@ def create_demo_missed_call_queue_entries(db: Session, company: Company, calls: 
                 priority = MissedCallPriority.MEDIUM
             
             # Calculate deadlines
-            created_time = call_obj.created_at if call_obj.created_at else now - timedelta(days=random.randint(0, 7))
+            # Create entries with dates spread over the last 30 days to ensure they show up in date range queries
+            # This ensures entries are visible when frontend queries with date ranges
+            days_ago = random.randint(0, 30)
+            created_time = call_obj.created_at if call_obj.created_at else now - timedelta(days=days_ago)
             sla_deadline = created_time + timedelta(hours=sla_settings.response_time_hours)
             escalation_deadline = created_time + timedelta(hours=sla_settings.escalation_time_hours)
             

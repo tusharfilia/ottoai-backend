@@ -1183,3 +1183,5 @@ class ShunyaIntegrationService:
 
 # Global service instance
 shunya_integration_service = ShunyaIntegrationService()
+
+

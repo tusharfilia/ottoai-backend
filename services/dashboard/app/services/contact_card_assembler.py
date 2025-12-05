@@ -1071,3 +1071,5 @@ class ContactCardAssembler:
 
 # Global assembler instance
 contact_card_assembler = ContactCardAssembler()
+
+

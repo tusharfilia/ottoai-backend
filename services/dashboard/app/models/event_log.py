@@ -113,3 +113,5 @@ class EventLog(Base):
     appointment = relationship("Appointment", back_populates="event_logs")
     company = relationship("Company", foreign_keys=[company_id])
 
+
+

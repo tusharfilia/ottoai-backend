@@ -126,5 +126,14 @@ class Lead(Base):
     assigned_rep = relationship("SalesRep", foreign_keys=[assigned_rep_id])
 
     def is_active(self) -> bool:
-        return self.status in {LeadStatus.NEW, LeadStatus.QUALIFIED, LeadStatus.NURTURING, LeadStatus.BOOKED}
+        """Return True if the lead is in an active pipeline state."""
+        return self.status in {
+            LeadStatus.NEW,
+            LeadStatus.WARM,
+            LeadStatus.HOT,
+            LeadStatus.NURTURING,
+            LeadStatus.QUALIFIED_BOOKED,
+            LeadStatus.QUALIFIED_UNBOOKED,
+        }
+
 
