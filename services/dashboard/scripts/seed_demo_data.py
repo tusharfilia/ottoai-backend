@@ -253,11 +253,36 @@ def create_demo_contact_cards(db: Session, company: Company) -> list[ContactCard
     # Ensure required tables exist (especially on partially-migrated databases)
     ensure_core_contact_tables(db)
     # For idempotency, wipe existing demo data for this company in the right FK order:
-    # 1) Delete recording_sessions (which reference appointments)
-    # 2) Delete appointments (which reference leads/contact_cards)
-    # 3) Delete leads (which reference contact_cards)
-    # 4) Delete contact_cards
+    # 1) Delete missed_call_queue (which reference calls)
+    # 2) Delete tasks (which reference appointments, calls, contact_cards, leads)
+    # 3) Delete message_threads (which reference contact_cards and calls)
+    # 4) Delete call_analyses and call_transcripts (which reference calls) - AFTER calls would be better but we delete by tenant_id
+    # 5) Delete calls (which reference contact_cards and leads)
+    # 6) Delete recording_sessions (which reference appointments)
+    # 7) Delete appointments (which reference leads/contact_cards)
+    # 8) Delete leads (which reference contact_cards)
+    # 9) Delete contact_cards
     inspector = inspect(db.bind)
+    if "missed_call_queue" in inspector.get_table_names():
+        db.query(MissedCallQueue).filter(MissedCallQueue.company_id == company.id).delete(synchronize_session=False)
+    if "tasks" in inspector.get_table_names():
+        db.query(Task).filter(Task.company_id == company.id).delete(synchronize_session=False)
+    if "message_threads" in inspector.get_table_names():
+        db.query(MessageThread).filter(MessageThread.company_id == company.id).delete(synchronize_session=False)
+    # Delete call_analyses and call_transcripts by finding calls first, then deleting analyses/transcripts
+    if "calls" in inspector.get_table_names():
+        call_ids = [c.call_id for c in db.query(Call).filter(Call.company_id == company.id).all()]
+        table_names = inspector.get_table_names()
+        if call_ids:
+            if "call_analysis" in table_names:
+                db.query(CallAnalysis).filter(CallAnalysis.call_id.in_(call_ids)).delete(synchronize_session=False)
+            if "call_analyses" in table_names:
+                db.query(CallAnalysis).filter(CallAnalysis.call_id.in_(call_ids)).delete(synchronize_session=False)
+            if "call_transcript" in table_names:
+                db.query(CallTranscript).filter(CallTranscript.call_id.in_(call_ids)).delete(synchronize_session=False)
+            if "call_transcripts" in table_names:
+                db.query(CallTranscript).filter(CallTranscript.call_id.in_(call_ids)).delete(synchronize_session=False)
+        db.query(Call).filter(Call.company_id == company.id).delete(synchronize_session=False)
     if "recording_sessions" in inspector.get_table_names():
         db.query(RecordingSession).filter(RecordingSession.company_id == company.id).delete(synchronize_session=False)
     db.query(Appointment).filter(Appointment.company_id == company.id).delete(synchronize_session=False)
@@ -378,6 +403,9 @@ def create_demo_calls(db: Session, company: Company, contact_cards: list[Contact
         # Create 1-3 calls per contact
         num_calls = random.randint(1, 3)
         lead_obj = leads[i] if i < len(leads) else None
+        # Store lead_id before accessing to avoid session expiration issues
+        lead_id = lead_obj.id if lead_obj else None
+        lead_status = lead_obj.status if lead_obj else None
         
         for j in range(num_calls):
             call_time = datetime.utcnow() - timedelta(days=random.randint(0, 30), hours=random.randint(0, 23))
@@ -388,7 +416,7 @@ def create_demo_calls(db: Session, company: Company, contact_cards: list[Contact
                 call_id=None,  # Auto-increment
                 company_id=company.id,
                 contact_card_id=contact_card_obj.id,
-                lead_id=lead_obj.id if lead_obj else None,
+                lead_id=lead_id,
                 phone_number=contact_card_obj.primary_phone,
                 name=f"{contact_card_obj.first_name} {contact_card_obj.last_name}",
                 missed_call=(direction == "missed"),
@@ -397,7 +425,7 @@ def create_demo_calls(db: Session, company: Company, contact_cards: list[Contact
                 last_call_duration=duration,
                 last_call_timestamp=call_time.isoformat(),
                 booked=random.choice([True, False]) if direction == "inbound" and not (direction == "missed") else False,
-                bought=random.choice([True, False]) if lead_obj and lead_obj.status == "closed_won" else False,
+                bought=random.choice([True, False]) if lead_status == "closed_won" else False,
                 price_if_bought=random.uniform(10000, 40000) if random.choice([True, False]) else None,
                 created_at=call_time,
                 updated_at=call_time,
@@ -1386,7 +1414,9 @@ def seed_demo_data(db: Session):
     
     # 17. Create or get demo Manager/Executive user
     print("\n👔 Creating Executive/Manager platform demo data...")
+    print(f"   Looking for manager user: {DEMO_MANAGER_EMAIL} ({DEMO_MANAGER_USER_ID})")
     manager_user = get_or_create_demo_manager_user(db, company)
+    print(f"   ✓ Manager user ready: {manager_user.email} (role: {manager_user.role})")
     
     # Note: Manager sees all company data (calls, leads, appointments, etc.) - no additional seeding needed
     # The existing company-wide data is sufficient for executive dashboard
