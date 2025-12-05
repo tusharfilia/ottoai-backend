@@ -53,6 +53,20 @@ class TenantContextMiddleware:
                 await response(scope, receive, send)
                 return
             
+            # Check for role-related errors
+            if context and context.get("_error"):
+                response = JSONResponse(
+                    status_code=403,
+                    content={
+                        "detail": context.get("_error_detail", "Authentication error"),
+                        "error_code": context.get("_error_code", "AUTH_ERROR"),
+                        "status": 403,
+                        "instance": request.url.path
+                    }
+                )
+                await response(scope, receive, send)
+                return
+            
             if not context or not context.get("tenant_id"):
                 # In dev mode, use test company/user if no auth token provided
                 if settings.DEV_MODE:
@@ -171,25 +185,78 @@ class TenantContextMiddleware:
             if not tenant_id and "user_id" in decoded_token:
                 tenant_id = await self._get_user_default_organization(decoded_token["user_id"])
             
-            # Extract user_id and role
+            # Extract user_id
             user_id = decoded_token.get("sub") or decoded_token.get("user_id")
-            clerk_role = decoded_token.get("org_role") or decoded_token.get("role") or "sales_rep"
+            
+            # Extract role from JWT claims (try multiple possible claim names)
+            clerk_role = (
+                decoded_token.get("org_role")  # Standard Clerk org role claim
+                or decoded_token.get("role")  # Fallback to generic role claim
+            )
+            
+            # If role not in JWT, try to fetch from Clerk API organization membership
+            if not clerk_role and tenant_id and user_id:
+                logger.debug(f"Role not found in JWT, fetching from Clerk API for user {user_id} in org {tenant_id}")
+                clerk_role = await self._get_user_org_role(user_id, tenant_id)
+            
+            # If still no role found, this is an error - don't silently default
+            if not clerk_role:
+                logger.error(
+                    f"Unable to determine role for user {user_id} in tenant {tenant_id}. "
+                    f"JWT claims checked: org_role={decoded_token.get('org_role')}, "
+                    f"role={decoded_token.get('role')}. "
+                    f"User must have a role assigned in Clerk organization."
+                )
+                # Return error marker instead of raising (middleware will handle it)
+                return {
+                    "_error": True,
+                    "_error_code": "MISSING_USER_ROLE",
+                    "_error_detail": (
+                        "User role could not be determined from JWT token or Clerk API. "
+                        "Please ensure the user has a role assigned in their Clerk organization membership."
+                    )
+                }
             
             # Map Clerk roles to Otto's standardized 3-role system
-            # Clerk may use: admin, org:admin, exec, manager, csr, org:csr, rep, sales_rep
+            # Clerk may use: admin, org:admin, exec, manager, csr, org:csr, rep, sales_rep, org:member, basic_member
             # Otto uses: manager, csr, sales_rep
             role_mapping = {
                 "admin": "manager",
                 "org:admin": "manager",
                 "exec": "manager",
+                "executive": "manager",
                 "manager": "manager",
+                "org:manager": "manager",
                 "csr": "csr",
                 "org:csr": "csr",  # Clerk org-scoped CSR role
                 "rep": "sales_rep",
                 "sales_rep": "sales_rep",
                 "org:sales_rep": "sales_rep",  # Clerk org-scoped sales rep role
+                # Default org members without explicit role mapping should be treated as sales_rep
+                # but we log a warning since this shouldn't happen in production
+                "org:member": "sales_rep",
+                "basic_member": "sales_rep",
             }
-            user_role = role_mapping.get(clerk_role.lower(), "sales_rep")  # Default to sales_rep if unknown
+            
+            clerk_role_lower = clerk_role.lower()
+            user_role = role_mapping.get(clerk_role_lower)
+            
+            # If role is not in mapping, log error and reject (don't silently default)
+            if not user_role:
+                logger.error(
+                    f"Unknown Clerk role '{clerk_role}' for user {user_id}. "
+                    f"Supported roles: {list(role_mapping.keys())}"
+                )
+                # Return error marker instead of raising (middleware will handle it)
+                return {
+                    "_error": True,
+                    "_error_code": "INVALID_USER_ROLE",
+                    "_error_detail": (
+                        f"User role '{clerk_role}' is not recognized. "
+                        f"Supported roles: manager, csr, sales_rep. "
+                        f"Please ensure the user has a valid role assigned in Clerk."
+                    )
+                }
             
             return {
                 "tenant_id": tenant_id,
@@ -232,6 +299,64 @@ class TenantContextMiddleware:
             
         except Exception as e:
             logger.error(f"Failed to get user organization: {str(e)}")
+            return None
+    
+    async def _get_user_org_role(self, user_id: str, org_id: str) -> Optional[str]:
+        """
+        Get user's role in a specific organization from Clerk API.
+        
+        Args:
+            user_id: Clerk user ID
+            org_id: Clerk organization ID
+            
+        Returns:
+            Role string (e.g., "org:admin", "org:member", "manager") or None if not found
+        """
+        try:
+            headers = {
+                "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            # Get user's organization memberships
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{settings.CLERK_API_URL}/users/{user_id}/organization_memberships",
+                    headers=headers
+                )
+                response.raise_for_status()
+                
+                memberships = response.json()
+                if not memberships:
+                    logger.warning(f"No organization memberships found for user {user_id}")
+                    return None
+                
+                # Find the membership for the specific organization
+                for membership in memberships:
+                    org = membership.get("organization", {})
+                    if org.get("id") == org_id:
+                        # Clerk returns role in membership object
+                        role = membership.get("role")
+                        if role:
+                            logger.debug(f"Found role '{role}' for user {user_id} in org {org_id} via Clerk API")
+                            return role
+                        else:
+                            logger.warning(
+                                f"Organization membership found for user {user_id} in org {org_id}, "
+                                f"but role field is missing"
+                            )
+                            return None
+                
+                logger.warning(f"User {user_id} is not a member of organization {org_id}")
+                return None
+                
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"HTTP error fetching user role from Clerk API: {e.response.status_code} - {e.response.text}"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get user role from Clerk API: {str(e)}")
             return None
 
 
