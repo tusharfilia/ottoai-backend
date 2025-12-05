@@ -681,12 +681,34 @@ If you're not interested, just reply "STOP" and we'll remove you from our list. 
             logger.error(f"Error getting queue status: {str(e)}")
             return {}
     
-    async def get_queue_metrics(self, company_id: str, db: Session) -> Dict[str, float]:
+    async def get_queue_metrics(self, company_id: str, db: Session, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, float]:
         """Get queue performance metrics"""
         try:
+            from datetime import datetime as dt
+            
+            # Build base query with company filter
+            base_filter = [MissedCallQueue.company_id == company_id]
+            
+            # Add date filters if provided
+            if start_date:
+                try:
+                    start_dt = dt.fromisoformat(start_date)
+                    base_filter.append(MissedCallQueue.created_at >= start_dt)
+                except ValueError:
+                    logger.warning(f"Invalid start_date format: {start_date}")
+            
+            if end_date:
+                try:
+                    end_dt = dt.fromisoformat(end_date)
+                    # Include the entire end date (end of day)
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                    base_filter.append(MissedCallQueue.created_at <= end_dt)
+                except ValueError:
+                    logger.warning(f"Invalid end_date format: {end_date}")
+            
             # Recovery rate
             total_processed = db.query(MissedCallQueue).filter(
-                MissedCallQueue.company_id == company_id,
+                *base_filter,
                 MissedCallQueue.status.in_([
                     MissedCallStatus.RECOVERED,
                     MissedCallStatus.ESCALATED,
@@ -695,7 +717,7 @@ If you're not interested, just reply "STOP" and we'll remove you from our list. 
             ).count()
             
             recovered_count = db.query(MissedCallQueue).filter(
-                MissedCallQueue.company_id == company_id,
+                *base_filter,
                 MissedCallQueue.status == MissedCallStatus.RECOVERED
             ).count()
             
@@ -707,7 +729,7 @@ If you're not interested, just reply "STOP" and we'll remove you from our list. 
                     func.extract('epoch', MissedCallQueue.processed_at - MissedCallQueue.created_at)
                 )
             ).filter(
-                MissedCallQueue.company_id == company_id,
+                *base_filter,
                 MissedCallQueue.status == MissedCallStatus.RECOVERED
             ).scalar() or 0
             
