@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status, Header
 from pydantic import BaseModel
 
-from app.core.config import settings
+from app.config import settings
 
 
 class AIInternalContext(BaseModel):
