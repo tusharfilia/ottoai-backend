@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
 Demo data seed script for OttoAI backend.
-Creates realistic demo data for the CSR dashboard tied to Clerk demo org/user.
+Creates realistic demo data for CSR, Sales Rep, and Executive/Manager platforms.
 
 This script creates:
 - Demo company/tenant (otto-demo-co)
-- Demo CSR user (csr@otto-demo.com)
+- Demo CSR user (csr@otto-demo.com) - High-performing
+- Demo Sales Rep user (salesrep@otto-demo.com) - High-performing
+- Demo Manager/Executive user (manager@otto-demo.com)
 - Contact cards with leads
-- Calls with transcripts and analyses
-- Appointments (upcoming and past)
-- Sales reps
+- Calls with transcripts and analyses (CSR dashboard + Sales Rep assigned)
+- Appointments (CSR dashboard + Sales Rep assigned)
+- Rep shifts and recording sessions (Sales Rep mobile app)
+- Sales reps (generic, with high/low performance variation)
 - Tasks and pending actions
 - SMS message threads
 
@@ -29,8 +32,9 @@ It will reuse existing demo company/user and update or recreate other data.
 
 import os
 import sys
+import json
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time, date
 from uuid import uuid4
 import random
 
@@ -67,6 +71,7 @@ from app.models import (
     onboarding,
     call_transcript,
     call_analysis,
+    missed_call_queue,
 )
 
 from app.models import (
@@ -84,8 +89,20 @@ Appointment = appointment.Appointment
 Task = task.Task
 MessageThread = message_thread.MessageThread
 SalesRep = sales_rep.SalesRep
+SalesManager = sales_manager.SalesManager
+RepShift = rep_shift.RepShift
+ShiftStatus = rep_shift.ShiftStatus
+RecordingSession = recording_session.RecordingSession
+RecordingMode = recording_session.RecordingMode
+AudioStorageMode = recording_session.AudioStorageMode
+TranscriptionStatus = recording_session.TranscriptionStatus
+AnalysisStatus = recording_session.AnalysisStatus
 CallTranscript = call_transcript.CallTranscript
 CallAnalysis = call_analysis.CallAnalysis
+MissedCallQueue = missed_call_queue.MissedCallQueue
+MissedCallStatus = missed_call_queue.MissedCallStatus
+MissedCallPriority = missed_call_queue.MissedCallPriority
+MissedCallSLA = missed_call_queue.MissedCallSLA
 
 
 def ensure_core_contact_tables(db: Session):
@@ -118,9 +135,22 @@ def ensure_core_contact_tables(db: Session):
 # Note: The org ID format in JWT tokens may differ slightly from the seed constant
 # If you see a different org ID in your JWT token, update this constant to match
 DEMO_CLERK_ORG_ID = "org_36EW2DYBw4gpJaL4ASL2ZxFZPO9"  # Updated to match JWT token org ID
+
+# CSR Demo User
 DEMO_CLERK_USER_ID = "user_36EWfrANnNFNL2dN3wdAo9z2FK2"
 DEMO_USER_EMAIL = "csr@otto-demo.com"
 DEMO_USER_USERNAME = "csrdemo"
+
+# Sales Rep Demo User
+DEMO_SALES_REP_USER_ID = "user_36M3F0kllDOemX3prAPP1Zb8C5f"
+DEMO_SALES_REP_EMAIL = "salesrep@otto-demo.com"
+DEMO_SALES_REP_USERNAME = "salesrep"
+
+# Manager/Executive Demo User
+DEMO_MANAGER_USER_ID = "user_36M3Kp5NQjnGhcmu5NM8nhOCqg2"
+DEMO_MANAGER_EMAIL = "manager@otto-demo.com"
+DEMO_MANAGER_USERNAME = "managerdemo"
+
 DEMO_COMPANY_NAME = "otto-demo-co"
 
 # Demo data markers
@@ -132,6 +162,18 @@ def get_or_create_demo_company(db: Session) -> Company:
     demo_company = db.query(Company).filter(Company.id == DEMO_CLERK_ORG_ID).first()
     
     if not demo_company:
+        # Check if another company with the demo name exists
+        existing_with_name = db.query(Company).filter(
+            Company.name == DEMO_COMPANY_NAME,
+            Company.id != DEMO_CLERK_ORG_ID
+        ).first()
+        
+        if existing_with_name:
+            # Rename the old company to avoid conflict
+            existing_with_name.name = f"{DEMO_COMPANY_NAME}-old-{existing_with_name.id[:8]}"
+            db.commit()
+            print(f"ℹ️  Renamed existing company with name '{DEMO_COMPANY_NAME}' to avoid conflict")
+        
         demo_company = Company(
             id=DEMO_CLERK_ORG_ID,
             name=DEMO_COMPANY_NAME,
@@ -151,6 +193,19 @@ def get_or_create_demo_company(db: Session) -> Company:
         print(f"✓ Created demo company: {DEMO_COMPANY_NAME} ({DEMO_CLERK_ORG_ID})")
     else:
         # Update existing company to ensure it's properly configured
+        # Check if name update would conflict
+        existing_with_name = db.query(Company).filter(
+            Company.name == DEMO_COMPANY_NAME,
+            Company.id != DEMO_CLERK_ORG_ID
+        ).first()
+        
+        if existing_with_name:
+            # Rename the conflicting company first
+            existing_with_name.name = f"{DEMO_COMPANY_NAME}-old-{existing_with_name.id[:8]}"
+            db.commit()
+            print(f"ℹ️  Renamed existing company with name '{DEMO_COMPANY_NAME}' to avoid conflict")
+        
+        # Now safely update the name
         demo_company.name = DEMO_COMPANY_NAME
         demo_company.phone_number = "+1-555-123-4567"
         demo_company.industry = "Roofing"
@@ -198,9 +253,13 @@ def create_demo_contact_cards(db: Session, company: Company) -> list[ContactCard
     # Ensure required tables exist (especially on partially-migrated databases)
     ensure_core_contact_tables(db)
     # For idempotency, wipe existing demo data for this company in the right FK order:
-    # 1) Delete appointments (which reference leads/contact_cards)
-    # 2) Delete leads (which reference contact_cards)
-    # 3) Delete contact_cards
+    # 1) Delete recording_sessions (which reference appointments)
+    # 2) Delete appointments (which reference leads/contact_cards)
+    # 3) Delete leads (which reference contact_cards)
+    # 4) Delete contact_cards
+    inspector = inspect(db.bind)
+    if "recording_sessions" in inspector.get_table_names():
+        db.query(RecordingSession).filter(RecordingSession.company_id == company.id).delete(synchronize_session=False)
     db.query(Appointment).filter(Appointment.company_id == company.id).delete(synchronize_session=False)
     db.query(Lead).filter(Lead.company_id == company.id).delete(synchronize_session=False)
     db.query(ContactCard).filter(ContactCard.company_id == company.id).delete(synchronize_session=False)
@@ -482,20 +541,15 @@ def create_demo_call_analyses(db: Session, company: Company, calls: list[Call]) 
 
 
 def create_demo_sales_reps(db: Session, company: Company) -> list[SalesRep]:
-    """Create demo sales reps."""
+    """Create demo sales reps (including one low-performing rep for comparison)."""
     # Ensure core tables (including rep_shifts) exist before working with reps
     ensure_core_contact_tables(db)
-    # Delete existing demo reps (identified by demo marker)
-    existing_reps = db.query(SalesRep).filter(SalesRep.company_id == company.id).all()
-    for rep in existing_reps:
-        db.delete(rep)
-    db.commit()
     
     # Create demo rep users first
     rep_users = []
     rep_data = [
-        {"name": "Jane Installer", "email": "jane.installer@otto-demo.com", "username": "janeinstaller"},
-        {"name": "Bob Closer", "email": "bob.closer@otto-demo.com", "username": "bobcloser"},
+        {"name": "Jane Installer", "email": "jane.installer@otto-demo.com", "username": "janeinstaller", "is_high_performing": True},
+        {"name": "Bob Closer", "email": "bob.closer@otto-demo.com", "username": "bobcloser", "is_high_performing": False},  # Low-performing
     ]
     
     for rep_info in rep_data:
@@ -518,27 +572,45 @@ def create_demo_sales_reps(db: Session, company: Company) -> list[SalesRep]:
     
     db.commit()
     
-    # Create sales rep profiles
+    # Create or get sales rep profiles
     reps = []
-    for rep_user in rep_users:
-        rep = SalesRep(
-            user_id=rep_user.id,
-            company_id=company.id,
-            recording_mode="normal",
-            allow_location_tracking=True,
-            allow_recording=True,
-        )
-        db.add(rep)
+    rep_performance_map = {}  # Track which reps are high/low performing
+    for i, rep_user in enumerate(rep_users):
+        # Check if SalesRep already exists for this user
+        rep = db.query(SalesRep).filter(SalesRep.user_id == rep_user.id).first()
+        is_high_performing = rep_data[i].get("is_high_performing", True)
+        rep_performance_map[rep_user.id] = is_high_performing
+        
+        if not rep:
+            rep = SalesRep(
+                user_id=rep_user.id,
+                company_id=company.id,
+                recording_mode="normal",
+                allow_location_tracking=True,
+                allow_recording=True,
+            )
+            db.add(rep)
+        else:
+            # Update existing rep to ensure correct company_id
+            rep.company_id = company.id
+            rep.recording_mode = "normal"
+            rep.allow_location_tracking = True
+            rep.allow_recording = True
         reps.append(rep)
     
     db.commit()
-    print(f"✓ Created {len(reps)} demo sales reps")
-    return reps
+    print(f"✓ Created/updated {len(reps)} demo sales reps (1 high-performing, 1 low-performing)")
+    # Return both reps list and performance map
+    return reps, rep_performance_map
 
 
-def create_demo_appointments(db: Session, company: Company, contact_cards: list[ContactCard], leads: list[Lead], reps: list[SalesRep]) -> list[Appointment]:
-    """Create demo appointments (upcoming and past)."""
-    # Delete existing demo appointments
+def create_demo_appointments(db: Session, company: Company, contact_cards: list[ContactCard], leads: list[Lead], reps: list[SalesRep], performance_map: dict = None) -> list[Appointment]:
+    """Create demo appointments (upcoming and past) with performance variation."""
+    # Delete existing demo appointments (must delete recording_sessions first due to FK)
+    # Check if recording_sessions table exists
+    inspector = inspect(db.bind)
+    if "recording_sessions" in inspector.get_table_names():
+        db.query(RecordingSession).filter(RecordingSession.company_id == company.id).delete(synchronize_session=False)
     existing_appointments = db.query(Appointment).filter(Appointment.company_id == company.id).all()
     for apt in existing_appointments:
         db.delete(apt)
@@ -548,9 +620,12 @@ def create_demo_appointments(db: Session, company: Company, contact_cards: list[
     # Create appointments for ~5 contacts
     selected_contacts = random.sample(contact_cards, min(5, len(contact_cards)))
     
+    performance_map = performance_map or {}
+    
     for i, contact_card_obj in enumerate(selected_contacts):
         lead_obj = leads[contact_cards.index(contact_card_obj)] if contact_card_obj in contact_cards else None
         rep = reps[random.randint(0, len(reps) - 1)] if reps else None
+        is_rep_high_performing = performance_map.get(rep.user_id, True) if rep else True
         
         # Mix of upcoming and past appointments
         if i < 3:
@@ -568,6 +643,13 @@ def create_demo_appointments(db: Session, company: Company, contact_cards: list[
         
         scheduled_end = scheduled_start + timedelta(hours=1)
         
+        # Performance-based outcomes: high-performing reps win more
+        if status == "completed":
+            win_prob = 0.75 if is_rep_high_performing else 0.35
+            outcome = "won" if random.random() < win_prob else "lost"
+        else:
+            outcome = "pending"
+        
         apt = Appointment(
             id=str(uuid4()),
             company_id=company.id,
@@ -577,15 +659,13 @@ def create_demo_appointments(db: Session, company: Company, contact_cards: list[
             scheduled_start=scheduled_start,
             scheduled_end=scheduled_end,
             status=status,
-            outcome="won" if status == "completed" and random.choice([True, False]) else (
-                "lost" if status == "completed" else "pending"
-            ),
+            outcome=outcome,
             location=contact_card_obj.address,
             geo_lat=random.uniform(39.7, 39.9),
             geo_lng=random.uniform(-89.7, -89.5),
             service_type=random.choice(["Roofing", "HVAC", "Solar"]),
             notes=f"Demo appointment notes for {contact_card_obj.first_name} {contact_card_obj.last_name}",
-            deal_size=random.uniform(8000, 35000) if status == "completed" else None,
+            deal_size=random.uniform(12000, 45000) if outcome == "won" else (random.uniform(8000, 20000) if status == "completed" else None),
             material_type=random.choice(["Asphalt", "Metal", "Tile"]) if random.choice([True, False]) else None,
             financing_type=random.choice(["Cash", "Financing", "Lease"]) if random.choice([True, False]) else None,
             arrival_at=scheduled_start + timedelta(minutes=5) if status == "completed" else None,
@@ -763,15 +843,493 @@ def create_demo_message_threads(db: Session, company: Company, contact_cards: li
     return threads
 
 
+def get_or_create_demo_sales_rep_user(db: Session, company: Company) -> User:
+    """Get or create the demo Sales Rep user."""
+    demo_rep_user = db.query(User).filter(User.id == DEMO_SALES_REP_USER_ID).first()
+    
+    if not demo_rep_user:
+        demo_rep_user = User(
+            id=DEMO_SALES_REP_USER_ID,
+            email=DEMO_SALES_REP_EMAIL,
+            username=DEMO_SALES_REP_USERNAME,
+            name="Sales Rep Demo",
+            role="sales_rep",
+            company_id=company.id,
+        )
+        db.add(demo_rep_user)
+        db.commit()
+        db.refresh(demo_rep_user)
+        print(f"✓ Created demo Sales Rep user: {DEMO_SALES_REP_EMAIL} ({DEMO_SALES_REP_USER_ID})")
+    else:
+        # Update existing user
+        demo_rep_user.email = DEMO_SALES_REP_EMAIL
+        demo_rep_user.username = DEMO_SALES_REP_USERNAME
+        demo_rep_user.name = "Sales Rep Demo"
+        demo_rep_user.role = "sales_rep"
+        demo_rep_user.company_id = company.id
+        db.commit()
+        print(f"✓ Using existing demo Sales Rep user: {DEMO_SALES_REP_EMAIL} ({DEMO_SALES_REP_USER_ID})")
+    
+    # Ensure SalesRep profile exists
+    rep_profile = db.query(SalesRep).filter(SalesRep.user_id == DEMO_SALES_REP_USER_ID).first()
+    if not rep_profile:
+        rep_profile = SalesRep(
+            user_id=demo_rep_user.id,
+            company_id=company.id,
+            recording_mode="normal",
+            allow_location_tracking=True,
+            allow_recording=True,
+        )
+        db.add(rep_profile)
+        db.commit()
+        print(f"✓ Created SalesRep profile for {DEMO_SALES_REP_EMAIL}")
+    
+    return demo_rep_user
+
+
+def get_or_create_demo_manager_user(db: Session, company: Company) -> User:
+    """Get or create the demo Manager/Executive user."""
+    demo_manager_user = db.query(User).filter(User.id == DEMO_MANAGER_USER_ID).first()
+    
+    if not demo_manager_user:
+        demo_manager_user = User(
+            id=DEMO_MANAGER_USER_ID,
+            email=DEMO_MANAGER_EMAIL,
+            username=DEMO_MANAGER_USERNAME,
+            name="Manager Demo",
+            role="manager",
+            company_id=company.id,
+        )
+        db.add(demo_manager_user)
+        db.commit()
+        db.refresh(demo_manager_user)
+        print(f"✓ Created demo Manager user: {DEMO_MANAGER_EMAIL} ({DEMO_MANAGER_USER_ID})")
+    else:
+        # Update existing user
+        demo_manager_user.email = DEMO_MANAGER_EMAIL
+        demo_manager_user.username = DEMO_MANAGER_USERNAME
+        demo_manager_user.name = "Manager Demo"
+        demo_manager_user.role = "manager"
+        demo_manager_user.company_id = company.id
+        db.commit()
+        print(f"✓ Using existing demo Manager user: {DEMO_MANAGER_EMAIL} ({DEMO_MANAGER_USER_ID})")
+    
+    # Ensure SalesManager profile exists
+    manager_profile = db.query(SalesManager).filter(SalesManager.user_id == DEMO_MANAGER_USER_ID).first()
+    if not manager_profile:
+        manager_profile = SalesManager(
+            user_id=demo_manager_user.id,
+            company_id=company.id,
+        )
+        db.add(manager_profile)
+        db.commit()
+        print(f"✓ Created SalesManager profile for {DEMO_MANAGER_EMAIL}")
+    
+    return demo_manager_user
+
+
+def create_demo_rep_shifts(db: Session, company: Company, sales_rep_user: User) -> list[RepShift]:
+    """Create demo rep shifts for the Sales Rep (past 2 weeks)."""
+    # Check if rep_shifts table exists
+    inspector = inspect(db.bind)
+    if "rep_shifts" not in inspector.get_table_names():
+        print("ℹ️ 'rep_shifts' table not found; skipping rep shift seeding.")
+        return []
+    
+    # Delete existing shifts for this rep
+    existing_shifts = db.query(RepShift).filter(
+        RepShift.rep_id == sales_rep_user.id,
+        RepShift.company_id == company.id
+    ).all()
+    for shift in existing_shifts:
+        db.delete(shift)
+    db.commit()
+    
+    shifts = []
+    today = datetime.utcnow().date()
+    
+    # Create shifts for past 14 days (workdays only, Mon-Fri)
+    for day_offset in range(14, 0, -1):
+        shift_date = today - timedelta(days=day_offset)
+        # Skip weekends (5 = Saturday, 6 = Sunday)
+        if shift_date.weekday() >= 5:
+            continue
+        
+        # Determine shift status based on day
+        if day_offset <= 2:
+            # Recent days: active or completed
+            status = random.choice([ShiftStatus.ACTIVE, ShiftStatus.COMPLETED])
+            clock_in_at = datetime.combine(shift_date, datetime.min.time().replace(hour=7, minute=random.randint(0, 30)))
+            clock_out_at = None
+            if status == ShiftStatus.COMPLETED:
+                clock_out_at = clock_in_at + timedelta(hours=random.randint(8, 10))
+        elif day_offset <= 7:
+            # Past week: mostly completed, some skipped
+            if random.random() < 0.15:  # 15% chance of skipped
+                status = ShiftStatus.SKIPPED
+                clock_in_at = None
+                clock_out_at = None
+            else:
+                status = ShiftStatus.COMPLETED
+                clock_in_at = datetime.combine(shift_date, datetime.min.time().replace(hour=7, minute=random.randint(0, 30)))
+                clock_out_at = clock_in_at + timedelta(hours=random.randint(8, 10))
+        else:
+            # Older days: completed
+            status = ShiftStatus.COMPLETED
+            clock_in_at = datetime.combine(shift_date, datetime.min.time().replace(hour=7, minute=random.randint(0, 30)))
+            clock_out_at = clock_in_at + timedelta(hours=random.randint(8, 10))
+        
+        shift = RepShift(
+            id=str(uuid4()),
+            rep_id=sales_rep_user.id,
+            company_id=company.id,
+            shift_date=shift_date,
+            clock_in_at=clock_in_at,
+            clock_out_at=clock_out_at,
+            scheduled_start=time(7, 0),
+            scheduled_end=time(17, 0),
+            status=status,
+            notes=None if status != ShiftStatus.SKIPPED else "Demo skipped shift",
+            created_at=clock_in_at if clock_in_at else datetime.combine(shift_date, datetime.min.time()),
+            updated_at=clock_out_at if clock_out_at else (clock_in_at if clock_in_at else datetime.combine(shift_date, datetime.min.time())),
+        )
+        db.add(shift)
+        shifts.append(shift)
+    
+    db.commit()
+    print(f"✓ Created {len(shifts)} demo rep shifts for Sales Rep")
+    return shifts
+
+
+def create_demo_sales_rep_appointments(db: Session, company: Company, sales_rep_user: User, contact_cards: list[ContactCard], leads: list[Lead]) -> list[Appointment]:
+    """Create demo appointments assigned to the Sales Rep (high-performing scenario)."""
+    # Delete existing appointments for this rep
+    existing_appointments = db.query(Appointment).filter(
+        Appointment.assigned_rep_id == sales_rep_user.id,
+        Appointment.company_id == company.id
+    ).all()
+    for apt in existing_appointments:
+        db.delete(apt)
+    db.commit()
+    
+    appointments = []
+    # Create 10 appointments for the Sales Rep (high-performing: more appointments, better outcomes)
+    selected_contacts = random.sample(contact_cards, min(10, len(contact_cards)))
+    
+    for i, contact_card_obj in enumerate(selected_contacts):
+        lead_obj = leads[contact_cards.index(contact_card_obj)] if contact_card_obj in contact_cards else None
+        
+        # High-performing rep: 70% completed with wins, 20% upcoming, 10% no-show/cancelled
+        if i < 7:
+            # Completed appointments (mostly won)
+            scheduled_start = datetime.utcnow() - timedelta(days=random.randint(1, 20), hours=random.randint(9, 17))
+            status = "completed"
+            outcome = "won" if random.random() < 0.75 else "lost"  # 75% win rate (high-performing)
+        elif i < 9:
+            # Upcoming appointments
+            scheduled_start = datetime.utcnow() + timedelta(days=random.randint(1, 7), hours=random.randint(9, 17))
+            status = "scheduled"
+            outcome = "pending"
+        else:
+            # Past no-show or cancelled
+            scheduled_start = datetime.utcnow() - timedelta(days=random.randint(1, 14), hours=random.randint(9, 17))
+            status = random.choice(["no_show", "cancelled"])
+            outcome = "lost" if status == "no_show" else "pending"
+        
+        scheduled_end = scheduled_start + timedelta(hours=1)
+        
+        apt = Appointment(
+            id=str(uuid4()),
+            company_id=company.id,
+            lead_id=lead_obj.id if lead_obj else None,
+            contact_card_id=contact_card_obj.id,
+            assigned_rep_id=sales_rep_user.id,
+            scheduled_start=scheduled_start,
+            scheduled_end=scheduled_end,
+            status=status,
+            outcome=outcome,
+            location=contact_card_obj.address,
+            geo_lat=random.uniform(39.7, 39.9),
+            geo_lng=random.uniform(-89.7, -89.5),
+            service_type=random.choice(["Roofing", "HVAC", "Solar"]),
+            notes=f"Demo appointment for {contact_card_obj.first_name} {contact_card_obj.last_name}",
+            deal_size=random.uniform(12000, 45000) if outcome == "won" else None,
+            material_type=random.choice(["Asphalt", "Metal", "Tile"]) if random.choice([True, False]) else None,
+            financing_type=random.choice(["Cash", "Financing", "Lease"]) if random.choice([True, False]) else None,
+            arrival_at=scheduled_start + timedelta(minutes=5) if status == "completed" else None,
+            departure_at=scheduled_end if status == "completed" else None,
+            on_site_duration=random.randint(60, 120) if status == "completed" else None,
+            created_at=scheduled_start - timedelta(days=random.randint(1, 14)),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(apt)
+        appointments.append(apt)
+    
+    db.commit()
+    print(f"✓ Created {len(appointments)} demo appointments for Sales Rep (high-performing profile)")
+    return appointments
+
+
+def create_demo_recording_sessions(db: Session, company: Company, sales_rep_user: User, appointments: list[Appointment], shifts: list[RepShift]) -> list[RecordingSession]:
+    """Create demo recording sessions for Sales Rep appointments."""
+    # Check if recording_sessions table exists
+    inspector = inspect(db.bind)
+    if "recording_sessions" not in inspector.get_table_names():
+        print("ℹ️ 'recording_sessions' table not found; skipping recording session seeding.")
+        return []
+    
+    # Delete existing recording sessions for this rep
+    existing_sessions = db.query(RecordingSession).filter(
+        RecordingSession.rep_id == sales_rep_user.id,
+        RecordingSession.company_id == company.id
+    ).all()
+    for session in existing_sessions:
+        db.delete(session)
+    db.commit()
+    
+    sessions = []
+    # Create recording sessions for completed appointments
+    completed_appointments = [apt for apt in appointments if apt.status == "completed"]
+    sessions_to_create = random.sample(completed_appointments, min(5, len(completed_appointments)))
+    
+    for apt in sessions_to_create:
+        # Find a shift that matches the appointment date
+        apt_date = apt.scheduled_start.date()
+        matching_shift = next((s for s in shifts if s.shift_date == apt_date and s.status == ShiftStatus.COMPLETED), None)
+        
+        started_at = apt.scheduled_start - timedelta(minutes=5)
+        ended_at = apt.scheduled_end + timedelta(minutes=5)
+        duration = (ended_at - started_at).total_seconds()
+        
+        session = RecordingSession(
+            id=str(uuid4()),
+            company_id=company.id,
+            rep_id=sales_rep_user.id,
+            appointment_id=apt.id,
+            shift_id=matching_shift.id if matching_shift else None,
+            mode=RecordingMode.NORMAL,
+            audio_storage_mode=AudioStorageMode.PERSISTENT,
+            started_at=started_at,
+            ended_at=ended_at,
+            start_lat=apt.geo_lat,
+            start_lng=apt.geo_lng,
+            end_lat=apt.geo_lat,
+            end_lng=apt.geo_lng,
+            geofence_radius_start=200.0,
+            geofence_radius_stop=500.0,
+            audio_url=f"https://demo-storage.s3.amazonaws.com/recordings/{apt.id}.mp3",
+            audio_duration_seconds=duration,
+            audio_size_bytes=random.randint(5000000, 15000000),  # 5-15 MB
+            transcription_status=TranscriptionStatus.COMPLETED,
+            analysis_status=AnalysisStatus.COMPLETED,
+            shunya_asr_job_id=f"uwc-asr-{apt.id}",
+            shunya_analysis_job_id=f"uwc-analysis-{apt.id}",
+            created_at=started_at,
+            updated_at=ended_at,
+        )
+        db.add(session)
+        sessions.append(session)
+    
+    db.commit()
+    print(f"✓ Created {len(sessions)} demo recording sessions for Sales Rep")
+    return sessions
+
+
+def create_demo_sales_rep_calls(db: Session, company: Company, sales_rep_user: User, contact_cards: list[ContactCard], leads: list[Lead], is_high_performing: bool = True) -> list[Call]:
+    """Create demo calls assigned to the Sales Rep (high or low performing scenario)."""
+    # Delete existing calls for this rep
+    existing_calls = db.query(Call).filter(
+        Call.assigned_rep_id == sales_rep_user.id,
+        Call.company_id == company.id
+    ).all()
+    for call_obj in existing_calls:
+        db.delete(call_obj)
+    db.commit()
+    
+    calls = []
+    # High-performing: 15 calls, low-performing: 8 calls
+    num_calls = 15 if is_high_performing else 8
+    selected_contacts = random.sample(contact_cards, min(num_calls, len(contact_cards)))
+    
+    for i, contact_card_obj in enumerate(selected_contacts):
+        lead_obj = leads[contact_cards.index(contact_card_obj)] if contact_card_obj in contact_cards else None
+        
+        call_time = datetime.utcnow() - timedelta(days=random.randint(0, 30), hours=random.randint(9, 17))
+        
+        # High-performing: 80% booked, 60% bought; Low-performing: 40% booked, 20% bought
+        booked_prob = 0.8 if is_high_performing else 0.4
+        bought_prob = 0.6 if is_high_performing else 0.2
+        
+        direction = random.choice(["inbound", "outbound"])
+        duration = random.randint(120, 600) if is_high_performing else random.randint(60, 300)  # Longer calls for high-performers
+        missed = False
+        
+        booked = random.random() < booked_prob
+        bought = booked and random.random() < bought_prob
+        
+        call_obj = Call(
+            call_id=None,  # Auto-increment
+            company_id=company.id,
+            contact_card_id=contact_card_obj.id,
+            lead_id=lead_obj.id if lead_obj else None,
+            assigned_rep_id=sales_rep_user.id,
+            phone_number=contact_card_obj.primary_phone,
+            name=f"{contact_card_obj.first_name} {contact_card_obj.last_name}",
+            missed_call=missed,
+            transcript=f"Demo transcript for {'high-performing' if is_high_performing else 'low-performing'} rep call {i+1}. Customer: 'I'm interested in getting a quote.' Rep: 'Great! I'd be happy to help. When would be a good time for an estimate?'" if not missed else None,
+            status="completed" if not missed else "missed",
+            last_call_duration=duration,
+            last_call_timestamp=call_time.isoformat(),
+            booked=booked,
+            bought=bought,
+            price_if_bought=random.uniform(15000, 50000) if bought else None,
+            created_at=call_time,
+            updated_at=call_time,
+        )
+        db.add(call_obj)
+        calls.append(call_obj)
+    
+    db.commit()
+    db.flush()  # Get call_ids assigned
+    print(f"✓ Created {len(calls)} demo calls for Sales Rep ({'high-performing' if is_high_performing else 'low-performing'} profile)")
+    return calls
+
+
+def create_demo_missed_call_queue_entries(db: Session, company: Company, calls: list[Call]) -> list[MissedCallQueue]:
+    """
+    Create demo missed call queue entries from existing calls.
+    Creates entries with various statuses to populate metrics.
+    """
+    print("📞 Creating missed call queue entries...")
+    
+    # Filter for missed calls or create some from existing calls
+    missed_calls = [c for c in calls if c.missed_call]
+    
+    # If we don't have enough missed calls, create some from regular calls
+    if len(missed_calls) < 10:
+        # Take some regular calls and mark them as missed for queue purposes
+        regular_calls = [c for c in calls if not c.missed_call][:15]
+        missed_calls.extend(regular_calls)
+    
+    # Ensure we have SLA settings
+    sla_settings = db.query(MissedCallSLA).filter_by(company_id=company.id).first()
+    if not sla_settings:
+        sla_settings = MissedCallSLA(
+            company_id=company.id,
+            response_time_hours=2,
+            escalation_time_hours=48,
+            max_retries=3
+        )
+        db.add(sla_settings)
+        db.commit()
+    
+    queue_entries = []
+    now = datetime.utcnow()
+    
+    # Status distribution for realistic metrics
+    status_distribution = [
+        (MissedCallStatus.QUEUED, 5),
+        (MissedCallStatus.PROCESSING, 3),
+        (MissedCallStatus.AI_RESCUED_PENDING, 4),
+        (MissedCallStatus.RECOVERED, 8),
+        (MissedCallStatus.ESCALATED, 4),
+        (MissedCallStatus.FAILED, 2),
+        (MissedCallStatus.EXPIRED, 1),
+    ]
+    
+    entry_index = 0
+    for status, count in status_distribution:
+        for i in range(count):
+            if entry_index >= len(missed_calls):
+                break
+            
+            call_obj = missed_calls[entry_index]
+            entry_index += 1
+            
+            # Determine priority based on customer type
+            if call_obj.lead_id:
+                lead_obj = db.query(Lead).filter_by(id=call_obj.lead_id).first()
+                if lead_obj and lead_obj.status == "new":
+                    priority = MissedCallPriority.HIGH
+                else:
+                    priority = MissedCallPriority.MEDIUM
+            else:
+                priority = MissedCallPriority.MEDIUM
+            
+            # Calculate deadlines
+            created_time = call_obj.created_at if call_obj.created_at else now - timedelta(days=random.randint(0, 7))
+            sla_deadline = created_time + timedelta(hours=sla_settings.response_time_hours)
+            escalation_deadline = created_time + timedelta(hours=sla_settings.escalation_time_hours)
+            
+            # Set processed_at for recovered entries (needed for metrics)
+            processed_at = None
+            if status == MissedCallStatus.RECOVERED:
+                # Processed within 1-3 hours of creation
+                processed_at = created_time + timedelta(hours=random.uniform(1, 3))
+            
+            # Set retry count based on status
+            retry_count = 0
+            if status in [MissedCallStatus.PROCESSING, MissedCallStatus.AI_RESCUED_PENDING]:
+                retry_count = random.randint(1, 2)
+            elif status == MissedCallStatus.RECOVERED:
+                retry_count = random.randint(1, 3)
+            elif status == MissedCallStatus.FAILED:
+                retry_count = sla_settings.max_retries
+            
+            # Determine customer type
+            customer_type = "new" if not call_obj.lead_id else "existing"
+            
+            queue_entry = MissedCallQueue(
+                call_id=call_obj.call_id,
+                customer_phone=call_obj.phone_number,
+                company_id=company.id,
+                status=status,
+                priority=priority,
+                sla_deadline=sla_deadline,
+                escalation_deadline=escalation_deadline,
+                retry_count=retry_count,
+                max_retries=sla_settings.max_retries,
+                customer_type=customer_type,
+                lead_value=random.uniform(5000, 30000) if call_obj.lead_id else None,
+                conversation_context=json.dumps({
+                    "initial_missed_call": True,
+                    "customer_type": customer_type,
+                    "priority": priority.value,
+                    "call_id": call_obj.call_id
+                }),
+                processed_at=processed_at,
+                created_at=created_time,
+                updated_at=created_time,
+            )
+            
+            # Set additional fields based on status
+            if status == MissedCallStatus.AI_RESCUED_PENDING:
+                queue_entry.ai_rescue_attempted = True
+                queue_entry.next_attempt_at = now + timedelta(hours=random.randint(2, 6))
+            elif status == MissedCallStatus.RECOVERED:
+                queue_entry.ai_rescue_attempted = True
+                queue_entry.customer_responded = True
+                queue_entry.recovery_method = random.choice(["sms", "call"])
+            elif status == MissedCallStatus.ESCALATED:
+                queue_entry.escalated_at = created_time + timedelta(hours=random.randint(24, 48))
+            
+            db.add(queue_entry)
+            queue_entries.append(queue_entry)
+    
+    db.commit()
+    print(f"✓ Created {len(queue_entries)} missed call queue entries")
+    return queue_entries
+
+
 def seed_demo_data(db: Session):
-    """Main function to seed all demo data."""
-    print("🌱 Seeding demo data for CSR dashboard...\n")
+    """Main function to seed all demo data for CSR, Sales Rep, and Executive platforms."""
+    print("🌱 Seeding demo data for all platforms (CSR, Sales Rep, Executive)...\n")
     
     # 1. Create or get demo company
     company = get_or_create_demo_company(db)
     
     # 2. Create or get demo CSR user
-    user = get_or_create_demo_user(db, company)
+    csr_user = get_or_create_demo_user(db, company)
     
     # 3. Create contact cards
     contact_cards = create_demo_contact_cards(db, company)
@@ -779,10 +1337,10 @@ def seed_demo_data(db: Session):
     # 4. Create leads
     leads = create_demo_leads(db, company, contact_cards)
     
-    # 5. Create sales reps
-    reps = create_demo_sales_reps(db, company)
+    # 5. Create generic sales reps (for CSR dashboard)
+    generic_reps, rep_performance_map = create_demo_sales_reps(db, company)
     
-    # 6. Create calls
+    # 6. Create calls (CSR dashboard data)
     calls = create_demo_calls(db, company, contact_cards, leads)
     
     # 7. Create call transcripts
@@ -791,33 +1349,88 @@ def seed_demo_data(db: Session):
     # 8. Create call analyses
     analyses = create_demo_call_analyses(db, company, calls)
     
-    # 9. Create appointments
-    appointments = create_demo_appointments(db, company, contact_cards, leads, reps)
+    # 9. Create appointments (CSR dashboard)
+    appointments = create_demo_appointments(db, company, contact_cards, leads, generic_reps, rep_performance_map)
     
     # 10. Create tasks
-    tasks = create_demo_tasks(db, company, contact_cards, leads, appointments, calls, user)
+    tasks = create_demo_tasks(db, company, contact_cards, leads, appointments, calls, csr_user)
     
     # 11. Create message threads
     message_threads = create_demo_message_threads(db, company, contact_cards, calls)
+    
+    # 12. Create or get demo Sales Rep user
+    print("\n📱 Creating Sales Rep platform demo data...")
+    sales_rep_user = get_or_create_demo_sales_rep_user(db, company)
+    
+    # 13. Create rep shifts for Sales Rep
+    rep_shifts = create_demo_rep_shifts(db, company, sales_rep_user)
+    
+    # 14. Create appointments assigned to Sales Rep (high-performing)
+    sales_rep_appointments = create_demo_sales_rep_appointments(db, company, sales_rep_user, contact_cards, leads)
+    
+    # 15. Create recording sessions for Sales Rep
+    recording_sessions = create_demo_recording_sessions(db, company, sales_rep_user, sales_rep_appointments, rep_shifts)
+    
+    # 16. Create calls assigned to Sales Rep (high-performing)
+    sales_rep_calls = create_demo_sales_rep_calls(db, company, sales_rep_user, contact_cards, leads, is_high_performing=True)
+    
+    # 16b. Create calls for generic reps (high and low performing)
+    generic_rep_calls = []
+    for rep in generic_reps:
+        is_high_perf = rep_performance_map.get(rep.user_id, True)
+        # Get the User object from the SalesRep
+        rep_user = db.query(User).filter(User.id == rep.user_id).first()
+        if rep_user:
+            rep_calls = create_demo_sales_rep_calls(db, company, rep_user, contact_cards, leads, is_high_performing=is_high_perf)
+            generic_rep_calls.extend(rep_calls)
+    
+    # 17. Create or get demo Manager/Executive user
+    print("\n👔 Creating Executive/Manager platform demo data...")
+    manager_user = get_or_create_demo_manager_user(db, company)
+    
+    # Note: Manager sees all company data (calls, leads, appointments, etc.) - no additional seeding needed
+    # The existing company-wide data is sufficient for executive dashboard
+    
+    # 18. Create missed call queue entries (for CSR and Manager dashboards)
+    print("\n📞 Creating missed call queue entries...")
+    all_calls = calls + sales_rep_calls + generic_rep_calls
+    missed_call_queue_entries = create_demo_missed_call_queue_entries(db, company, all_calls)
     
     print("\n✅ Demo data seeded successfully!")
     print(f"\n📋 Demo Credentials:")
     print(f"   Company ID (Clerk Org): {DEMO_CLERK_ORG_ID}")
     print(f"   Company Name: {DEMO_COMPANY_NAME}")
-    print(f"   User ID (Clerk User): {DEMO_CLERK_USER_ID}")
-    print(f"   Email: {DEMO_USER_EMAIL}")
-    print(f"   Role: CSR")
+    print(f"\n   👤 CSR User:")
+    print(f"      User ID: {DEMO_CLERK_USER_ID}")
+    print(f"      Email: {DEMO_USER_EMAIL}")
+    print(f"      Role: CSR")
+    print(f"\n   📱 Sales Rep User:")
+    print(f"      User ID: {DEMO_SALES_REP_USER_ID}")
+    print(f"      Email: {DEMO_SALES_REP_EMAIL}")
+    print(f"      Role: Sales Rep (High-Performing)")
+    print(f"\n   👔 Manager/Executive User:")
+    print(f"      User ID: {DEMO_MANAGER_USER_ID}")
+    print(f"      Email: {DEMO_MANAGER_EMAIL}")
+    print(f"      Role: Manager")
     print(f"\n📊 Data Created:")
     print(f"   - {len(contact_cards)} contact cards")
     print(f"   - {len(leads)} leads")
-    print(f"   - {len(calls)} calls")
+    print(f"   - {len(calls)} calls (CSR dashboard)")
+    print(f"   - {len(sales_rep_calls)} calls (Sales Rep demo user assigned)")
+    print(f"   - {len(generic_rep_calls)} calls (Generic reps assigned)")
     print(f"   - {len(transcripts)} call transcripts")
     print(f"   - {len(analyses)} call analyses")
-    print(f"   - {len(reps)} sales reps")
-    print(f"   - {len(appointments)} appointments")
+    print(f"   - {len(generic_reps)} generic sales reps")
+    print(f"   - {len(appointments)} appointments (CSR dashboard)")
+    print(f"   - {len(sales_rep_appointments)} appointments (Sales Rep assigned)")
+    print(f"   - {len(rep_shifts)} rep shifts")
+    print(f"   - {len(recording_sessions)} recording sessions")
     print(f"   - {len(tasks)} tasks")
     print(f"   - {len(message_threads)} SMS messages")
-    print(f"\n💡 You can now log in as {DEMO_USER_EMAIL} and see the demo data in the CSR dashboard!")
+    print(f"\n💡 You can now log in as:")
+    print(f"   - {DEMO_USER_EMAIL} for CSR dashboard")
+    print(f"   - {DEMO_SALES_REP_EMAIL} for Sales Rep mobile app")
+    print(f"   - {DEMO_MANAGER_EMAIL} for Executive/Manager dashboard")
 
 
 if __name__ == "__main__":
