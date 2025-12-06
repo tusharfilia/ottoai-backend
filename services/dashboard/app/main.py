@@ -53,9 +53,37 @@ from app.middleware.rate_limiter import RateLimitMiddleware
 register_error_handlers(app)
 
 # CORS middleware configuration
+# Separate exact origins from regex patterns (wildcards)
+exact_origins = []
+origin_regex_patterns = []
+
+for origin in settings.ALLOWED_ORIGINS:
+    origin = origin.strip()
+    if not origin:
+        continue
+    
+    # Check if it's a wildcard pattern (contains *)
+    if '*' in origin:
+        # Convert wildcard to regex pattern
+        # Escape dots and convert * to .*
+        pattern = origin.replace('.', r'\.').replace('*', '.*')
+        origin_regex_patterns.append(pattern)
+    else:
+        exact_origins.append(origin)
+
+# Combine regex patterns into a single regex if multiple exist
+origin_regex = None
+if origin_regex_patterns:
+    if len(origin_regex_patterns) == 1:
+        origin_regex = origin_regex_patterns[0]
+    else:
+        # Combine multiple patterns with OR
+        origin_regex = f"({'|'.join(origin_regex_patterns)})"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=exact_origins if exact_origins else None,
+    allow_origin_regex=origin_regex if origin_regex else None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
