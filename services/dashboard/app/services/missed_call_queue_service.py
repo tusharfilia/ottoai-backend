@@ -692,19 +692,25 @@ If you're not interested, just reply "STOP" and we'll remove you from our list. 
             # Add date filters if provided
             if start_date:
                 try:
-                    start_dt = dt.fromisoformat(start_date)
+                    # Handle both ISO format (with T) and YYYY-MM-DD format
+                    if 'T' in start_date:
+                        start_dt = dt.fromisoformat(start_date.replace('Z', '+00:00'))
+                    else:
+                        start_dt = dt.strptime(start_date, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
                     base_filter.append(MissedCallQueue.created_at >= start_dt)
-                except ValueError:
-                    logger.warning(f"Invalid start_date format: {start_date}")
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"Invalid start_date format: {start_date}, error: {str(e)}")
             
             if end_date:
                 try:
-                    end_dt = dt.fromisoformat(end_date)
-                    # Include the entire end date (end of day)
-                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                    # Handle both ISO format (with T) and YYYY-MM-DD format
+                    if 'T' in end_date:
+                        end_dt = dt.fromisoformat(end_date.replace('Z', '+00:00'))
+                    else:
+                        end_dt = dt.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
                     base_filter.append(MissedCallQueue.created_at <= end_dt)
-                except ValueError:
-                    logger.warning(f"Invalid end_date format: {end_date}")
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"Invalid end_date format: {end_date}, error: {str(e)}")
             
             # Recovery rate
             total_processed = db.query(MissedCallQueue).filter(

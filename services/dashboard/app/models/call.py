@@ -1,9 +1,10 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text, Time
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text, Time, Enum
 from sqlalchemy.orm import relationship
 
 from ..database import Base
+from app.models.enums import CallType
 
 #931980e753b188c6856ffaed726ef00a
 
@@ -18,6 +19,12 @@ class Call(Base):
     quote_date = Column(DateTime)
     booked = Column(Boolean, default=False)
     phone_number = Column(String)
+    # Canonical CallType enum (aligned with Shunya enums-inventory-by-service.md)
+    call_type = Column(
+        Enum(CallType, native_enum=False, name="call_type"),
+        nullable=True,
+        comment="Canonical call type: sales_call, csr_call"
+    )
     transcript = Column(String)
     homeowner_followup_transcript = Column(String)
     in_person_transcript = Column(Text, nullable=True)  # New field for in-person meeting transcripts
@@ -25,6 +32,9 @@ class Call(Base):
     mobile_calls_count = Column(Integer, default=0)  # Track number of mobile calls
     mobile_texts_count = Column(Integer, default=0)  # Track number of text messages
     assigned_rep_id = Column(String, ForeignKey("sales_reps.user_id"))
+    # CSR ownership: the user_id of the CSR who handled this call
+    # TODO: Backfill this field from existing call records where possible
+    owner_id = Column(String, nullable=True, index=True, comment="User ID of the CSR who handled this call")
     bought = Column(Boolean, default=False)
     price_if_bought = Column(Float)
     company_id = Column(String, ForeignKey("companies.id"), nullable=True)

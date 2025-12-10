@@ -3,9 +3,19 @@ Shunya Response Normalizer
 
 Provides defensive parsing and normalization for Shunya API responses.
 Handles variations in response format and provides consistent output structure.
+Maps Shunya enum values to Otto canonical enums.
 """
 from typing import Dict, Any, List, Optional
 from app.core.pii_masking import PIISafeLogger
+from app.models.enums import (
+    normalize_booking_status,
+    normalize_action_type,
+    normalize_appointment_type,
+    normalize_call_type,
+    normalize_meeting_phase,
+    normalize_missed_opportunity_type,
+    compute_call_outcome_category,
+)
 
 logger = PIISafeLogger(__name__)
 
@@ -73,6 +83,8 @@ class ShunyaResponseNormalizer:
         if not isinstance(qualification, dict):
             return {
                 "qualification_status": None,
+                "booking_status": None,  # Add booking_status normalization
+                "call_outcome_category": None,  # Computed field
                 "bant_scores": {},
                 "overall_score": None,
                 "confidence_score": None,
@@ -86,8 +98,17 @@ class ShunyaResponseNormalizer:
         if isinstance(status, str):
             status = status.lower().strip()
         
+        # Normalize booking_status to canonical enum
+        booking_status_raw = qualification.get("booking_status") or qualification.get("appointment_status")
+        booking_status = normalize_booking_status(booking_status_raw)
+        
+        # Compute call_outcome_category from qualification_status + booking_status
+        call_outcome_category = compute_call_outcome_category(status, booking_status)
+        
         return {
             "qualification_status": status,
+            "booking_status": booking_status,  # Canonical enum value
+            "call_outcome_category": call_outcome_category,  # Computed enum
             "bant_scores": qualification.get("bant_scores") or {},
             "overall_score": ShunyaResponseNormalizer._normalize_float(qualification.get("overall_score")),
             "confidence_score": ShunyaResponseNormalizer._normalize_float(qualification.get("confidence_score")),
@@ -222,14 +243,24 @@ class ShunyaResponseNormalizer:
         normalized = []
         for action in actions:
             if isinstance(action, str):
+                # Normalize action type to canonical enum
+                action_type = normalize_action_type(action)
                 normalized.append({
                     "action": action,
+                    "action_type": action_type,  # Canonical enum value
                     "due_at": None,
                     "priority": "medium",
                 })
             elif isinstance(action, dict):
+                # Extract action text
+                action_text = action.get("action") or action.get("text") or action.get("description") or ""
+                # Normalize action_type to canonical enum
+                action_type_raw = action.get("action_type") or action.get("type") or action_text
+                action_type = normalize_action_type(action_type_raw)
+                
                 normalized.append({
-                    "action": action.get("action") or action.get("text") or action.get("description") or "",
+                    "action": action_text,
+                    "action_type": action_type,  # Canonical enum value
                     "due_at": action.get("due_at") or action.get("due_date"),
                     "priority": (action.get("priority") or "medium").lower(),
                 })
@@ -245,14 +276,24 @@ class ShunyaResponseNormalizer:
         normalized = []
         for opp in opps:
             if isinstance(opp, str):
+                # Normalize missed opportunity type to canonical enum
+                opp_type = normalize_missed_opportunity_type(opp)
                 normalized.append({
                     "opportunity": opp,
+                    "missed_opportunity_type": opp_type,  # Canonical enum value
                     "severity": "medium",
                     "timestamp": None,
                 })
             elif isinstance(opp, dict):
+                # Extract opportunity text
+                opp_text = opp.get("opportunity") or opp.get("text") or opp.get("description") or ""
+                # Normalize missed_opportunity_type to canonical enum
+                opp_type_raw = opp.get("missed_opportunity_type") or opp.get("type") or opp_text
+                opp_type = normalize_missed_opportunity_type(opp_type_raw)
+                
                 normalized.append({
-                    "opportunity": opp.get("opportunity") or opp.get("text") or opp.get("description") or "",
+                    "opportunity": opp_text,
+                    "missed_opportunity_type": opp_type,  # Canonical enum value
                     "severity": (opp.get("severity") or "medium").lower(),
                     "timestamp": opp.get("timestamp"),
                 })
@@ -399,6 +440,7 @@ class ShunyaResponseNormalizer:
                 "duration": part1_raw.get("duration"),
                 "content": part1_raw.get("content") or part1_raw.get("summary") or "",
                 "key_points": part1_raw.get("key_points") or part1_raw.get("key_topics") or [],
+                "phase": normalize_meeting_phase(part1_raw.get("phase") or "rapport_agenda"),  # Canonical enum
             },
             "part2": {
                 "start_time": part2_raw.get("start_time"),
@@ -406,13 +448,17 @@ class ShunyaResponseNormalizer:
                 "duration": part2_raw.get("duration"),
                 "content": part2_raw.get("content") or part2_raw.get("summary") or "",
                 "key_points": part2_raw.get("key_points") or part2_raw.get("key_topics") or [],
+                "phase": normalize_meeting_phase(part2_raw.get("phase") or "proposal_close"),  # Canonical enum
             },
             "segmentation_confidence": ShunyaResponseNormalizer._normalize_float(response.get("segmentation_confidence")),
             "transition_point": response.get("transition_point"),
             "transition_indicators": response.get("transition_indicators") or [],
             "meeting_structure_score": response.get("meeting_structure_score"),
-            "call_type": response.get("call_type"),
+            "call_type": normalize_call_type(response.get("call_type")),  # Normalize to canonical enum
             "created_at": response.get("created_at") or response.get("analyzed_at"),
+            # Normalize meeting phases in part1/part2
+            "part1_phase": normalize_meeting_phase(part1_raw.get("phase") or "rapport_agenda"),
+            "part2_phase": normalize_meeting_phase(part2_raw.get("phase") or "proposal_close"),
             # Legacy fields (for backward compatibility)
             "outcome": (response.get("outcome") or "").lower() if response.get("outcome") else None,
         }
@@ -420,5 +466,7 @@ class ShunyaResponseNormalizer:
 
 # Global normalizer instance
 shunya_normalizer = ShunyaResponseNormalizer()
+
+
 
 

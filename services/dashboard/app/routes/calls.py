@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from app.database import get_db
 from app.models import call, company
+from app.models.call_analysis import CallAnalysis
 from app.core.tenant import get_tenant_id
 from app.middleware.rbac import require_role
 from sqlalchemy.orm import Session
@@ -10,6 +11,9 @@ from sqlalchemy import and_
 from typing import List, Optional
 from ..services.manager_notification_service import send_unassigned_appointment_notification
 from app.services.domain_entities import ensure_contact_card_and_lead
+from app.services.uwc_client import get_uwc_client
+from app.schemas.responses import APIResponse
+from uuid import uuid4
 import logging
 import traceback
 
@@ -285,4 +289,220 @@ async def update_call_status(request: Request, background_tasks: BackgroundTasks
         "status": "success",
         "message": f"Call {call_record.call_id} status updated successfully",
         "geofence_removed": should_remove_geofence
-    } 
+    }
+
+
+@router.get("/api/v1/calls/{call_id}/followup-recommendations", response_model=APIResponse[dict])
+@require_role("csr", "manager")
+async def get_followup_recommendations(
+    request: Request,
+    call_id: int,
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get follow-up recommendations for a call.
+    
+    Returns AI-generated follow-up recommendations from Shunya analysis,
+    including action items, next steps, and priority actions.
+    
+    RBAC: csr, manager
+    """
+    # Verify call exists and belongs to tenant
+    call_record = db.query(call.Call)\
+        .filter(
+            call.Call.call_id == call_id,
+            call.Call.company_id == tenant_id
+        )\
+        .first()
+    
+    if not call_record:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Get CallAnalysis for this call
+    call_analysis = db.query(CallAnalysis)\
+        .filter(
+            CallAnalysis.call_id == call_id,
+            CallAnalysis.tenant_id == tenant_id
+        )\
+        .order_by(CallAnalysis.analyzed_at.desc())\
+        .first()
+    
+    if not call_analysis:
+        # Return empty structure if no analysis exists yet
+        return APIResponse(
+            success=True,
+            data={
+                "recommendations": [],
+                "next_steps": [],
+                "priority_actions": [],
+                "confidence_score": None,
+                "status": "no_analysis"
+            }
+        )
+    
+    # Return follow-up recommendations (or empty structure if not available)
+    followup_recommendations = call_analysis.followup_recommendations or {
+        "recommendations": [],
+        "next_steps": [],
+        "priority_actions": [],
+        "confidence_score": None
+    }
+    
+    return APIResponse(
+        success=True,
+        data=followup_recommendations
+    )
+
+
+@router.post("/api/v1/compliance/run/{call_id}", response_model=APIResponse[dict])
+@require_role("csr", "manager")
+async def run_compliance_check(
+    request: Request,
+    call_id: int,
+    force: bool = False,  # If True, re-run even if compliance already exists
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Run a new SOP compliance check for a call.
+    
+    This endpoint triggers a fresh compliance check via Shunya's POST endpoint
+    and updates the CallAnalysis record with the results.
+    
+    RBAC: csr, manager
+    
+    Args:
+        call_id: Call ID to run compliance check for
+        force: If True, re-run compliance check even if results already exist
+    """
+    from app.services.uwc_client import get_uwc_client
+    from uuid import uuid4
+    
+    # Verify call exists and belongs to tenant
+    call_record = db.query(call.Call)\
+        .filter(
+            call.Call.call_id == call_id,
+            call.Call.company_id == tenant_id
+        )\
+        .first()
+    
+    if not call_record:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Get or create CallAnalysis for this call
+    call_analysis = db.query(CallAnalysis)\
+        .filter(
+            CallAnalysis.call_id == call_id,
+            CallAnalysis.tenant_id == tenant_id
+        )\
+        .order_by(CallAnalysis.analyzed_at.desc())\
+        .first()
+    
+    if not call_analysis:
+        raise HTTPException(
+            status_code=404,
+            detail="Call analysis not found. Please run call analysis first."
+        )
+    
+    # Idempotency check: if compliance already exists and force=False, return existing
+    if not force and (
+        call_analysis.compliance_violations is not None or
+        call_analysis.compliance_positive_behaviors is not None or
+        call_analysis.compliance_recommendations is not None
+    ):
+        # Return existing compliance data
+        return APIResponse(
+            success=True,
+            data={
+                "compliance_score": call_analysis.sop_compliance_score,
+                "stages_followed": call_analysis.sop_stages_completed or [],
+                "stages_missed": call_analysis.sop_stages_missed or [],
+                "violations": call_analysis.compliance_violations or [],
+                "positive_behaviors": call_analysis.compliance_positive_behaviors or [],
+                "recommendations": call_analysis.compliance_recommendations or [],
+                "status": "existing"
+            }
+        )
+    
+    # Run compliance check via Shunya
+    try:
+        uwc_client = get_uwc_client()
+        
+        # Map user role to Shunya target_role
+        user_role = getattr(request.state, 'user_role', 'csr')
+        target_role = uwc_client._map_otto_role_to_shunya_target_role(user_role)
+        
+        # Run compliance check
+        compliance_request_id = str(uuid4())
+        compliance_result = await uwc_client.run_compliance_check(
+            call_id=call_id,
+            company_id=tenant_id,
+            request_id=compliance_request_id,
+            target_role=target_role
+        )
+        
+        # Update CallAnalysis with compliance results
+        if compliance_result:
+            # Update compliance score if provided
+            if compliance_result.get("compliance_score") is not None:
+                call_analysis.sop_compliance_score = compliance_result["compliance_score"]
+            
+            # Update stages (merge with existing if any)
+            if compliance_result.get("stages_followed"):
+                existing_stages = call_analysis.sop_stages_completed or []
+                merged_stages = list(set(existing_stages + compliance_result["stages_followed"]))
+                call_analysis.sop_stages_completed = merged_stages
+            
+            if compliance_result.get("stages_missed"):
+                existing_missed = call_analysis.sop_stages_missed or []
+                merged_missed = list(set(existing_missed + compliance_result["stages_missed"]))
+                call_analysis.sop_stages_missed = merged_missed
+            
+            # Store detailed compliance data
+            call_analysis.compliance_violations = compliance_result.get("violations", [])
+            call_analysis.compliance_positive_behaviors = compliance_result.get("positive_behaviors", [])
+            call_analysis.compliance_recommendations = compliance_result.get("recommendations", [])
+            
+            db.commit()
+            
+            logger.info(
+                f"Compliance check completed for call {call_id}",
+                extra={
+                    "call_id": call_id,
+                    "compliance_score": compliance_result.get("compliance_score"),
+                    "violations_count": len(compliance_result.get("violations", []))
+                }
+            )
+            
+            return APIResponse(
+                success=True,
+                data={
+                    "compliance_score": compliance_result.get("compliance_score"),
+                    "stages_followed": compliance_result.get("stages_followed", []),
+                    "stages_missed": compliance_result.get("stages_missed", []),
+                    "violations": compliance_result.get("violations", []),
+                    "positive_behaviors": compliance_result.get("positive_behaviors", []),
+                    "recommendations": compliance_result.get("recommendations", []),
+                    "status": "completed"
+                }
+            )
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Compliance check returned empty result"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to run compliance check for call {call_id}: {str(e)}",
+            extra={"call_id": call_id},
+            exc_info=True
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to run compliance check: {str(e)}"
+        ) 

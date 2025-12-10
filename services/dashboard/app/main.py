@@ -3,7 +3,7 @@ from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
-from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics, post_call_analysis, contact_cards, leads, appointments, rep_shifts, recording_sessions, tasks, key_signals, message_threads, rep_settings, wins_feed, reviews
+from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics, post_call_analysis, contact_cards, leads, appointments, rep_shifts, recording_sessions, tasks, key_signals, message_threads, rep_settings, wins_feed, reviews, personal_otto, metrics_kpis
 from .routes import webhooks as webhooks_module
 from .routes.mobile_routes import mobile_router
 from .routes.webhook_handlers.uwc import router as uwc_webhooks
@@ -108,9 +108,11 @@ app.include_router(shunya_webhook)  # Shunya job webhook handlers
 app.include_router(rag.router)  # RAG/Ask Otto endpoints
 app.include_router(analysis.router)  # Call analysis endpoints
 app.include_router(followups.router)  # Follow-up drafts endpoints
-app.include_router(clones.router)  # Personal clone training endpoints
+app.include_router(clones.router)  # Personal clone training endpoints (legacy)
+app.include_router(personal_otto.router)  # Personal Otto (AI clone) endpoints (Shunya integration)
 app.include_router(gdpr.router)  # GDPR compliance endpoints
 app.include_router(metrics.router)  # Prometheus metrics for Grafana
+app.include_router(metrics_kpis.router)  # KPI metrics endpoints (CSR, Sales Rep, Executive)
 app.include_router(company.router)
 app.include_router(user.router)
 app.include_router(backend.router)

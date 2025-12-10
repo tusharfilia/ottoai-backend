@@ -134,6 +134,33 @@ class UWCClient:
             f"version={self.version}, staging={self.use_staging}"
         )
     
+    @staticmethod
+    def _map_otto_role_to_shunya_target_role(otto_role: str) -> str:
+        """
+        Map Otto's internal role to Shunya's target_role value.
+        
+        Args:
+            otto_role: Otto role string ("csr", "sales_rep", "manager", "exec")
+        
+        Returns:
+            Shunya target_role string ("customer_rep", "sales_rep", "sales_manager", "admin")
+        
+        Valid Shunya target roles per Integration-Status.md:
+        - "sales_rep" - Sales representative
+        - "customer_rep" - Customer service representative
+        - "sales_manager" - Sales manager
+        - "admin" - Administrator
+        """
+        role_mapping = {
+            "csr": "customer_rep",
+            "sales_rep": "sales_rep",
+            "rep": "sales_rep",  # Alias
+            "manager": "sales_manager",
+            "exec": "admin",
+            "executive": "admin",  # Alias
+        }
+        return role_mapping.get(otto_role.lower(), "sales_rep")  # Default to sales_rep
+    
     def is_available(self) -> bool:
         """Check if UWC is properly configured and available."""
         return self.base_url is not None and self.api_key is not None
@@ -184,7 +211,8 @@ class UWCClient:
         self,
         company_id: str,
         request_id: str,
-        payload: Optional[dict] = None
+        payload: Optional[dict] = None,
+        target_role: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Generate request headers for UWC API calls.
@@ -193,6 +221,8 @@ class UWCClient:
             company_id: Tenant/company ID
             request_id: Correlation ID for request tracing
             payload: Optional request payload for signature generation
+            target_role: Optional target role for Shunya (e.g., "sales_rep", "customer_rep", "sales_manager", "admin")
+                         If provided, adds X-Target-Role header
         
         Returns:
             Dictionary of HTTP headers
@@ -209,6 +239,10 @@ class UWCClient:
             "X-UWC-Timestamp": timestamp,
         }
         
+        # Add X-Target-Role header if provided (per Shunya contract)
+        if target_role:
+            headers["X-Target-Role"] = target_role
+        
         # Add HMAC signature if payload provided
         if payload and self.hmac_secret:
             signature = self._generate_signature(payload, timestamp)
@@ -223,7 +257,9 @@ class UWCClient:
         company_id: str,
         request_id: str,
         payload: Optional[dict] = None,
-        retry_count: int = 0
+        retry_count: int = 0,
+        target_role: Optional[str] = None,
+        target_role_query: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Make HTTP request to UWC API with retry logic.
@@ -235,6 +271,8 @@ class UWCClient:
             request_id: Correlation ID
             payload: Optional request payload
             retry_count: Current retry attempt number
+            target_role: Optional target role for X-Target-Role header (e.g., "sales_rep", "customer_rep")
+            target_role_query: Optional target role for ?target_role= query parameter (for SOP/compliance endpoints)
         
         Returns:
             Response JSON as dictionary
@@ -250,8 +288,13 @@ class UWCClient:
             logger.warning(f"UWC not available - skipping {method} {endpoint}")
             raise UWCClientError("UWC is not configured or available")
         
+        # Append target_role query parameter if provided
         url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers(company_id, request_id, payload)
+        if target_role_query:
+            separator = "&" if "?" in endpoint else "?"
+            url = f"{url}{separator}target_role={target_role_query}"
+        
+        headers = self._get_headers(company_id, request_id, payload, target_role=target_role)
         # Idempotency for mutating requests
         if method in ("POST", "PUT", "DELETE"):
             headers.setdefault("Idempotency-Key", request_id)
@@ -633,21 +676,31 @@ class UWCClient:
         request_id: str,
         query: str,
         context: Dict[str, Any],
-        options: Optional[Dict[str, Any]] = None
+        options: Optional[Dict[str, Any]] = None,
+        target_role: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Query RAG system for contextual information.
+        
+        ⚠️ **LEGACY METHOD** - This method uses the legacy `/api/v1/search/` endpoint.
+        For new code, use `query_ask_otto()` which calls the canonical `/api/v1/ask-otto/query` endpoint.
         
         Args:
             company_id: Tenant/company ID
             request_id: Correlation ID
             query: Natural language query
-            context: Context dict with tenant_id, rep_id, meeting_id
+            context: Context dict with tenant_id, rep_id, meeting_id, user_role
             options: Optional RAG options (max_results, similarity_threshold, etc.)
+            target_role: Optional target role for Shunya (e.g., "sales_rep", "customer_rep")
+                        If not provided, will attempt to extract from context["user_role"]
         
         Returns:
             RAG query response with results and metadata
         """
+        # Extract target_role from context if not explicitly provided
+        if not target_role and context and "user_role" in context:
+            target_role = self._map_otto_role_to_shunya_target_role(context["user_role"])
+        
         payload = {
             "query": query,
             "document_types": options.get("document_types") if options else None,
@@ -660,8 +713,245 @@ class UWCClient:
             "/api/v1/search/",
             company_id,
             request_id,
-            payload
+            payload,
+            target_role=target_role
         )
+    
+    async def query_ask_otto(
+        self,
+        *,
+        company_id: str,
+        request_id: str,
+        question: str,
+        conversation_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        scope: Optional[Dict[str, Any]] = None,
+        target_role: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Query Ask Otto using Shunya's canonical endpoint.
+        
+        This method calls the canonical `/api/v1/ask-otto/query` endpoint with the proper payload format
+        as specified in Shunya's contract (webhook-and-other-payload-ask-otto.md).
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            question: Natural language question (required)
+            conversation_id: Optional conversation ID for multi-turn conversations
+            context: Optional context dict (e.g., tenant_id, user_role, filters)
+            scope: Optional scope dict for data filtering
+            target_role: Optional target role for Shunya (e.g., "sales_rep", "customer_rep")
+                        If not provided, will attempt to extract from context["user_role"]
+        
+        Returns:
+            Shunya's Ask Otto response with answer, sources, confidence, metadata, etc.
+            Response format per webhook-and-other-payload-ask-otto.md:
+            {
+                "success": true,
+                "query_id": "...",
+                "conversation_id": "...",
+                "question": "...",
+                "answer": "...",
+                "confidence": 0.7,
+                "sources": [...],
+                "suggested_follow_ups": [...],
+                "metadata": {...}
+            }
+        """
+        # Extract target_role from context if not explicitly provided
+        if not target_role and context and "user_role" in context:
+            target_role = self._map_otto_role_to_shunya_target_role(context["user_role"])
+        
+        # Build canonical Ask Otto payload per Shunya contract
+        payload: Dict[str, Any] = {
+            "question": question
+        }
+        
+        if conversation_id:
+            payload["conversation_id"] = conversation_id
+        
+        if context:
+            payload["context"] = context
+        
+        if scope:
+            payload["scope"] = scope
+        
+        return await self._make_request(
+            "POST",
+            "/api/v1/ask-otto/query",
+            company_id,
+            request_id,
+            payload,
+            target_role=target_role
+        )
+    
+    async def get_followup_recommendations(
+        self,
+        *,
+        call_id: int,
+        company_id: str,
+        request_id: str,
+        target_role: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get follow-up recommendations for a call from Shunya.
+        
+        This method calls Shunya's canonical endpoint for follow-up recommendations
+        as specified in Integration-Status.md:
+        POST /api/v1/analysis/followup-recommendations/{call_id}
+        
+        Args:
+            call_id: Call ID to get recommendations for
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            target_role: Optional target role for Shunya (e.g., "sales_rep", "customer_rep")
+                        If not provided, will default based on context
+        
+        Returns:
+            Normalized follow-up recommendations dict:
+            {
+                "recommendations": [...],  # List of recommendation objects
+                "next_steps": [...],       # List of next step actions
+                "priority_actions": [...], # List of high-priority actions
+                "confidence_score": float|null  # Overall confidence in recommendations
+            }
+        """
+        endpoint = f"/api/v1/analysis/followup-recommendations/{call_id}"
+        
+        # Shunya endpoint expects POST with empty body (call_id is in path)
+        payload = {}
+        
+        try:
+            response = await self._make_request(
+                "POST",
+                endpoint,
+                company_id,
+                request_id,
+                payload,
+                target_role=target_role
+            )
+            
+            # Normalize Shunya response to Otto format
+            # Defensive parsing: handle various response shapes
+            normalized = {
+                "recommendations": [],
+                "next_steps": [],
+                "priority_actions": [],
+                "confidence_score": None
+            }
+            
+            # Extract recommendations (handle various field names)
+            if isinstance(response, dict):
+                # Try common field names
+                recommendations = (
+                    response.get("recommendations") or
+                    response.get("followup_recommendations") or
+                    response.get("recommendation_list") or
+                    []
+                )
+                
+                # Normalize recommendation objects
+                if isinstance(recommendations, list):
+                    normalized["recommendations"] = [
+                        self._normalize_recommendation_item(rec)
+                        for rec in recommendations
+                        if rec is not None
+                    ]
+                
+                # Extract next_steps
+                next_steps = (
+                    response.get("next_steps") or
+                    response.get("next_actions") or
+                    response.get("suggested_actions") or
+                    []
+                )
+                if isinstance(next_steps, list):
+                    normalized["next_steps"] = [
+                        self._normalize_recommendation_item(step)
+                        for step in next_steps
+                        if step is not None
+                    ]
+                
+                # Extract priority_actions
+                priority_actions = (
+                    response.get("priority_actions") or
+                    response.get("high_priority_actions") or
+                    response.get("urgent_actions") or
+                    []
+                )
+                if isinstance(priority_actions, list):
+                    normalized["priority_actions"] = [
+                        self._normalize_recommendation_item(action)
+                        for action in priority_actions
+                        if action is not None
+                    ]
+                
+                # Extract confidence_score
+                confidence = (
+                    response.get("confidence_score") or
+                    response.get("confidence") or
+                    response.get("overall_confidence")
+                )
+                if confidence is not None:
+                    try:
+                        normalized["confidence_score"] = float(confidence)
+                    except (ValueError, TypeError):
+                        normalized["confidence_score"] = None
+            
+            return normalized
+            
+        except Exception as e:
+            logger.warning(
+                f"Failed to get follow-up recommendations for call {call_id}: {str(e)}",
+                extra={"call_id": call_id, "company_id": company_id}
+            )
+            # Return empty structure on error (non-blocking)
+            return {
+                "recommendations": [],
+                "next_steps": [],
+                "priority_actions": [],
+                "confidence_score": None
+            }
+    
+    @staticmethod
+    def _normalize_recommendation_item(item: Any) -> Dict[str, Any]:
+        """
+        Normalize a single recommendation/action item to consistent format.
+        
+        Args:
+            item: Raw recommendation item (dict, string, or other)
+        
+        Returns:
+            Normalized dict with: action, description, priority, timing, reasoning
+        """
+        if isinstance(item, dict):
+            # Already a dict, ensure required fields exist
+            return {
+                "action": item.get("action") or item.get("title") or item.get("type") or "",
+                "description": item.get("description") or item.get("text") or item.get("summary") or "",
+                "priority": item.get("priority") or item.get("urgency") or "medium",
+                "timing": item.get("timing") or item.get("when") or item.get("suggested_time") or None,
+                "reasoning": item.get("reasoning") or item.get("reason") or item.get("rationale") or None
+            }
+        elif isinstance(item, str):
+            # String item, convert to dict
+            return {
+                "action": item,
+                "description": "",
+                "priority": "medium",
+                "timing": None,
+                "reasoning": None
+            }
+        else:
+            # Unknown type, return minimal structure
+            return {
+                "action": str(item) if item is not None else "",
+                "description": "",
+                "priority": "medium",
+                "timing": None,
+                "reasoning": None
+            }
     
     # Document Indexing (legacy - kept for backward compatibility)
     async def index_documents(
@@ -711,7 +1001,8 @@ class UWCClient:
         file_url: str,
         document_type: str,
         filename: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        target_role: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Ingest a document to UWC for processing.
@@ -724,6 +1015,9 @@ class UWCClient:
             document_type: Type of document (sop, training, reference)
             filename: Original filename
             metadata: Optional document metadata
+            target_role: Optional target role for ?target_role= query parameter
+                        (Shunya requires this for SOP/document ingestion per contract)
+                        If not provided, Shunya may reject the request
         
         Returns:
             Ingestion response with document_id, status, job_id
@@ -741,7 +1035,8 @@ class UWCClient:
             "/api/v1/ingestion/documents/upload",
             company_id,
             request_id,
-            payload
+            payload,
+            target_role_query=target_role  # Use query param per Shunya contract for ingestion endpoints
         )
     
     async def get_document_status(
@@ -971,7 +1266,10 @@ class UWCClient:
         call_id: int
     ) -> Dict[str, Any]:
         """
-        Check SOP compliance for a call.
+        Check SOP compliance for a call (GET - retrieves existing results).
+        
+        ⚠️ **LEGACY METHOD** - This method uses the GET endpoint to retrieve existing compliance results.
+        For running new compliance checks, use `run_compliance_check()` which calls the POST endpoint.
         
         Args:
             company_id: Tenant/company ID
@@ -987,6 +1285,514 @@ class UWCClient:
             company_id,
             request_id
         )
+    
+    async def run_compliance_check(
+        self,
+        *,
+        call_id: int,
+        company_id: str,
+        request_id: str,
+        target_role: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Run a new SOP compliance check for a call from Shunya.
+        
+        This method calls Shunya's canonical POST endpoint for compliance checks
+        as specified in Integration-Status.md:
+        POST /api/v1/sop/compliance/check?target_role={role}
+        
+        Args:
+            call_id: Call ID to run compliance check for
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            target_role: Target role for Shunya (e.g., "sales_rep", "customer_rep")
+                        REQUIRED per Shunya contract - must be provided as query parameter
+        
+        Returns:
+            Normalized compliance check response:
+            {
+                "compliance_score": float|null,
+                "stages_followed": list[str],
+                "stages_missed": list[str],
+                "violations": list[dict],
+                "positive_behaviors": list[dict],
+                "recommendations": list[dict]
+            }
+        """
+        endpoint = f"/api/v1/sop/compliance/check"
+        
+        # Shunya contract requires ?target_role= query parameter (not just header)
+        # Send empty JSON body {} unless contract requires otherwise
+        payload = {}
+        
+        try:
+            response = await self._make_request(
+                "POST",
+                endpoint,
+                company_id,
+                request_id,
+                payload,
+                target_role=target_role,  # Also set X-Target-Role header if provided
+                target_role_query=target_role  # REQUIRED: Set ?target_role= query param
+            )
+            
+            # Normalize Shunya response to Otto format
+            # Defensive parsing: handle various response shapes
+            normalized = {
+                "compliance_score": None,
+                "stages_followed": [],
+                "stages_missed": [],
+                "violations": [],
+                "positive_behaviors": [],
+                "recommendations": []
+            }
+            
+            if isinstance(response, dict):
+                # Extract compliance_score (handle various field names)
+                compliance_score = (
+                    response.get("compliance_score") or
+                    response.get("score") or
+                    response.get("overall_score") or
+                    response.get("compliance_rating")
+                )
+                if compliance_score is not None:
+                    try:
+                        normalized["compliance_score"] = float(compliance_score)
+                    except (ValueError, TypeError):
+                        normalized["compliance_score"] = None
+                
+                # Extract stages_followed (handle various field names)
+                stages_followed = (
+                    response.get("stages_followed") or
+                    response.get("stages_completed") or
+                    response.get("completed_stages") or
+                    response.get("followed_stages") or
+                    []
+                )
+                if isinstance(stages_followed, list):
+                    normalized["stages_followed"] = [
+                        str(stage) for stage in stages_followed
+                        if stage is not None
+                    ]
+                
+                # Extract stages_missed (handle various field names)
+                stages_missed = (
+                    response.get("stages_missed") or
+                    response.get("missed_stages") or
+                    response.get("incomplete_stages") or
+                    []
+                )
+                if isinstance(stages_missed, list):
+                    normalized["stages_missed"] = [
+                        str(stage) for stage in stages_missed
+                        if stage is not None
+                    ]
+                
+                # Extract violations (handle various field names)
+                violations = (
+                    response.get("violations") or
+                    response.get("compliance_violations") or
+                    response.get("violation_list") or
+                    []
+                )
+                if isinstance(violations, list):
+                    normalized["violations"] = [
+                        self._normalize_compliance_item(violation)
+                        for violation in violations
+                        if violation is not None
+                    ]
+                
+                # Extract positive_behaviors (handle various field names)
+                positive_behaviors = (
+                    response.get("positive_behaviors") or
+                    response.get("behaviors") or
+                    response.get("positive_actions") or
+                    response.get("strengths") or
+                    []
+                )
+                if isinstance(positive_behaviors, list):
+                    normalized["positive_behaviors"] = [
+                        self._normalize_compliance_item(behavior)
+                        for behavior in positive_behaviors
+                        if behavior is not None
+                    ]
+                
+                # Extract recommendations (handle various field names)
+                recommendations = (
+                    response.get("recommendations") or
+                    response.get("compliance_recommendations") or
+                    response.get("improvement_recommendations") or
+                    response.get("suggestions") or
+                    []
+                )
+                if isinstance(recommendations, list):
+                    normalized["recommendations"] = [
+                        self._normalize_compliance_item(rec)
+                        for rec in recommendations
+                        if rec is not None
+                    ]
+            
+            return normalized
+            
+        except Exception as e:
+            logger.warning(
+                f"Failed to run compliance check for call {call_id}: {str(e)}",
+                extra={"call_id": call_id, "company_id": company_id}
+            )
+            # Return empty structure on error (non-blocking)
+            return {
+                "compliance_score": None,
+                "stages_followed": [],
+                "stages_missed": [],
+                "violations": [],
+                "positive_behaviors": [],
+                "recommendations": []
+            }
+    
+    @staticmethod
+    def _normalize_compliance_item(item: Any) -> Dict[str, Any]:
+        """
+        Normalize a single compliance item (violation, behavior, recommendation) to consistent format.
+        
+        Args:
+            item: Raw compliance item (dict, string, or other)
+        
+        Returns:
+            Normalized dict with: stage, type/behavior/recommendation, description, severity/priority, timestamp
+        """
+        if isinstance(item, dict):
+            # Already a dict, ensure required fields exist
+            return {
+                "stage": item.get("stage") or item.get("sop_stage") or item.get("phase") or None,
+                "type": item.get("type") or item.get("violation_type") or item.get("behavior") or item.get("recommendation_type") or "",
+                "description": item.get("description") or item.get("text") or item.get("message") or item.get("summary") or "",
+                "severity": item.get("severity") or item.get("priority") or item.get("urgency") or "medium",
+                "timestamp": item.get("timestamp") or item.get("time") or item.get("when") or None,
+                "reasoning": item.get("reasoning") or item.get("reason") or item.get("rationale") or None
+            }
+        elif isinstance(item, str):
+            # String item, convert to dict
+            return {
+                "stage": None,
+                "type": item,
+                "description": "",
+                "severity": "medium",
+                "timestamp": None,
+                "reasoning": None
+            }
+        else:
+            # Unknown type, return minimal structure
+            return {
+                "stage": None,
+                "type": str(item) if item is not None else "",
+                "description": "",
+                "severity": "medium",
+                "timestamp": None,
+                "reasoning": None
+            }
+    
+    # Personal Otto (AI Clones) - per Integration-Status.md
+    async def ingest_personal_otto_documents(
+        self,
+        *,
+        company_id: str,
+        request_id: str,
+        rep_id: str,
+        documents: List[Dict[str, Any]],
+        target_role: str = "sales_rep"  # REQUIRED per Shunya contract, default to sales_rep
+    ) -> Dict[str, Any]:
+        """
+        Ingest training documents for Personal Otto (AI clone) training.
+        
+        This method calls Shunya's canonical endpoint for Personal Otto document ingestion
+        as specified in Integration-Status.md:
+        POST /api/v1/personal-otto/ingest/training-documents
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            rep_id: Sales rep ID (user identifier)
+            documents: List of training documents with content and metadata
+            target_role: Target role for Shunya (REQUIRED per contract, defaults to "sales_rep")
+                        Must be "sales_rep" or "customer_rep" per Shunya contract
+        
+        Returns:
+            Ingestion response with job_id, status, document_ids
+        """
+        endpoint = "/api/v1/personal-otto/ingest/training-documents"
+        
+        payload = {
+            "rep_id": rep_id,
+            "documents": documents
+        }
+        
+        try:
+            # X-Target-Role header is REQUIRED per Shunya contract
+            response = await self._make_request(
+                "POST",
+                endpoint,
+                company_id,
+                request_id,
+                payload,
+                target_role=target_role  # REQUIRED: Set X-Target-Role header
+            )
+            
+            # Normalize response
+            normalized = {
+                "job_id": None,
+                "status": "pending",
+                "document_ids": [],
+                "message": None
+            }
+            
+            if isinstance(response, dict):
+                normalized["job_id"] = response.get("job_id") or response.get("task_id")
+                normalized["status"] = response.get("status", "pending")
+                normalized["document_ids"] = response.get("document_ids") or response.get("documents", [])
+                normalized["message"] = response.get("message") or response.get("status_message")
+            
+            return normalized
+            
+        except Exception as e:
+            logger.warning(
+                f"Failed to ingest Personal Otto documents for rep {rep_id}: {str(e)}",
+                extra={"rep_id": rep_id, "company_id": company_id}
+            )
+            # Return error structure (non-blocking)
+            return {
+                "job_id": None,
+                "status": "failed",
+                "document_ids": [],
+                "message": str(e)
+            }
+    
+    async def run_personal_otto_training(
+        self,
+        *,
+        company_id: str,
+        request_id: str,
+        rep_id: str,
+        target_role: str = "sales_rep",  # REQUIRED per Shunya contract, default to sales_rep
+        force_retrain: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Trigger Personal Otto (AI clone) training for a sales rep.
+        
+        This method calls Shunya's canonical endpoint for Personal Otto training
+        as specified in Integration-Status.md:
+        POST /api/v1/personal-otto/train
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            rep_id: Sales rep ID (user identifier)
+            target_role: Target role for Shunya (REQUIRED per contract, defaults to "sales_rep")
+                        Must be "sales_rep" or "customer_rep" per Shunya contract
+            force_retrain: If True, force retraining even if already trained
+        
+        Returns:
+            Training response with job_id, status, estimated_completion_time
+        """
+        endpoint = "/api/v1/personal-otto/train"
+        
+        payload = {
+            "rep_id": rep_id,
+            "force_retrain": force_retrain
+        }
+        
+        try:
+            # X-Target-Role header is REQUIRED per Shunya contract
+            response = await self._make_request(
+                "POST",
+                endpoint,
+                company_id,
+                request_id,
+                payload,
+                target_role=target_role  # REQUIRED: Set X-Target-Role header
+            )
+            
+            # Normalize response
+            normalized = {
+                "job_id": None,
+                "status": "pending",
+                "estimated_completion_time": None,
+                "message": None
+            }
+            
+            if isinstance(response, dict):
+                normalized["job_id"] = response.get("job_id") or response.get("task_id")
+                normalized["status"] = response.get("status", "pending")
+                normalized["estimated_completion_time"] = response.get("estimated_completion_time") or response.get("eta")
+                normalized["message"] = response.get("message") or response.get("status_message")
+            
+            return normalized
+            
+        except Exception as e:
+            logger.warning(
+                f"Failed to trigger Personal Otto training for rep {rep_id}: {str(e)}",
+                extra={"rep_id": rep_id, "company_id": company_id}
+            )
+            # Return error structure (non-blocking)
+            return {
+                "job_id": None,
+                "status": "failed",
+                "estimated_completion_time": None,
+                "message": str(e)
+            }
+    
+    async def get_personal_otto_status(
+        self,
+        *,
+        company_id: str,
+        request_id: str,
+        rep_id: str,
+        target_role: str = "sales_rep"  # REQUIRED per Shunya contract, default to sales_rep
+    ) -> Dict[str, Any]:
+        """
+        Get Personal Otto (AI clone) training status for a sales rep.
+        
+        This method calls Shunya's canonical endpoint for Personal Otto status
+        as specified in Integration-Status.md:
+        GET /api/v1/personal-otto/profile/status
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            rep_id: Sales rep ID (user identifier)
+            target_role: Target role for Shunya (REQUIRED per contract, defaults to "sales_rep")
+                        Must be "sales_rep" or "customer_rep" per Shunya contract
+        
+        Returns:
+            Status response with is_trained, training_status, last_trained_at, model_version
+        """
+        endpoint = f"/api/v1/personal-otto/profile/status?rep_id={rep_id}"
+        
+        try:
+            # X-Target-Role header is REQUIRED per Shunya contract
+            response = await self._make_request(
+                "GET",
+                endpoint,
+                company_id,
+                request_id,
+                None,  # GET request, no payload
+                target_role=target_role  # REQUIRED: Set X-Target-Role header
+            )
+            
+            # Normalize response
+            normalized = {
+                "rep_id": rep_id,
+                "is_trained": False,
+                "training_status": "not_started",
+                "last_trained_at": None,
+                "model_version": None,
+                "progress_percentage": None
+            }
+            
+            if isinstance(response, dict):
+                normalized["rep_id"] = response.get("rep_id", rep_id)
+                normalized["is_trained"] = response.get("is_trained", False)
+                normalized["training_status"] = (
+                    response.get("training_status") or
+                    response.get("status") or
+                    "not_started"
+                )
+                normalized["last_trained_at"] = response.get("last_trained_at") or response.get("last_trained")
+                normalized["model_version"] = response.get("model_version") or response.get("version")
+                normalized["progress_percentage"] = response.get("progress_percentage") or response.get("progress")
+            
+            return normalized
+            
+        except Exception as e:
+            logger.warning(
+                f"Failed to get Personal Otto status for rep {rep_id}: {str(e)}",
+                extra={"rep_id": rep_id, "company_id": company_id}
+            )
+            # Return default structure on error (non-blocking)
+            return {
+                "rep_id": rep_id,
+                "is_trained": False,
+                "training_status": "error",
+                "last_trained_at": None,
+                "model_version": None,
+                "progress_percentage": None
+            }
+    
+    async def get_personal_otto_profile(
+        self,
+        *,
+        company_id: str,
+        request_id: str,
+        rep_id: str,
+        target_role: str = "sales_rep"  # REQUIRED per Shunya contract, default to sales_rep
+    ) -> Dict[str, Any]:
+        """
+        Get Personal Otto (AI clone) profile for a sales rep.
+        
+        This method calls Shunya's canonical endpoint for Personal Otto profile
+        as specified in Integration-Status.md:
+        GET /api/v1/personal-otto/profile
+        
+        Args:
+            company_id: Tenant/company ID
+            request_id: Correlation ID
+            rep_id: Sales rep ID (user identifier)
+            target_role: Target role for Shunya (REQUIRED per contract, defaults to "sales_rep")
+                        Must be "sales_rep" or "customer_rep" per Shunya contract
+        
+        Returns:
+            Profile response with personality_traits, writing_style, communication_preferences, etc.
+        """
+        endpoint = f"/api/v1/personal-otto/profile?rep_id={rep_id}"
+        
+        try:
+            # X-Target-Role header is REQUIRED per Shunya contract
+            response = await self._make_request(
+                "GET",
+                endpoint,
+                company_id,
+                request_id,
+                None,  # GET request, no payload
+                target_role=target_role  # REQUIRED: Set X-Target-Role header
+            )
+            
+            # Normalize response
+            normalized = {
+                "rep_id": rep_id,
+                "personality_traits": [],
+                "writing_style": {},
+                "communication_preferences": {},
+                "sample_outputs": [],
+                "model_version": None
+            }
+            
+            if isinstance(response, dict):
+                normalized["rep_id"] = response.get("rep_id", rep_id)
+                normalized["personality_traits"] = response.get("personality_traits") or response.get("traits") or []
+                normalized["writing_style"] = response.get("writing_style") or response.get("style") or {}
+                normalized["communication_preferences"] = (
+                    response.get("communication_preferences") or
+                    response.get("preferences") or
+                    {}
+                )
+                normalized["sample_outputs"] = response.get("sample_outputs") or response.get("examples") or []
+                normalized["model_version"] = response.get("model_version") or response.get("version")
+            
+            return normalized
+            
+        except Exception as e:
+            logger.warning(
+                f"Failed to get Personal Otto profile for rep {rep_id}: {str(e)}",
+                extra={"rep_id": rep_id, "company_id": company_id}
+            )
+            # Return default structure on error (non-blocking)
+            return {
+                "rep_id": rep_id,
+                "personality_traits": [],
+                "writing_style": {},
+                "communication_preferences": {},
+                "sample_outputs": [],
+                "model_version": None
+            }
     
     # Call Analysis - Complete Analysis (per OpenAPI /api/v1/analysis/complete/{call_id})
     async def get_complete_analysis(

@@ -2,10 +2,17 @@
 Call Analysis model for storing AI coaching, objections, and sentiment analysis from UWC.
 Powers the coaching, objection tracking, and rehash scoring features.
 """
-from sqlalchemy import Column, String, Integer, Float, DateTime, ForeignKey, JSON, Index
+from sqlalchemy import Column, String, Integer, Float, DateTime, ForeignKey, JSON, Index, Enum
 from sqlalchemy.orm import relationship
 from ..database import Base
 from datetime import datetime
+from app.models.enums import (
+    BookingStatus,
+    CallType,
+    MeetingPhase,
+    MissedOpportunityType,
+    CallOutcomeCategory,
+)
 
 
 class CallAnalysis(Base):
@@ -67,6 +74,38 @@ class CallAnalysis(Base):
     
     sop_compliance_score = Column(Float, nullable=True)  # 0-10
     
+    # Compliance Details (from Shunya POST compliance check)
+    compliance_violations = Column(JSON, nullable=True)
+    # Format: [
+    #   {
+    #     "stage": "agenda",
+    #     "violation_type": "missed_step",
+    #     "description": "Did not set clear agenda",
+    #     "severity": "medium",
+    #     "timestamp": 120.5
+    #   }
+    # ]
+    
+    compliance_positive_behaviors = Column(JSON, nullable=True)
+    # Format: [
+    #   {
+    #     "stage": "connect",
+    #     "behavior": "active_listening",
+    #     "description": "Rep demonstrated active listening",
+    #     "timestamp": 45.2
+    #   }
+    # ]
+    
+    compliance_recommendations = Column(JSON, nullable=True)
+    # Format: [
+    #   {
+    #     "stage": "close",
+    #     "recommendation": "Ask for commitment earlier",
+    #     "priority": "high",
+    #     "reasoning": "Customer showed interest but no close attempt"
+    #   }
+    # ]
+    
     # Performance Metrics
     rehash_score = Column(Float, nullable=True)  # 0.0 to 10.0 (likelihood of recovery)
     talk_time_ratio = Column(Float, nullable=True)  # rep_talk_time / total_time (ideal: 0.3-0.4)
@@ -75,13 +114,47 @@ class CallAnalysis(Base):
     lead_quality = Column(String, nullable=True)  # "qualified", "unqualified", "hot", "warm", "cold"
     conversion_probability = Column(Float, nullable=True)  # 0-1
     
+    # Canonical Enums (aligned with Shunya enums-inventory-by-service.md)
+    booking_status = Column(
+        Enum(BookingStatus, native_enum=False, name="booking_status"),
+        nullable=True,
+        comment="Canonical booking status: booked, not_booked, service_not_offered"
+    )
+    call_type = Column(
+        Enum(CallType, native_enum=False, name="call_type"),
+        nullable=True,
+        comment="Canonical call type: sales_call, csr_call"
+    )
+    call_outcome_category = Column(
+        Enum(CallOutcomeCategory, native_enum=False, name="call_outcome_category"),
+        nullable=True,
+        comment="Computed from qualification_status + booking_status"
+    )
+    
     # Meeting Segmentation
     meeting_segments = Column(JSON, nullable=True)
     # Format: [
-    #   {"type": "rapport", "start": 0.0, "end": 120.5},
-    #   {"type": "agenda", "start": 120.5, "end": 180.0},
-    #   {"type": "proposal", "start": 180.0, "end": 600.0}
+    #   {"phase": "rapport_agenda", "start": 0.0, "end": 120.5},
+    #   {"phase": "proposal_close", "start": 120.5, "end": 600.0}
     # ]
+    # Note: phase values are canonical MeetingPhase enum values
+    
+    # Follow-up Recommendations (from Shunya)
+    followup_recommendations = Column(JSON, nullable=True)
+    # Format: {
+    #   "recommendations": [
+    #     {
+    #       "action": "Follow up with pricing details",
+    #       "description": "Customer expressed interest in pricing",
+    #       "priority": "high",
+    #       "timing": "2025-01-15T14:00:00Z",
+    #       "reasoning": "High rehash score indicates strong interest"
+    #     }
+    #   ],
+    #   "next_steps": [...],
+    #   "priority_actions": [...],
+    #   "confidence_score": 0.85
+    # }
     
     # UWC Tracking
     uwc_job_id = Column(String, index=True, unique=True, nullable=False)  # Correlation with UWC
@@ -120,11 +193,15 @@ class CallAnalysis(Base):
             "sop_stages_completed": self.sop_stages_completed,
             "sop_stages_missed": self.sop_stages_missed,
             "sop_compliance_score": self.sop_compliance_score,
+            "compliance_violations": self.compliance_violations,
+            "compliance_positive_behaviors": self.compliance_positive_behaviors,
+            "compliance_recommendations": self.compliance_recommendations,
             "rehash_score": self.rehash_score,
             "talk_time_ratio": self.talk_time_ratio,
             "lead_quality": self.lead_quality,
             "conversion_probability": self.conversion_probability,
             "meeting_segments": self.meeting_segments,
+            "followup_recommendations": self.followup_recommendations,
             "analyzed_at": self.analyzed_at.isoformat() if self.analyzed_at else None,
             "analysis_version": self.analysis_version
         }

@@ -6,6 +6,7 @@ from sqlalchemy import Column, DateTime, Enum, Float, ForeignKey, String, Text, 
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.models.enums import AppointmentType
 
 
 class AppointmentStatus(str, enum.Enum):
@@ -56,6 +57,12 @@ class Appointment(Base):
         Enum(AppointmentOutcome, native_enum=False, name="appointment_outcome"),
         nullable=False,
         default=AppointmentOutcome.PENDING,
+    )
+    # Canonical AppointmentType enum (aligned with Shunya enums-inventory-by-service.md)
+    appointment_type = Column(
+        Enum(AppointmentType, native_enum=False, name="appointment_type"),
+        nullable=True,
+        comment="Canonical appointment type: in-person, virtual, phone"
     )
 
     location = Column(String, nullable=True)  # Address string

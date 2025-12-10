@@ -133,31 +133,100 @@ async def query_ask_otto(
         answer = None
         citations_data = []
         confidence = 0.0
+        shunya_query_id = None  # Will be set if canonical endpoint returns it
         
         if settings.ENABLE_UWC_RAG and settings.UWC_BASE_URL:
             try:
                 logger.info(f"Attempting UWC RAG query for: {query.query}")
                 uwc_client = get_uwc_client()
-                uwc_result = await uwc_client.query_rag(
-                    company_id=tenant_id,
-                    request_id=request.state.trace_id,
-                    query=query.query,
-                    context=context,
-                    options={
-                        "max_results": query.max_results,
-                        "similarity_threshold": 0.7,
-                        "include_metadata": True
+                
+                # Map Otto role to Shunya target_role
+                # CSR → customer_rep
+                # Sales rep → sales_rep
+                # Manager/Exec → sales_manager (default for company-wide queries)
+                # NOTE: Currently cannot distinguish "Exec CSR tab" vs "Exec Sales tab" since both use same endpoint.
+                #       Both manager and exec roles map to sales_manager. Future enhancement: add query parameter
+                #       or separate endpoints to allow exec users to specify CSR vs Sales context.
+                target_role = uwc_client._map_otto_role_to_shunya_target_role(user_role)
+                
+                # Use canonical Ask Otto endpoint if feature flag enabled, otherwise use legacy
+                if settings.USE_CANONICAL_ASK_OTTO:
+                    # Canonical Ask Otto endpoint: /api/v1/ask-otto/query
+                    logger.info(f"Using canonical Ask Otto endpoint for query: {query.query}")
+                    
+                    # Build canonical Ask Otto payload
+                    ask_otto_context = {
+                        "tenant_id": tenant_id,
+                        "user_role": user_role
                     }
-                )
-                
-                answer = uwc_result.get("answer", "")
-                citations_data = uwc_result.get("citations", [])
-                confidence = uwc_result.get("confidence_score", 0.0)
-                
-                if answer and citations_data:
-                    logger.info(f"UWC RAG query successful for: {query.query}")
+                    if user_role == "sales_rep":
+                        ask_otto_context["user_id"] = user_id
+                    if user_role == "csr":
+                        ask_otto_context["exclude_rep_data"] = True
+                    
+                    # Add filters to context if provided
+                    if query.filters:
+                        ask_otto_context.update(query.filters)
+                    
+                    uwc_result = await uwc_client.query_ask_otto(
+                        company_id=tenant_id,
+                        request_id=request.state.trace_id,
+                        question=query.query,
+                        conversation_id=None,  # TODO: Support conversation_id from frontend if needed
+                        context=ask_otto_context,
+                        scope=None,  # TODO: Support scope from frontend if needed
+                        target_role=target_role
+                    )
+                    
+                    # Transform Shunya's canonical response to Otto's RAGQueryResponse format
+                    # Shunya response: { "answer": "...", "sources": [...], "confidence": 0.7, "query_id": "...", ... }
+                    # Otto format: { "answer": "...", "citations": [...], "confidence_score": 0.7, "query_id": "...", ... }
+                    answer = uwc_result.get("answer", "")
+                    shunya_sources = uwc_result.get("sources", [])
+                    confidence = uwc_result.get("confidence", 0.0)
+                    shunya_query_id = uwc_result.get("query_id")
+                    
+                    # Transform sources to citations format
+                    citations_data = []
+                    for source in shunya_sources:
+                        citation = {
+                            "doc_id": source.get("reference", ""),
+                            "filename": source.get("title"),
+                            "chunk_text": source.get("title", ""),  # Shunya sources don't have chunk_text, use title
+                            "similarity_score": source.get("confidence", 0.0),
+                            "call_id": None,  # Shunya sources don't include call_id
+                            "timestamp": None
+                        }
+                        citations_data.append(citation)
+                    
+                    if answer:
+                        logger.info(f"Canonical Ask Otto query successful for: {query.query}")
+                    else:
+                        raise Exception("Canonical Ask Otto returned empty answer")
                 else:
-                    raise Exception("UWC RAG returned empty response")
+                    # Legacy endpoint: /api/v1/search/
+                    logger.info(f"Using legacy RAG endpoint for query: {query.query}")
+                    uwc_result = await uwc_client.query_rag(
+                        company_id=tenant_id,
+                        request_id=request.state.trace_id,
+                        query=query.query,
+                        context=context,
+                        options={
+                            "max_results": query.max_results,
+                            "similarity_threshold": 0.7,
+                            "include_metadata": True
+                        },
+                        target_role=target_role
+                    )
+                    
+                    answer = uwc_result.get("answer", "")
+                    citations_data = uwc_result.get("citations", [])
+                    confidence = uwc_result.get("confidence_score", 0.0)
+                    
+                    if answer and citations_data:
+                        logger.info(f"Legacy UWC RAG query successful for: {query.query}")
+                    else:
+                        raise Exception("Legacy UWC RAG returned empty response")
                     
             except Exception as e:
                 logger.warning(f"UWC RAG failed for query '{query.query}', falling back to mock: {str(e)}")
@@ -188,7 +257,8 @@ async def query_ask_otto(
         ]
         
         # Log query in database for analytics
-        query_id = str(uuid.uuid4())
+        # Use query_id from Shunya response if available (canonical endpoint), otherwise generate new one
+        query_id = shunya_query_id if shunya_query_id else str(uuid.uuid4())
         rag_query_log = RAGQuery(
             id=query_id,
             tenant_id=tenant_id,
@@ -761,4 +831,6 @@ Based on your company's data, here are the key findings with citations from your
         "citations": citations,
         "confidence_score": 0.85
     }
+
+
 

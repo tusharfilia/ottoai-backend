@@ -385,3 +385,77 @@ class TestUWCClientErrorHandling:
                 {"data": "test"}
             )
 
+
+class TestAskOttoCanonical:
+    """Test canonical Ask Otto endpoint and payload format."""
+    
+    @pytest.mark.asyncio
+    async def test_query_ask_otto_canonical_payload(self, uwc_client):
+        """Test query_ask_otto builds canonical payload correctly and sets X-Target-Role."""
+        with patch.object(uwc_client, '_make_request', new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {
+                "success": True,
+                "query_id": "query_123",
+                "question": "test question",
+                "answer": "test answer",
+                "confidence": 0.85,
+                "sources": [
+                    {"reference": "ref_1", "title": "Source 1", "confidence": 0.9}
+                ]
+            }
+            
+            result = await uwc_client.query_ask_otto(
+                company_id="company_123",
+                request_id="request_123",
+                question="test question",
+                context={"tenant_id": "company_123", "user_role": "csr"},
+                target_role="customer_rep"
+            )
+            
+            assert result["answer"] == "test answer"
+            assert result["query_id"] == "query_123"
+            mock_request.assert_called_once()
+            
+            # Verify canonical endpoint is used
+            call_args = mock_request.call_args
+            assert call_args[0][1] == "/api/v1/ask-otto/query"  # endpoint
+            
+            # Verify canonical payload format
+            payload = call_args[0][4]  # payload is 5th positional arg
+            assert payload["question"] == "test question"
+            assert "context" in payload
+            assert payload["context"]["user_role"] == "csr"
+            
+            # Verify target_role is passed
+            assert call_args[1]["target_role"] == "customer_rep"
+    
+    def test_map_otto_role_to_shunya_target_role(self, uwc_client):
+        """Test role mapping from Otto roles to Shunya target roles."""
+        assert uwc_client._map_otto_role_to_shunya_target_role("csr") == "customer_rep"
+        assert uwc_client._map_otto_role_to_shunya_target_role("sales_rep") == "sales_rep"
+        assert uwc_client._map_otto_role_to_shunya_target_role("rep") == "sales_rep"  # Alias
+        assert uwc_client._map_otto_role_to_shunya_target_role("manager") == "sales_manager"
+        assert uwc_client._map_otto_role_to_shunya_target_role("exec") == "admin"
+        assert uwc_client._map_otto_role_to_shunya_target_role("executive") == "admin"  # Alias
+        assert uwc_client._map_otto_role_to_shunya_target_role("unknown") == "sales_rep"  # Default
+    
+    def test_get_headers_with_target_role(self, uwc_client):
+        """Test that _get_headers includes X-Target-Role when provided."""
+        headers = uwc_client._get_headers(
+            company_id="test_company",
+            request_id="test_request_123",
+            target_role="customer_rep"
+        )
+        
+        assert "X-Target-Role" in headers
+        assert headers["X-Target-Role"] == "customer_rep"
+    
+    def test_get_headers_without_target_role(self, uwc_client):
+        """Test that _get_headers doesn't include X-Target-Role when not provided."""
+        headers = uwc_client._get_headers(
+            company_id="test_company",
+            request_id="test_request_123"
+        )
+        
+        assert "X-Target-Role" not in headers
+

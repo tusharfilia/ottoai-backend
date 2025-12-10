@@ -84,15 +84,22 @@ GET /api/v1/appointments?tenant_id=org_123
 
 **Sales Rep Role** (`sales_rep`):
 - ✅ Can access:
-  - `/api/v1/appointments` (own appointments only)
-  - `/api/v1/tasks` (own tasks only)
-  - `/api/v1/recording-sessions/*` (own recordings only)
-  - `/api/v1/reps/{rep_id}/shifts/*` (own shifts only)
+  - `/api/v1/appointments` (own appointments only, filtered by `assigned_rep_id == user_id`)
+  - `/api/v1/tasks` (own tasks only, filtered by `assigned_to == "rep"` and tenant)
+  - `/api/v1/recording-sessions/*` (own recordings only, filtered by `rep_id == user_id`)
+  - `/api/v1/reps/{rep_id}/shifts/*` (own shifts only, filtered by `rep_id == user_id`)
   - `/api/v1/message-threads/{contact_card_id}` (tenant-scoped)
+  - `/api/v1/rag/query` (Ask Otto - scoped to rep's own data)
 - ❌ Cannot access:
-  - Manager-only endpoints
-  - Other reps' appointments/tasks/recordings
+  - Manager-only endpoints (returns 403)
+  - Other reps' appointments/tasks/recordings (backend enforces ownership)
   - Company-wide analytics (manager-only)
+  - CSR-specific endpoints
+
+**Ask Otto RBAC**:
+- When rep uses Ask Otto, backend forwards `X-Target-Role: sales_rep` to Shunya
+- Shunya scopes responses to rep's own data (appointments, recordings, tasks)
+- **Current State**: Backend already defaults to `sales_rep` target_role (correct for rep context)
 
 **Manager Role** (`manager`):
 - ✅ Can access: All rep endpoints + management endpoints
@@ -503,7 +510,18 @@ Based on exploration of `/Users/tusharmehrotra/Documents/Otto_Salesrep`, the fol
 **Purpose**: Main landing page with Ask Otto chat interface for natural language queries.
 
 **Backend Endpoints**:
-- `POST /api/v1/rag/query` - Ask Otto queries (if implemented)
+- `POST /api/v1/rag/query` - Ask Otto queries ✅ **Implemented**
+
+**Ask Otto Integration**:
+- **Request**: `POST /api/v1/rag/query` with body `{ "query": "user question", "filters": {...}, "max_results": 10 }`
+- **Response**: `{ "data": { "query_id": "...", "query": "...", "answer": "...", "citations": [...], "confidence_score": 0.85, "latency_ms": 1250 } }`
+- **Field Guarantees**:
+  - `data.answer` (string) - ✅ **Guaranteed non-null**
+  - `data.query_id` (string) - ✅ **Guaranteed non-null**
+  - `data.citations` (array) - ⚠️ **May be empty** if Shunya processing delayed
+  - `data.confidence_score` (number) - ⚠️ **May be 0.0** if processing incomplete
+- **Backend → Shunya**: Currently uses `/api/v1/search/` (legacy). **Target**: Will migrate to `/api/v1/ask-otto/query` with `X-Target-Role: sales_rep` header.
+- **RBAC**: Rep queries are scoped to rep's own data (appointments, recordings, tasks). Backend sets `X-Target-Role: sales_rep` when calling Shunya.
 
 ---
 
@@ -1233,40 +1251,44 @@ const thread = await apiClient.get(`/api/v1/message-threads/${contactCardId}`, {
 ### 3.1 Shunya-Derived Fields
 
 **Recording Transcripts** (from `app/models/recording_transcript.py`):
-- `transcript_text` - May be `null` in Ghost Mode (`audio_storage_mode == "not_stored"`)
-- `speaker_labels` - Speaker diarization from Shunya (JSON array)
-- `confidence_score` - ASR confidence (0.0 to 1.0)
-- `uwc_job_id` - Shunya job correlation ID
-- `is_ghost_mode` - Boolean flag indicating Ghost Mode session
-- `transcript_restricted` - Boolean flag indicating transcript is not available
+- `transcript_text` - ⚠️ **May be `null`** in Ghost Mode (`audio_storage_mode == "not_stored"`) or if transcription in progress/failed
+- `speaker_labels` - ⚠️ **May be `null`** - Speaker diarization from Shunya (JSON array)
+- `confidence_score` - ⚠️ **May be `null`** - ASR confidence (0.0 to 1.0)
+- `uwc_job_id` - ✅ **Guaranteed non-null** if transcription job created - Shunya job correlation ID
+- `is_ghost_mode` - ✅ **Guaranteed non-null** - Boolean flag indicating Ghost Mode session
+- `transcript_restricted` - ✅ **Guaranteed non-null** - Boolean flag indicating transcript is not available
 
 **Recording Analysis** (from `app/models/recording_analysis.py`):
-- `objections` - Array of objection types: `["price", "timeline", "competitor", "need_spouse_approval"]`
-- `objection_details` - Detailed objection data with timestamps and quotes
-- `sentiment_score` - 0.0 (negative) to 1.0 (positive)
-- `engagement_score` - 0.0 to 1.0
-- `coaching_tips` - AI-generated coaching recommendations (JSON array)
-- `sop_stages_completed` - Array of completed SOP stages
-- `sop_stages_missed` - Array of missed SOP stages
-- `sop_compliance_score` - 0-10 score
-- `lead_quality` - Classification: `"qualified"`, `"unqualified"`, `"hot"`, `"warm"`, `"cold"`
-- `conversion_probability` - 0.0 to 1.0
-- `meeting_segments` - Meeting phase segmentation (JSON array)
-- `outcome` - Classification: `"won"`, `"lost"`, `"qualified"`, `"no_show"`, `"rescheduled"`
-- `outcome_confidence` - 0.0 to 1.0
+- `objections` - ⚠️ **May be empty array** - Array of objection types: `["price", "timeline", "competitor", "need_spouse_approval"]`
+- `objection_details` - ⚠️ **May be `null`** - Detailed objection data with timestamps and quotes
+- `sentiment_score` - ⚠️ **May be `null`** - 0.0 (negative) to 1.0 (positive)
+- `engagement_score` - ⚠️ **May be `null`** - 0.0 to 1.0
+- `coaching_tips` - ⚠️ **May be empty array** - AI-generated coaching recommendations (JSON array)
+- `sop_stages_completed` - ⚠️ **May be empty array** - Array of completed SOP stages
+- `sop_stages_missed` - ⚠️ **May be empty array** - Array of missed SOP stages
+- `sop_compliance_score` - ⚠️ **May be `null`** - 0-10 score
+- `lead_quality` - ⚠️ **May be `null`** - Classification: `"qualified"`, `"unqualified"`, `"hot"`, `"warm"`, `"cold"`
+- `conversion_probability` - ⚠️ **May be `null`** - 0.0 to 1.0
+- `meeting_segments` - ⚠️ **May be `null`** - Meeting phase segmentation (JSON array with `MeetingPhase` values: `rapport_agenda`, `proposal_close`)
+- `outcome` - ⚠️ **May be `null`** - Classification: `"won"`, `"lost"`, `"qualified"`, `"no_show"`, `"rescheduled"`
+- `outcome_confidence` - ⚠️ **May be `null`** - 0.0 to 1.0
 
 ### 3.2 Normalization
 
 **How Shunya Data is Normalized**:
-- Shunya responses are normalized into Otto domain models via `app/services/shunya_integration_service.py`
+- Shunya responses are normalized into Otto domain models via `app/services/shunya_integration_service.py` and `app/services/shunya_response_normalizer.py`
 - Empty/missing Shunya fields are stored as `null` in database
 - Frontend must handle `null` values gracefully
 
 **Processing Flow**:
-1. Recording session stopped → Audio uploaded → Shunya transcription job enqueued
-2. Shunya webhook received → Transcript stored in `recording_transcripts` table
-3. Shunya analysis job enqueued → Analysis stored in `recording_analyses` table
-4. Frontend polls `GET /api/v1/recording-sessions/{session_id}` to check status
+1. Recording session stopped → Audio uploaded → Shunya transcription job enqueued (via `uwc_client.transcribe_audio`)
+2. Shunya webhook received (`POST /api/v1/shunya/webhook`) → Transcript stored in `recording_transcripts` table
+3. Shunya analysis job enqueued (via `uwc_client.start_analysis` or `get_complete_analysis`) → Analysis stored in `recording_analyses` table
+4. Frontend polls `GET /api/v1/recording-sessions/{session_id}` to check `transcription_status` and `analysis_status`
+
+**Target Role Handling**:
+- **Current**: No `X-Target-Role` header sent to Shunya for transcription/analysis calls (not required by contract for these endpoints)
+- **Future**: Follow-up recommendations and Personal Otto will require `X-Target-Role: sales_rep` header
 
 ### 3.3 Processing States
 
@@ -1401,4 +1423,116 @@ This creates:
 ---
 
 **Questions?** Contact the backend team with `request_id` from error responses.
+
+---
+
+## 7. Shunya Integration & Enum Alignment
+
+### 7.1 Shunya-Derived Fields (Nullable States)
+
+**Recording Analysis Fields** (from `RecordingAnalysis` model):
+- `transcript` (from `RecordingTranscript.transcript_text`) - ⚠️ **May be `null`** in Ghost Mode or if transcription in progress/failed
+- `objections` (array) - ⚠️ **May be empty array** if analysis not complete
+- `objection_details` (array) - ⚠️ **May be `null`** if objections not yet analyzed
+- `sentiment_score` (number) - ⚠️ **May be `null`** if sentiment analysis not complete (0.0-1.0 scale)
+- `engagement_score` (number) - ⚠️ **May be `null`** if engagement analysis not complete (0.0-1.0 scale)
+- `coaching_tips` (array) - ⚠️ **May be empty array** if coaching analysis not complete
+- `sop_compliance_score` (number) - ⚠️ **May be `null`** if compliance check not run (0-10 scale)
+- `sop_stages_completed` (array) - ⚠️ **May be empty** if analysis incomplete
+- `sop_stages_missed` (array) - ⚠️ **May be empty** if analysis incomplete
+- `lead_quality` (string) - ⚠️ **May be `null`** if qualification analysis not complete
+- `conversion_probability` (number) - ⚠️ **May be `null`** if conversion analysis not complete (0.0-1.0 scale)
+- `meeting_segments` (array) - ⚠️ **May be `null`** if meeting segmentation not complete
+- `outcome` (string) - ⚠️ **May be `null`** if outcome classification not complete
+
+**Frontend Handling**: Always check for `null`/empty values and show appropriate loading/empty states. Poll `GET /api/v1/recording-sessions/{session_id}` to check `transcription_status` and `analysis_status` fields (`"not_started" | "in_progress" | "completed" | "failed"`).
+
+### 7.2 Enum Alignment (Shunya Canonical Values)
+
+**BookingStatus** (from Shunya `enums-inventory-by-service.md`):
+- `booked` - Appointment scheduled ✅ **Implemented**
+- `not_booked` - No appointment scheduled ✅ **Implemented**
+- `service_not_offered` - Customer needs service we don't provide ⚠️ **May not be consistently surfaced in all endpoints yet**
+
+**Appointment Outcome**:
+- `pending` - Outcome not yet determined ✅ **Implemented**
+- `won` - Appointment resulted in closed deal ✅ **Implemented**
+- `lost` - Appointment did not result in deal ✅ **Implemented**
+- `no_show` - Customer did not show up ✅ **Implemented**
+- `rescheduled` - Appointment was rescheduled ✅ **Implemented**
+
+**MeetingPhase** (for sales visit recordings):
+- `rapport_agenda` - Part 1: Rapport building and agenda setting
+- `proposal_close` - Part 2: Proposal presentation and closing
+- **Note**: Used in meeting segmentation analysis; stored in `meeting_segments` array
+
+**ActionType** (Pending Actions):
+- **Current State**: Free-form string in Otto
+- **Target**: Will be migrated to Shunya's canonical 30-value enum (see `OTTO_BACKEND_SHUNYA_AUDIT.md` for full list)
+- Common rep-related values: `site_visit`, `inspection`, `measurement`, `send_quote`, `follow_up_call`, `schedule_visit`, etc.
+
+**CallType**:
+- `sales_call` - Sales rep call ✅ **Used in code**
+- `csr_call` - CSR call (not applicable to rep)
+- **Note**: Currently stored as free-form string; will be enforced as enum
+
+**MissedOpportunityType**:
+- `discovery`, `cross_sell`, `upsell`, `qualification`
+- **Note**: Currently not consistently modeled in Otto; will be aligned with Shunya canonical values
+
+### 7.3 Ask Otto Payload & Headers
+
+**Current Backend → Shunya Payload** (legacy):
+```json
+{
+  "query": "What are my top performing appointments?",
+  "document_types": null,
+  "limit": 10,
+  "score_threshold": 0,
+  "filters": { "date_range": "last_30_days" }
+}
+```
+- Endpoint: `POST /api/v1/search/` (legacy)
+- No `X-Target-Role` header (defaults to `sales_rep` in Shunya - already correct for rep context)
+
+**Target Backend → Shunya Payload** (per Shunya contract):
+```json
+{
+  "question": "What are my top performing appointments?",
+  "conversation_id": "optional_conversation_id",
+  "context": { "tenant_id": "...", "user_role": "sales_rep", "user_id": "rep_123" },
+  "scope": "rep_data_only"
+}
+```
+- Endpoint: `POST /api/v1/ask-otto/query`
+- Header: `X-Target-Role: sales_rep`
+
+**Frontend Impact**: No changes required - frontend continues to call `/api/v1/rag/query`; backend handles Shunya communication internally.
+
+### 7.4 Personal Otto (Not Yet Implemented)
+
+**Status**: ⚠️ **PLANNED, not yet implemented in backend — do not rely on this in production until confirmed**
+
+**Shunya Endpoints** (per `Target_Role_Header.md`):
+- `POST /api/v1/personal-otto/ingest/training-documents` - Upload training documents
+- `POST /api/v1/personal-otto/train` - Train personal profile
+- `GET /api/v1/personal-otto/profile/status` - Get training status
+- `GET /api/v1/personal-otto/profile` - Get personal profile
+
+**Requirements**:
+- All endpoints **require** `X-Target-Role` header (will be `sales_rep` for reps)
+- Otto backend does not yet call these endpoints
+- When implemented, backend will set `X-Target-Role: sales_rep` automatically
+
+### 7.5 Follow-up Recommendations (Not Yet Implemented)
+
+**Status**: ⚠️ **PLANNED, not yet implemented in backend — do not rely on this in production until confirmed**
+
+**Shunya Endpoint**:
+- `POST /api/v1/analysis/followup-recommendations/{call_id}` - Get follow-up recommendations
+
+**Requirements**:
+- Optional `X-Target-Role` header (should be `sales_rep` for rep context)
+- Otto backend does not yet call this endpoint
+- When implemented, will be used for post-appointment follow-up suggestions
 

@@ -39,6 +39,19 @@ const LOCAL_API_BASE_URL = 'http://localhost:8000';
 
 ## 2. Auth, Tenancy & RBAC
 
+### RBAC (Role-Based Access Control)
+
+**Sales Rep Role** (`sales_rep`):
+- JWT contains `role: "sales_rep"` claim (or `"rep"`, `"org:sales_rep"` - mapped to `sales_rep`)
+- **Data Scoping**: Rep can only see:
+  - Own appointments (filtered by `assigned_rep_id == user_id`)
+  - Own tasks (filtered by `assigned_to == "rep"` and tenant)
+  - Own recording sessions (filtered by `rep_id == user_id`)
+  - Own shifts (filtered by `rep_id == user_id`)
+  - Tenant-scoped message threads
+- **Cannot Access**: Other reps' appointments/tasks/recordings, Manager-only endpoints, Company-wide analytics
+- **Ask Otto Context**: When rep uses Ask Otto, backend forwards `X-Target-Role: sales_rep` to Shunya to scope responses to rep's own data
+
 ### JWT from Clerk
 
 The Sales Rep mobile app uses Clerk for authentication. The JWT token from Clerk **must** be included in all API requests.
@@ -288,6 +301,29 @@ GET /api/v1/message-threads/{contact_card_id}?limit=50&offset=0
 **Valid Enum Values** (from `app/models/message_thread.py`):
 - `direction`: `"inbound"`, `"outbound"`
 - `sender_role`: `"customer"`, `"csr"`, `"rep"`, `"otto"`
+
+### Ask Otto (RAG Queries)
+
+**Status**: ✅ **Implemented** (uses legacy endpoint; migration to Shunya canonical endpoint planned)
+
+```typescript
+// Ask Otto query
+const response = await apiPost('/api/v1/rag/query', {
+  query: "What are my top performing appointments this month?",
+  filters: { date_range: "last_30_days" },
+  max_results: 10
+});
+
+// Response includes answer, citations, confidence_score
+console.log(response.answer);
+console.log(response.citations);
+```
+
+**Important Notes**:
+- **Current Implementation**: Backend currently uses `/api/v1/search/` endpoint (legacy). This will be migrated to Shunya's canonical `/api/v1/ask-otto/query` endpoint with proper `X-Target-Role` header.
+- **RBAC Scoping**: Sales Rep queries are automatically scoped to rep's own data (appointments, recordings, tasks). The backend will set `X-Target-Role: sales_rep` when calling Shunya (currently defaults to `sales_rep`; already correct for rep context).
+- **Response Fields**: `answer` (string, guaranteed), `citations` (array, may be empty if processing), `confidence_score` (0.0-1.0, may be 0.0 if processing), `query_id` (string, guaranteed).
+- **Nullable Fields**: If Shunya processing is delayed, `citations` may be empty; `confidence_score` may be 0.0.
 
 ---
 
@@ -885,3 +921,45 @@ export const apiClient = new ApiClient();
 ---
 
 **Questions?** Contact the backend team with `request_id` from error responses.
+
+---
+
+## 11. Shunya Integration Notes
+
+### Enum Alignment
+
+**BookingStatus** (from Shunya canonical enums):
+- `booked` - Appointment scheduled ✅ **Implemented**
+- `not_booked` - No appointment scheduled ✅ **Implemented**
+- `service_not_offered` - Customer needs service we don't provide ⚠️ **May not be consistently surfaced in all endpoints yet**
+
+**Appointment Outcome**:
+- `pending` - Outcome not yet determined ✅ **Implemented**
+- `won` - Appointment resulted in closed deal ✅ **Implemented**
+- `lost` - Appointment did not result in deal ✅ **Implemented**
+- `no_show` - Customer did not show up ✅ **Implemented**
+- `rescheduled` - Appointment was rescheduled ✅ **Implemented**
+
+**MeetingPhase** (for sales visit recordings):
+- `rapport_agenda` - Part 1: Rapport building and agenda setting
+- `proposal_close` - Part 2: Proposal presentation and closing
+- **Note**: Used in meeting segmentation analysis for sales visits
+
+**ActionType** (Pending Actions):
+- Currently free-form string in Otto; will be migrated to Shunya's canonical 30-value enum (see `OTTO_BACKEND_SHUNYA_AUDIT.md` for full list)
+- Common values: `site_visit`, `inspection`, `measurement`, `send_quote`, `follow_up_call`, etc.
+
+### Shunya-Derived Fields (May Be Null)
+
+When calling endpoints that return Shunya analysis data, the following fields may be `null` if Shunya hasn't finished processing:
+- `transcript` (from `RecordingTranscript`) - May be `null` in Ghost Mode or if transcription in progress
+- `objections` (from `RecordingAnalysis`) - May be empty array if analysis not complete
+- `objection_details` - May be `null` if objections not yet analyzed
+- `sentiment_score` - May be `null` if sentiment analysis not complete
+- `engagement_score` - May be `null` if engagement analysis not complete
+- `coaching_tips` - May be empty array if coaching analysis not complete
+- `sop_compliance_score` - May be `null` if compliance check not run
+- `meeting_segments` - May be `null` if meeting segmentation not complete
+- `outcome` - May be `null` if outcome classification not complete
+
+**Frontend Handling**: Always check for `null` values and show appropriate loading/empty states. Poll `GET /api/v1/recording-sessions/{session_id}` to check `transcription_status` and `analysis_status` fields.

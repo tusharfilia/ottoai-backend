@@ -10,6 +10,7 @@ from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, Text, Boolean
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.models.enums import ActionType
 
 
 class TaskSource(str, enum.Enum):
@@ -76,6 +77,12 @@ class Task(Base):
         nullable=False,
         comment="How this task was created"
     )
+    # Canonical ActionType enum (aligned with Shunya enums-inventory-by-service.md)
+    action_type = Column(
+        Enum(ActionType, native_enum=False, name="action_type"),
+        nullable=True,
+        comment="Canonical action type: call_back, send_quote, schedule_appointment, etc. (30 values)"
+    )
     
     # Idempotency: natural key for duplicate detection
     unique_key = Column(String, nullable=True, index=True, comment="Hash of (source, description, contact_card_id) for duplicate detection")
@@ -93,26 +100,11 @@ class Task(Base):
     completed_at = Column(DateTime, nullable=True)
     completed_by = Column(String, nullable=True, comment="User ID who completed the task")
     
+    # User assignment: specific user_id the task is assigned to (complements assigned_to enum)
+    # TODO: Backfill this field from existing task records where possible
+    assignee_id = Column(String, nullable=True, index=True, comment="User ID of the specific user assigned to this task")
+    
     # Metadata
-    priority = Column(String, nullable=True, comment="high/medium/low")
-    task_metadata = Column(Text, nullable=True, comment="Additional context as JSON")
-    
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
-    # Relationships
-    contact_card = relationship("ContactCard", back_populates="tasks")
-    lead = relationship("Lead", back_populates="tasks")
-    appointment = relationship("Appointment", back_populates="tasks")
-    company = relationship("Company", foreign_keys=[company_id])
-
-    # Relationships
-    company = relationship("Company")
-    contact_card = relationship("ContactCard")
-    lead = relationship("Lead")
-    appointment = relationship("Appointment")
-    call = relationship("Call")
-
     priority = Column(String, nullable=True, comment="high/medium/low")
     task_metadata = Column(Text, nullable=True, comment="Additional context as JSON")
     

@@ -37,6 +37,7 @@ from app.models.key_signal import KeySignal, SignalType, SignalSeverity
 from app.database import SessionLocal
 from app.realtime.bus import emit
 from app.core.pii_masking import PIISafeLogger
+from app.config import settings
 
 logger = PIISafeLogger(__name__)
 
@@ -561,6 +562,113 @@ class ShunyaIntegrationService:
             analyzed_at=datetime.utcnow()
         )
         db.add(call_analysis)
+        db.flush()  # Flush to get ID before fetching follow-up recommendations
+        
+        # Fetch follow-up recommendations from Shunya (non-blocking)
+        # Only if feature flag is enabled
+        if settings.ENABLE_FOLLOWUP_RECOMMENDATIONS:
+            try:
+                # Determine target_role based on call type or user context
+                # Default to customer_rep for CSR calls
+                target_role = self.uwc_client._map_otto_role_to_shunya_target_role("csr")
+                
+                # Fetch follow-up recommendations
+                followup_request_id = str(uuid4())
+                followup_recommendations = await self.uwc_client.get_followup_recommendations(
+                    call_id=call.call_id,
+                    company_id=company_id,
+                    request_id=followup_request_id,
+                    target_role=target_role
+                )
+                
+                # Store recommendations in CallAnalysis
+                if followup_recommendations and (
+                    followup_recommendations.get("recommendations") or
+                    followup_recommendations.get("next_steps") or
+                    followup_recommendations.get("priority_actions")
+                ):
+                    call_analysis.followup_recommendations = followup_recommendations
+                    logger.info(
+                        f"Stored follow-up recommendations for call {call.call_id}",
+                        extra={"call_id": call.call_id, "recommendations_count": len(followup_recommendations.get("recommendations", []))}
+                    )
+                else:
+                    logger.debug(f"No follow-up recommendations returned for call {call.call_id}")
+                    
+            except Exception as e:
+                # Non-blocking: log error but continue processing
+                logger.warning(
+                    f"Failed to fetch follow-up recommendations for call {call.call_id}: {str(e)}",
+                    extra={"call_id": call.call_id},
+                    exc_info=True
+                )
+                # Continue without recommendations (call_analysis.followup_recommendations remains None)
+        
+        # Run SOP compliance check from Shunya (non-blocking)
+        # Only if feature flag is enabled
+        if settings.ENABLE_SOP_COMPLIANCE_PIPELINE:
+            try:
+                # Determine target_role based on call type or user context
+                # Default to customer_rep for CSR calls
+                target_role = self.uwc_client._map_otto_role_to_shunya_target_role("csr")
+                
+                # Run compliance check
+                compliance_request_id = str(uuid4())
+                compliance_result = await self.uwc_client.run_compliance_check(
+                    call_id=call.call_id,
+                    company_id=company_id,
+                    request_id=compliance_request_id,
+                    target_role=target_role
+                )
+                
+                # Merge compliance results into CallAnalysis
+                if compliance_result and (
+                    compliance_result.get("compliance_score") is not None or
+                    compliance_result.get("violations") or
+                    compliance_result.get("positive_behaviors") or
+                    compliance_result.get("recommendations")
+                ):
+                    # Update compliance score if provided
+                    if compliance_result.get("compliance_score") is not None:
+                        call_analysis.sop_compliance_score = compliance_result["compliance_score"]
+                    
+                    # Update stages (merge with existing if any)
+                    if compliance_result.get("stages_followed"):
+                        existing_stages = call_analysis.sop_stages_completed or []
+                        # Merge and deduplicate
+                        merged_stages = list(set(existing_stages + compliance_result["stages_followed"]))
+                        call_analysis.sop_stages_completed = merged_stages
+                    
+                    if compliance_result.get("stages_missed"):
+                        existing_missed = call_analysis.sop_stages_missed or []
+                        # Merge and deduplicate
+                        merged_missed = list(set(existing_missed + compliance_result["stages_missed"]))
+                        call_analysis.sop_stages_missed = merged_missed
+                    
+                    # Store detailed compliance data
+                    call_analysis.compliance_violations = compliance_result.get("violations", [])
+                    call_analysis.compliance_positive_behaviors = compliance_result.get("positive_behaviors", [])
+                    call_analysis.compliance_recommendations = compliance_result.get("recommendations", [])
+                    
+                    logger.info(
+                        f"Stored compliance check results for call {call.call_id}",
+                        extra={
+                            "call_id": call.call_id,
+                            "compliance_score": compliance_result.get("compliance_score"),
+                            "violations_count": len(compliance_result.get("violations", []))
+                        }
+                    )
+                else:
+                    logger.debug(f"No compliance results returned for call {call.call_id}")
+                    
+            except Exception as e:
+                # Non-blocking: log error but continue processing
+                logger.warning(
+                    f"Failed to run compliance check for call {call.call_id}: {str(e)}",
+                    extra={"call_id": call.call_id},
+                    exc_info=True
+                )
+                # Continue without compliance check (existing compliance fields remain unchanged)
         
         # Update Lead based on qualification (idempotent: only if status changed)
         lead = None
@@ -1183,5 +1291,7 @@ class ShunyaIntegrationService:
 
 # Global service instance
 shunya_integration_service = ShunyaIntegrationService()
+
+
 
 

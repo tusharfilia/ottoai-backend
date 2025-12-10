@@ -66,6 +66,30 @@ class Settings:
         self.ENABLE_UWC_FOLLOWUPS = os.getenv("ENABLE_UWC_FOLLOWUPS", "false").lower() in ("true", "1", "yes")
         self.ENABLE_UWC_SUMMARIZATION = os.getenv("ENABLE_UWC_SUMMARIZATION", "false").lower() in ("true", "1", "yes")
         
+        # Ask Otto Feature Flag
+        # If True: Use canonical /api/v1/ask-otto/query endpoint
+        # If False: Use legacy /api/v1/search/ endpoint
+        # Default to True (canonical) but can be overridden via env var
+        self.USE_CANONICAL_ASK_OTTO = os.getenv("USE_CANONICAL_ASK_OTTO", "true").lower() in ("true", "1", "yes")
+        
+        # Follow-up Recommendations Feature Flag
+        # If True: Fetch and store follow-up recommendations from Shunya after call analysis
+        # If False: Skip follow-up recommendations (backward compatible)
+        # Default to False (disabled) but can be overridden via env var
+        self.ENABLE_FOLLOWUP_RECOMMENDATIONS = os.getenv("ENABLE_FOLLOWUP_RECOMMENDATIONS", "false").lower() in ("true", "1", "yes")
+        
+        # SOP Compliance Pipeline Feature Flag
+        # If True: Run POST compliance check after call analysis completes
+        # If False: Skip compliance check (backward compatible)
+        # Default to False (disabled) but can be overridden via env var
+        self.ENABLE_SOP_COMPLIANCE_PIPELINE = os.getenv("ENABLE_SOP_COMPLIANCE_PIPELINE", "false").lower() in ("true", "1", "yes")
+        
+        # Personal Otto Feature Flag
+        # If True: Enable Personal Otto (AI clone) endpoints and functionality
+        # If False: Disable Personal Otto endpoints (returns 503)
+        # Default to False (disabled) but can be overridden via env var
+        self.ENABLE_PERSONAL_OTTO = os.getenv("ENABLE_PERSONAL_OTTO", "false").lower() in ("true", "1", "yes")
+        
         # AWS S3 Storage
         self.AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
         self.AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")

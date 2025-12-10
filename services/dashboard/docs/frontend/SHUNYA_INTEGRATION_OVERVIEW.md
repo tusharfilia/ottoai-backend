@@ -1,3 +1,121 @@
+# Shunya Integration Overview (Otto Backend) – current state vs contract
+
+**Audience**: Shunya infra/backend team  
+**Sources**: Otto code (clients, services, routes, jobs, webhooks) + Shunya contracts (`webhook-and-other-payload-ask-otto.md`, `enums-inventory-by-service.md`, `Target_Role_Header.md`, `Integration-Status.md`) + Otto requirements/audit (`OTTO_BACKEND_SHUNYA_REQUIREMENTS.md`, `docs/frontend/OTTO_BACKEND_SHUNYA_AUDIT.md`). Where contract and code differ, the contract is the target; code gaps are marked TODO.
+
+---
+
+## 1) Architecture & code map (what actually exists)
+- Client: `app/services/uwc_client.py` (no target_role support today).
+- Orchestration: `app/services/shunya_integration_service.py` (CSR call + sales visit flows).
+- Jobs/Idempotency: `app/services/shunya_job_service.py`, `app/models/shunya_job.py`, `app/tasks/shunya_job_polling_tasks.py`.
+- Webhook: `app/routes/shunya_webhook.py`, signature verification `app/utils/shunya_webhook_security.py`.
+- Normalization/Adapters: `app/services/shunya_response_normalizer.py`, `app/services/shunya_adapters_v2.py`.
+- Trigger routes: CSR call flow via callrail → `process_csr_call`; sales visit via `recording_sessions` → `process_sales_visit`; webhook handler for completion.
+
+---
+
+## 2) Feature matrix (status = current implementation)
+
+| Area | Otto call path | Shunya endpoint | Target role handling | Status |
+| --- | --- | --- | --- | --- |
+| Transcription | `uwc_client.transcribe_audio` (called by `process_csr_call` / `process_sales_visit`) | `POST /api/v1/transcription/transcribe`, `GET /api/v1/transcription/transcript/{call_id}` | None | OK |
+| Complete analysis (CSR calls) | `uwc_client.start_analysis` → `get_complete_analysis`; webhook | `POST /api/v1/analysis/start/{call_id}`, `GET /api/v1/analysis/complete/{call_id}` | None | OK |
+| Qualification / Objections / Compliance (read) | From complete analysis | same | None | OK (read) |
+| Compliance (run) | `uwc_client.check_compliance` (GET-only) | Contract: `POST /api/v1/sop/compliance/check?target_role=` | `?target_role=` required | PARTIAL (no POST, no target_role) |
+| Meeting segmentation | Methods in `uwc_client`; `process_sales_visit` path exists | `POST /api/v1/meeting-segmentation/analyze`, `GET /api/v1/analysis/meeting-segmentation/{call_id}` | None | PARTIAL (not fully verified end-to-end) |
+| Ask Otto | `routes/rag.py` → `uwc_client.query_rag` | Contract: `POST /api/v1/ask-otto/query` (and `/query-stream`) | `X-Target-Role` optional (should set) | MISMATCH (uses `/api/v1/search/`, wrong payload, no header) |
+| Personal Otto | No calls; helper exists to submit training (unused) | Contract: `/api/v1/personal-otto/*` | `X-Target-Role` **required** | NOT IMPLEMENTED |
+| Follow-up recommendations | No calls | Contract: `POST /api/v1/analysis/followup-recommendations/{call_id}` | `X-Target-Role` optional (send) | NOT IMPLEMENTED |
+| SOP / Doc ingestion | `uwc_client.ingest_document` (no target_role) | Contract: ingestion requires `?target_role=` | `?target_role=` **required** | PARTIAL (missing param) |
+
+---
+
+## 3) Target role handling (contract vs code)
+- Contract: `X-Target-Role` optional for Ask Otto (set explicitly); **required** for Personal Otto; `?target_role=` **required** for SOP/compliance/doc ingestion; follow-up recommendations should send header.
+- Code today: No `X-Target-Role`/`?target_role=` support anywhere (`uwc_client` lacks it).
+- Needed per call path:
+  - Ask Otto: CSR → customer_rep/csr; Exec CSR tab → customer_rep; Exec Sales tab → sales_rep. **TODO: add header + correct endpoint/payload.**
+  - Personal Otto: header required per request. **TODO.**
+  - SOP/compliance/doc ingestion: `?target_role=` required. **TODO.**
+  - Follow-up recommendations: send header matching user context. **TODO.**
+
+---
+
+## 4) Ask Otto
+- Contract: `POST /api/v1/ask-otto/query` (and `/query-stream` if streaming) with payload `{question, conversation_id?, context, scope?}`; optional `X-Target-Role` (defaults to sales_rep but should be explicit).
+- Current: `routes/rag.py::query_ask_otto` → `uwc_client.query_rag` → `/api/v1/search/` payload `{query, limit, score_threshold, filters}`; no conversation_id/scope; no header.
+- Impact: Wrong endpoint/payload and mis-scoped (defaults to sales_rep).
+- Target implementation: swap to `/api/v1/ask-otto/query`, include proper payload, pass `X-Target-Role` per surface (CSR/Exec CSR-tab/Exec Sales-tab). Streaming not implemented; if added, mirror payload/header on `/query-stream`.
+
+---
+
+## 5) Personal Otto
+- Contract endpoints: `/api/v1/personal-otto/ingest/training-documents`, `/train`, `/profile/status`, `/profile` (all **require** `X-Target-Role`).
+- Current: No Otto calls; `uwc_client` has generic training submit helper (unused) and no header plumbing.
+- Status: NOT IMPLEMENTED YET (requires client header support + caller routes/services).
+
+---
+
+## 6) Follow-up recommendations
+- Contract: `POST /api/v1/analysis/followup-recommendations/{call_id}` (header optional; should send `X-Target-Role`).
+- Current: No client method, no calls.
+- Status: NOT IMPLEMENTED YET (add client method + caller; include header).
+
+---
+
+## 7) SOP / compliance / ingestion
+- Contract: compliance run via `POST /api/v1/sop/compliance/check?target_role=`; doc/SOP ingestion requires `?target_role=`.
+- Current: Only GET `/api/v1/analysis/compliance/{call_id}`; ingestion omits target_role.
+- Status: PARTIAL — add POST compliance check with required query param; add target_role to ingestion calls.
+
+---
+
+## 8) Meeting segmentation
+- Contract: `POST /api/v1/meeting-segmentation/analyze`, `GET /api/v1/analysis/meeting-segmentation/{call_id}`.
+- Current: Client methods exist; `process_sales_visit` path present; persistence via `RecordingAnalysis` expected. Not fully validated end-to-end; no target_role needed by contract.
+- Status: PARTIAL — verify full pipeline (recording → Shunya → persisted → exposed via `recording_sessions`/`appointments`).
+
+---
+
+## 9) Enums (contract vs Otto)
+- Canonical (enums-inventory-by-service.md):  
+  - BookingStatus: `booked`, `not_booked`, `service_not_offered`  
+  - ActionType: 30 pending-action values (see Shunya doc)  
+  - MeetingPhase: `rapport_agenda`, `proposal_close`  
+  - MissedOpportunityType: `discovery`, `cross_sell`, `upsell`, `qualification`  
+  - CallType: `sales_call`, `csr_call`
+- Otto today: BookingStatus not fully reflected (`service_not_offered` not consistent); ActionType free-form; MeetingPhase/MissedOpportunityType not modeled; CallType is a free string.
+- Gaps: Align DB/API enums to the canonical lists; document these in API responses; update requirements.
+
+---
+
+## 10) Error handling, idempotency, observability (as implemented)
+- Headers sent: `Authorization` (JWT/API key), `X-Company-ID`, `X-Request-ID`, `X-UWC-Version`, `X-UWC-Timestamp`; HMAC on webhook via `verify_shunya_webhook_signature`.
+- Idempotency: `ShunyaJob` uniqueness + `processed_output_hash`; webhook short-circuits on succeeded jobs.
+- Retries: `uwc_client` retries 5xx/429/timeout with exponential backoff; circuit breaker per endpoint/tenant.
+- Logging: `PIISafeLogger` with request/job IDs; PII redaction.
+- Polling fallback: `shunya_job_polling_tasks.py` if webhook missing.
+
+---
+
+## 11) Needed changes (priority)
+1) Add target_role plumbing to `uwc_client` and set per call site (Ask Otto, Personal Otto, SOP/compliance/ingestion, follow-up recommendations).  
+2) Switch Ask Otto to `/api/v1/ask-otto/query` with correct payload and headers (deprecate `/api/v1/search/`).  
+3) Implement Personal Otto calls with required header.  
+4) Implement follow-up recommendations call with header.  
+5) Add POST compliance check + target_role; add target_role to ingestion.  
+6) Align enums (BookingStatus includes `service_not_offered`; ActionType canonical; MeetingPhase; MissedOpportunityType; CallType).
+
+---
+
+## Status callouts (NOT IMPLEMENTED YET)
+- Personal Otto (all endpoints).  
+- Follow-up recommendations.  
+- Ask Otto using correct endpoint/payload/headers (currently mismatched).  
+- target_role propagation across all Shunya calls.  
+- POST compliance check with `?target_role=`; target_role on ingestion.  
+- Enum alignment (ActionType/MeetingPhase/MissedOpportunityType; BookingStatus completeness; CallType enforcement).
 # Shunya Integration Overview
 
 **Document Version**: 1.0  
