@@ -3,7 +3,7 @@ from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .database import init_db, SessionLocal
-from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics, post_call_analysis, contact_cards, leads, appointments, rep_shifts, recording_sessions, tasks, key_signals, message_threads, rep_settings, wins_feed, reviews, personal_otto, metrics_kpis
+from .routes import company, user, backend, sales_rep, sales_manager, calls, bland, call_rail, scheduled_tasks, delete, mobile, health, websocket, rag, analysis, followups, clones, gdpr, metrics, sms_handler, enhanced_callrail, missed_call_queue, live_metrics, post_call_analysis, contact_cards, leads, appointments, rep_shifts, recording_sessions, tasks, key_signals, message_threads, rep_settings, wins_feed, reviews, personal_otto, metrics_kpis, recordings
 from .routes import webhooks as webhooks_module
 from .routes.mobile_routes import mobile_router
 from .routes.webhook_handlers.uwc import router as uwc_webhooks
@@ -136,6 +136,7 @@ from app.routes.lead_pool import router as lead_pool_router
 app.include_router(lead_pool_router)  # Lead pool management endpoints
 app.include_router(rep_shifts.router)  # Rep shift management endpoints
 app.include_router(recording_sessions.router)  # Recording session endpoints
+app.include_router(recordings.router)  # Simplified recording endpoints for Sales Rep app
 app.include_router(ai_internal_router)  # Internal AI API endpoints for Shunya/UWC
 from app.routes.ai_search import router as ai_search_router
 app.include_router(ai_search_router)  # Internal AI search endpoint for Ask Otto

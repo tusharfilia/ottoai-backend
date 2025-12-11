@@ -79,6 +79,15 @@ class RecordingSession(Base):
     started_at = Column(DateTime, nullable=False, index=True)
     ended_at = Column(DateTime, nullable=True)
     
+    # Session status (simple status for recording lifecycle)
+    status = Column(
+        String,
+        nullable=False,
+        default="pending",
+        index=True,
+        comment="Session status: pending, recording, completed, failed"
+    )
+    
     # Location tracking
     start_lat = Column(Float, nullable=True)
     start_lng = Column(Float, nullable=True)

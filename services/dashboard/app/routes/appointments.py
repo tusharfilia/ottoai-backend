@@ -911,3 +911,72 @@ async def update_appointment(
 
 
 
+
+
+class AppointmentAssignBody(BaseModel):
+    rep_id: str = Field(..., description="Sales rep user ID to assign to")
+    allow_double_booking: bool = Field(False, description="If True, skip double-booking conflict check")
+
+
+@router.post("/{appointment_id}/assign", response_model=APIResponse[AppointmentDetail])
+@require_role("csr", "manager")
+async def assign_appointment_to_rep(
+    request: Request,
+    appointment_id: str,
+    body: AppointmentAssignBody,
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+) -> APIResponse[AppointmentDetail]:
+    """
+    Assign an appointment to a sales rep.
+    
+    **Roles**: csr, manager
+    
+    **Path Parameters**:
+    - `appointment_id`: Appointment ID
+    
+    **Request Body**:
+    - `rep_id`: Sales rep user ID to assign to
+    - `allow_double_booking`: If True, skip double-booking conflict check (default: False)
+    
+    **Returns**: Updated AppointmentDetail with assignment metadata.
+    
+    **Errors**:
+    - 400: Appointment not found, booking_status != "booked", or double-booking conflict
+    """
+    try:
+        # Get actor ID (CSR/manager performing assignment)
+        actor_id = getattr(request.state, 'user_id', None)
+        if not actor_id:
+            raise HTTPException(status_code=401, detail="User ID not found in request")
+        
+        # Call dispatch service
+        dispatch_service = AppointmentDispatchService(db)
+        appointment = await dispatch_service.assign_appointment_to_rep(
+            tenant_id=tenant_id,
+            appointment_id=appointment_id,
+            rep_id=body.rep_id,
+            actor_id=actor_id,
+            allow_double_booking=body.allow_double_booking
+        )
+        
+        # Load assigned rep relationship for name
+        db.refresh(appointment)
+        if appointment.assigned_rep:
+            # Rep name available via relationship
+            pass
+        
+        # Convert to response schema
+        response = AppointmentDetail.from_orm(appointment)
+        
+        return APIResponse(success=True, data=response)
+    
+    except AppointmentDispatchError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        from app.obs.logging import get_logger
+        logger = get_logger(__name__)
+        logger.error(f"Error assigning appointment: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to assign appointment: {str(e)}")

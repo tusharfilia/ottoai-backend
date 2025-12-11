@@ -804,7 +804,7 @@ class MissedLeadsSelfResponse(BaseModel):
 class RideAlongAppointmentItem(BaseModel):
     """Ride-along appointment item."""
     
-    appointment_id: int = Field(..., description="Appointment ID")
+    appointment_id: str = Field(..., description="Appointment ID (UUID string)")
     customer_name: Optional[str] = Field(None, description="Customer name")
     scheduled_at: str = Field(..., description="Scheduled timestamp (ISO8601)")
     rep_id: Optional[str] = Field(None, description="Sales rep user ID")
@@ -848,7 +848,11 @@ class SalesRepTodayAppointment(BaseModel):
     customer_id: Optional[str] = Field(None, description="Customer/lead ID")
     customer_name: Optional[str] = Field(None, description="Customer name")
     scheduled_time: datetime = Field(..., description="Scheduled start time")
-    address_line: Optional[str] = Field(None, description="Address/location")
+    address_line: Optional[str] = Field(None, description="Address/location (legacy field)")
+    location_address: Optional[str] = Field(None, description="Address from Shunya entities (for geofencing)")
+    location_lat: Optional[float] = Field(None, description="Latitude for geofencing")
+    location_lng: Optional[float] = Field(None, description="Longitude for geofencing")
+    geofence_radius_meters: int = Field(75, description="Geofence radius in meters (constant)")
     status: str = Field(..., description="Appointment status (scheduled, in_progress, completed, cancelled)")
     outcome: Optional[str] = Field(None, description="Outcome from Shunya RecordingAnalysis (won, lost, pending)")
 

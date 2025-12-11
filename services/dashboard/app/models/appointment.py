@@ -65,9 +65,12 @@ class Appointment(Base):
         comment="Canonical appointment type: in-person, virtual, phone"
     )
 
-    location = Column(String, nullable=True)  # Address string
+    location = Column(String, nullable=True)  # Address string (legacy field)
+    location_address = Column(String, nullable=True, comment="Address from Shunya entities (triggers property enrichment)")
     geo_lat = Column(Float, nullable=True)  # Latitude (geocoded from address)
     geo_lng = Column(Float, nullable=True)  # Longitude (geocoded from address)
+    location_lat = Column(Float, nullable=True, comment="Latitude for geofencing (synced from geo_lat or property enrichment)")
+    location_lng = Column(Float, nullable=True, comment="Longitude for geofencing (synced from geo_lng or property enrichment)")
     
     # Geofence configuration (in feet)
     geofence_radius_start = Column(Float, nullable=True, default=200.0)  # Default 200 feet

@@ -722,6 +722,26 @@ class ShunyaIntegrationService:
                 ).first()
                 
                 if not existing_appointment:
+                    appointment_address = appointment_details.get("address")
+                    
+                    # Update ContactCard.address if provided (triggers property enrichment)
+                    contact = db.query(ContactCard).filter(ContactCard.id == call.contact_card_id).first()
+                    previous_address = None
+                    if contact and appointment_address:
+                        previous_address = contact.address
+                        # Update contact card address (this will trigger property enrichment via update_contact_address)
+                        update_contact_address(
+                            db=db,
+                            contact=contact,
+                            new_address=appointment_address,
+                            city=None,
+                            state=None,
+                            postal_code=None
+                        )
+                        # Refresh to get updated property snapshot if available
+                        db.refresh(contact)
+                    
+                    # Create appointment with address from Shunya
                     appointment = Appointment(
                         id=str(uuid4()),
                         lead_id=call.lead_id,
@@ -729,9 +749,29 @@ class ShunyaIntegrationService:
                         company_id=company_id,
                         scheduled_start=appointment_details.get("scheduled_start"),
                         scheduled_end=appointment_details.get("scheduled_end"),
-                        location=appointment_details.get("address"),
+                        location=appointment_address,  # Legacy field
+                        location_address=appointment_address,  # New field from Shunya
                         status=AppointmentStatus.SCHEDULED
                     )
+                    
+                    # Sync lat/lng from contact card property snapshot if available
+                    if contact and contact.property_snapshot:
+                        # Property enrichment may have geocoded the address
+                        # Check if property snapshot has lat/lng (format may vary)
+                        prop_snapshot = contact.property_snapshot
+                        if isinstance(prop_snapshot, dict):
+                            # Try common geocoding field names
+                            lat = prop_snapshot.get("latitude") or prop_snapshot.get("lat") or prop_snapshot.get("geo_lat")
+                            lng = prop_snapshot.get("longitude") or prop_snapshot.get("lng") or prop_snapshot.get("geo_lng")
+                            if lat and lng:
+                                try:
+                                    appointment.location_lat = float(lat)
+                                    appointment.location_lng = float(lng)
+                                    appointment.geo_lat = float(lat)  # Also populate legacy field
+                                    appointment.geo_lng = float(lng)  # Also populate legacy field
+                                except (ValueError, TypeError):
+                                    pass  # Skip if not numeric
+                    
                     db.add(appointment)
                     db.flush()  # Get ID
                     appointment_created = True
@@ -877,6 +917,65 @@ class ShunyaIntegrationService:
         if not appointment:
             logger.warning(f"No appointment linked to recording session {recording_session.id}")
             return
+        
+        # Update appointment address from Shunya entities if provided
+        entities = complete_analysis.get("entities", {})
+        if isinstance(entities, dict):
+            address = entities.get("address")
+            if address and appointment.contact_card_id:
+                # Update appointment location_address
+                appointment.location_address = address
+                appointment.location = address  # Also update legacy field
+                
+                # Update ContactCard.address (triggers property enrichment)
+                contact = db.query(ContactCard).filter(ContactCard.id == appointment.contact_card_id).first()
+                if contact:
+                    previous_address = contact.address
+                    update_contact_address(
+                        db=db,
+                        contact=contact,
+                        new_address=address,
+                        city=None,
+                        state=None,
+                        postal_code=None
+                    )
+                    # Refresh to get updated property snapshot if available
+                    db.refresh(contact)
+                    
+                    # Sync lat/lng from contact card property snapshot if available
+                    if contact.property_snapshot:
+                        prop_snapshot = contact.property_snapshot
+                        if isinstance(prop_snapshot, dict):
+                            lat = prop_snapshot.get("latitude") or prop_snapshot.get("lat") or prop_snapshot.get("geo_lat")
+                            lng = prop_snapshot.get("longitude") or prop_snapshot.get("lng") or prop_snapshot.get("geo_lng")
+                            if lat and lng:
+                                try:
+                                    appointment.location_lat = float(lat)
+                                    appointment.location_lng = float(lng)
+                                    appointment.geo_lat = float(lat)
+                                    appointment.geo_lng = float(lng)
+                                except (ValueError, TypeError):
+                                    pass
+                
+                # Also update scheduled_start if provided
+                date_time = entities.get("appointment_date") or entities.get("scheduled_time")
+                if date_time:
+                    if isinstance(date_time, str):
+                        try:
+                            from dateutil import parser
+                            parsed_datetime = parser.parse(date_time)
+                        except (ValueError, ImportError):
+                            try:
+                                parsed_datetime = datetime.fromisoformat(date_time.replace('Z', '+00:00'))
+                            except ValueError:
+                                parsed_datetime = None
+                    elif isinstance(date_time, datetime):
+                        parsed_datetime = date_time
+                    else:
+                        parsed_datetime = None
+                    
+                    if parsed_datetime:
+                        appointment.scheduled_start = parsed_datetime
         
         # Get outcome classification (normalized)
         # Check multiple sources for outcome
@@ -1103,16 +1202,41 @@ class ShunyaIntegrationService:
         transcript_text: str,
         analysis: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """Extract appointment scheduling details from analysis/transcript."""
-        # Check entities for date/time/address
+        """
+        Extract appointment scheduling details from Shunya analysis.
+        
+        Uses Shunya contract fields:
+        - entities.appointment_date or entities.scheduled_time for datetime
+        - entities.address for customer address
+        """
+        # Check entities for date/time/address (using exact Shunya contract keys)
         entities = analysis.get("entities", {})
         if isinstance(entities, dict):
+            # Use Shunya contract fields: appointment_date or scheduled_time
             date_time = entities.get("appointment_date") or entities.get("scheduled_time")
+            # Use Shunya contract field: address
             address = entities.get("address")
             
             if date_time or address:
+                # Parse date_time if it's a string
+                parsed_datetime = None
+                if date_time:
+                    if isinstance(date_time, str):
+                        try:
+                            from dateutil import parser
+                            parsed_datetime = parser.parse(date_time)
+                        except (ValueError, ImportError):
+                            # Fallback: try ISO format
+                            try:
+                                parsed_datetime = datetime.fromisoformat(date_time.replace('Z', '+00:00'))
+                            except ValueError:
+                                logger.warning(f"Could not parse appointment datetime: {date_time}")
+                                parsed_datetime = None
+                    elif isinstance(date_time, datetime):
+                        parsed_datetime = date_time
+                
                 return {
-                    "scheduled_start": date_time,  # May need parsing
+                    "scheduled_start": parsed_datetime,
                     "scheduled_end": None,
                     "address": address
                 }

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from app.database import get_db
 from app.models import call, company
 from app.models.call_analysis import CallAnalysis
@@ -12,7 +12,9 @@ from typing import List, Optional
 from ..services.manager_notification_service import send_unassigned_appointment_notification
 from app.services.domain_entities import ensure_contact_card_and_lead
 from app.services.uwc_client import get_uwc_client
+from app.services.metrics_service import MetricsService
 from app.schemas.responses import APIResponse
+from app.schemas.metrics import CallsByObjectionSelfResponse
 from uuid import uuid4
 import logging
 import traceback
@@ -506,3 +508,81 @@ async def run_compliance_check(
             status_code=500,
             detail=f"Failed to run compliance check: {str(e)}"
         ) 
+
+
+def parse_date_param(date_str: Optional[str]) -> Optional[datetime]:
+    """
+    Parse ISO8601 date string to datetime.
+    
+    Handles both date-only (YYYY-MM-DD) and full ISO8601 formats.
+    Returns None if date_str is None or empty.
+    """
+    if not date_str:
+        return None
+    try:
+        # Try parsing as full ISO8601 datetime
+        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+    except ValueError:
+        try:
+            # Try parsing as date-only (YYYY-MM-DD)
+            return datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            logger.warning(f"Invalid date format: {date_str}")
+            return None
+
+
+@router.get("/api/v1/calls/by-objection/self", response_model=APIResponse[CallsByObjectionSelfResponse])
+@require_role("csr")
+async def get_calls_by_objection_self(
+    request: Request,
+    objection: str = Query(..., description="Objection key to filter by"),
+    date_from: Optional[str] = Query(None, description="Start date (ISO8601, optional)"),
+    date_to: Optional[str] = Query(None, description="End date (ISO8601, optional)"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(50, ge=1, le=200, description="Page size"),
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get paginated calls filtered by objection for CSR self.
+    
+    **Roles**: csr only
+    
+    **Query Parameters**:
+    - `objection`: Objection key to filter by (required)
+    - `date_from`: Start date (ISO8601, optional)
+    - `date_to`: End date (ISO8601, optional)
+    - `page`: Page number (1-indexed)
+    - `page_size`: Page size (1-200)
+    
+    **Returns**: CallsByObjectionSelfResponse with paginated calls.
+    Filters calls where Shunya objections list contains that objection string.
+    """
+    try:
+        # Parse dates
+        end = parse_date_param(date_to)
+        start = parse_date_param(date_from)
+        
+        # Get CSR user ID from auth
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found in request")
+        
+        service = MetricsService(db)
+        response = await service.get_csr_calls_by_objection_self(
+            csr_user_id=user_id,
+            tenant_id=tenant_id,
+            objection=objection,
+            date_from=start,
+            date_to=end,
+            page=page,
+            page_size=page_size
+        )
+        
+        return APIResponse(success=True, data=response)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting calls by objection self: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get calls by objection: {str(e)}")

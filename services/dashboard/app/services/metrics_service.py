@@ -447,7 +447,12 @@ class MetricsService:
             # OUTCOME: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
             # Only count outcomes for completed appointments
             if appointment.status == AppointmentStatus.COMPLETED.value and analysis and analysis.outcome:
-                outcome_lower = analysis.outcome.lower()
+                # Ensure outcome is a string (handle enum values if any)
+                outcome_str = str(analysis.outcome) if analysis.outcome else None
+                if outcome_str:
+                    outcome_lower = outcome_str.lower()
+                else:
+                    outcome_lower = None
                 
                 # Track first-touch vs follow-up
                 is_first_touch = False
@@ -457,7 +462,7 @@ class MetricsService:
                     if appointment.scheduled_start == first_scheduled:
                         is_first_touch = True
                 
-                if outcome_lower == "won":
+                if outcome_lower and outcome_lower == "won":
                     won_appointments += 1
                     
                     if is_first_touch:
@@ -466,14 +471,14 @@ class MetricsService:
                     else:
                         followup_wins += 1
                         followup_completed += 1
-                elif outcome_lower == "lost":
+                elif outcome_lower and outcome_lower == "lost":
                     lost_appointments += 1
                     
                     if is_first_touch:
                         first_touch_completed += 1
                     else:
                         followup_completed += 1
-                elif outcome_lower in ("pending", "qualified", "rescheduled"):
+                elif outcome_lower and outcome_lower in ("pending", "qualified", "rescheduled"):
                     pending_appointments += 1
                     
                     if is_first_touch:
@@ -3223,12 +3228,13 @@ class MetricsService:
             # Determine status from Shunya + appointment state
             # Status: "won", "in_progress", "not_started", "rejected"
             if analysis:
-                outcome = analysis.outcome
-                if outcome == "won":
+                # Ensure outcome is a string (handle enum values if any)
+                outcome = str(analysis.outcome) if analysis.outcome else None
+                if outcome and outcome.lower() == "won":
                     status = "won"
-                elif outcome == "lost":
+                elif outcome and outcome.lower() == "lost":
                     status = "rejected"
-                elif outcome == "pending":
+                elif outcome and outcome.lower() == "pending":
                     status = "in_progress"
                 else:
                     # Check appointment status
@@ -3250,11 +3256,13 @@ class MetricsService:
             # Get outcome from Shunya
             outcome_value = None
             if analysis and analysis.outcome:
-                if analysis.outcome == "won":
+                # Ensure outcome is a string (handle enum values if any)
+                outcome_str = str(analysis.outcome).lower() if analysis.outcome else None
+                if outcome_str == "won":
                     outcome_value = "won"
-                elif analysis.outcome == "lost":
+                elif outcome_str == "lost":
                     outcome_value = "lost"
-                elif analysis.outcome == "pending":
+                elif outcome_str == "pending":
                     outcome_value = "pending"
             
             # Get SOP compliance scores (from Shunya RecordingAnalysis)
@@ -3458,13 +3466,39 @@ class MetricsService:
             if analysis and analysis.outcome:
                 outcome = analysis.outcome.lower()
             
+            # Get location data from Appointment (Shunya-enriched)
+            location_address = appointment.location_address or appointment.location
+            location_lat = appointment.location_lat or appointment.geo_lat
+            location_lng = appointment.location_lng or appointment.geo_lng
+            
+            # Fallback to ContactCard if appointment doesn't have lat/lng
+            if (location_lat is None or location_lng is None) and appointment.contact_card_id:
+                contact_card = self.db.query(ContactCard).filter(
+                    ContactCard.id == appointment.contact_card_id
+                ).first()
+                if contact_card and contact_card.property_snapshot:
+                    prop_snapshot = contact_card.property_snapshot
+                    if isinstance(prop_snapshot, dict):
+                        lat = prop_snapshot.get("latitude") or prop_snapshot.get("lat") or prop_snapshot.get("geo_lat")
+                        lng = prop_snapshot.get("longitude") or prop_snapshot.get("lng") or prop_snapshot.get("geo_lng")
+                        if lat and lng:
+                            try:
+                                location_lat = float(lat)
+                                location_lng = float(lng)
+                            except (ValueError, TypeError):
+                                pass
+            
             items.append(SalesRepTodayAppointment(
                 appointment_id=appointment.id,
                 customer_id=customer_id,
                 customer_name=customer_name,
                 scheduled_time=appointment.scheduled_start,
-                address_line=appointment.location,
-                status=appointment.status,
+                address_line=appointment.location,  # Legacy field
+                location_address=location_address,  # New field from Shunya
+                location_lat=location_lat,
+                location_lng=location_lng,
+                geofence_radius_meters=75,  # Constant as specified
+                status=appointment.status.value if hasattr(appointment.status, 'value') else str(appointment.status),
                 outcome=outcome
             ))
         

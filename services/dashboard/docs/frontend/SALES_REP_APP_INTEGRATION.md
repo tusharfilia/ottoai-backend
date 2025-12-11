@@ -274,29 +274,131 @@ interface Citation {
 
 ### Purpose
 
-Auto-record appointments via geofence + mic (Otto mobile). Recording is triggered automatically when the sales rep enters a geofence around an appointment location. The recording tab may display a list of recordings or show recording status.
+Automatic recording for appointments via geofence + mic (Otto mobile). The recording tab allows sales reps to manually start and stop recording sessions for appointments. Recording can also be triggered automatically when the sales rep enters a geofence around an appointment location.
 
 ### Data Source
 
-**No dedicated public API for recording list yet**
-
-**Current State**: Recordings are managed by Otto backend + Shunya and surfaced only through the Meeting Detail view (`GET /api/v1/meetings/{appointment_id}/analysis`).
+**Recording Session Management**:
+- Start recording: `POST /api/v1/recordings/sessions/start`
+- Stop recording: `POST /api/v1/recordings/sessions/{session_id}/stop`
+- Recording sessions are stored in `RecordingSession` table
+- After stopping, Shunya analysis is automatically triggered
+- Analysis results are available via the Meeting Detail endpoint (`GET /api/v1/meetings/{appointment_id}/analysis`)
 
 **Recording Pipeline**:
-- Recording is automatic (geofence + mic trigger)
-- No explicit API calls required beyond the existing recording ingestion pipeline
-- Recordings are processed by Shunya and stored in `RecordingSession`, `RecordingAnalysis`, and `RecordingTranscript` tables
-- Analysis results are available via the Meeting Detail endpoint
+1. Sales rep arrives at appointment location (geofence detected or manual start)
+2. Frontend calls `POST /api/v1/recordings/sessions/start` with `appointment_id`
+3. Backend validates appointment ownership and creates `RecordingSession` with `status: "recording"`
+4. Mobile app records audio (handled by mobile SDK)
+5. After recording completes, mobile app uploads audio to S3
+6. Frontend calls `POST /api/v1/recordings/sessions/{session_id}/stop` with `audio_url`
+7. Backend updates session to `status: "completed"` and triggers Shunya analysis job
+8. Shunya processes audio and stores results in `RecordingAnalysis` and `RecordingTranscript`
+9. Analysis results are available via Meeting Detail endpoint
 
 ### Frontend spec: fields + endpoint + example JSON
 
-**Endpoint**: N/A (no dedicated recording list endpoint)
+#### Start Recording Session
+
+**Endpoint**: `POST /api/v1/recordings/sessions/start`
+
+**Request Body**:
+```json
+{
+  "appointment_id": "apt_001"
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "session_123",
+    "appointment_id": "apt_001",
+    "started_at": "2025-01-15T10:00:00Z",
+    "ended_at": null,
+    "status": "recording",
+    "audio_url": null,
+    "shunya_job_id": null
+  }
+}
+```
 
 **Used by UI**:
-- If the recording tab shows a list of recordings, use `GET /api/v1/appointments/today/self` to get appointments, then call `GET /api/v1/meetings/{appointment_id}/analysis` for each appointment to check if recording/analysis exists
-- If the recording tab is just a status indicator, no API calls needed (recording happens automatically)
+- **Trigger**: When sales rep manually starts recording or when geofence is entered
+- **Store**: Save `session_id` from response for later stop call
+- **Display**: Show recording status indicator (e.g., "Recording..." badge)
 
-**Note**: If a dedicated recording list endpoint is needed in the future, it will be documented separately. For now, recordings are accessed through the Meeting Detail view.
+**Errors**:
+- `400`: Appointment not found, not assigned to rep, too early to start, or session already exists
+- `403`: Role is not `sales_rep`
+
+#### Stop Recording Session
+
+**Endpoint**: `POST /api/v1/recordings/sessions/{session_id}/stop`
+
+**Request Body**:
+```json
+{
+  "audio_url": "https://s3.example.com/audio.mp3"
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "session_123",
+    "appointment_id": "apt_001",
+    "started_at": "2025-01-15T10:00:00Z",
+    "ended_at": "2025-01-15T10:45:00Z",
+    "status": "completed",
+    "audio_url": "https://s3.example.com/audio.mp3",
+    "shunya_job_id": "job_456"
+  }
+}
+```
+
+**Used by UI**:
+- **Trigger**: When sales rep manually stops recording or when geofence is exited
+- **Requires**: `audio_url` from S3 upload (mobile SDK handles upload)
+- **Display**: Show "Processing..." status until analysis completes (check via Meeting Detail endpoint)
+
+**Errors**:
+- `400`: Session not found, not owned by rep, or not in "recording" status
+- `403`: Role is not `sales_rep`
+- `500`: Failed to trigger Shunya analysis (session marked as "failed")
+
+**Geofencing Integration**:
+
+The mobile app should use geofence fields from today's appointments (`GET /api/v1/appointments/today/self`) to automatically trigger recording:
+
+1. **Get Today's Appointments**: Call `GET /api/v1/appointments/today/self` to get appointments with geofence data:
+   - `location_lat`: Latitude for geofence center
+   - `location_lng`: Longitude for geofence center
+   - `geofence_radius_meters`: Geofence radius (constant: 75 meters)
+   - `location_address`: Human-readable address for display
+
+2. **Geofence Detection**: Use mobile location services to detect when rep enters/exits the geofence:
+   - **Enter Geofence**: When rep's location is within `geofence_radius_meters` (75m) of `(location_lat, location_lng)`, automatically call `POST /api/v1/recordings/sessions/start`
+   - **Exit Geofence**: When rep's location exits the geofence, automatically call `POST /api/v1/recordings/sessions/{session_id}/stop` (after audio upload)
+
+3. **Manual Override**: Always allow manual start/stop buttons in the UI, even if geofence auto-trigger is enabled
+
+4. **UI Mapping**:
+   - **Geofence Status**: Show visual indicator when rep is within geofence (e.g., "Near appointment location" badge)
+   - **Recording Status**: Display `status` field from session response ("recording", "completed", "failed")
+   - **Session ID**: Store `session_id` from start response to use in stop endpoint
+
+**Important Notes**:
+- **Geofence Fields**: `location_lat`, `location_lng`, and `geofence_radius_meters` (constant: 75) come from `Appointment` model, with fallback to `ContactCard.property_snapshot` if appointment doesn't have lat/lng
+- **Audio Upload**: Mobile app must upload audio to S3 before calling stop endpoint. The `audio_url` parameter should be the final S3 URL
+- **Shunya Analysis**: Analysis is triggered automatically after stop; results available via Meeting Detail endpoint (`GET /api/v1/meetings/{appointment_id}/analysis`)
+- **Session Status**: Track `status` field ("pending", "recording", "completed", "failed") for UI state management
+- **Validation**: Backend validates that appointment is assigned to rep and allows 30-minute early start window
+- **Idempotency**: Starting a session for an appointment that already has an active session will return an error
 
 ---
 
@@ -445,7 +547,11 @@ interface SalesRepTodayAppointment {
   customer_id: string | null;
   customer_name: string | null;
   scheduled_time: string;                    // ISO8601 datetime
-  address_line: string | null;
+  address_line: string | null;               // Legacy field (deprecated, use location_address)
+  location_address: string | null;            // Address from Shunya entities (for geofencing)
+  location_lat: number | null;                // Latitude for geofencing
+  location_lng: number | null;                // Longitude for geofencing
+  geofence_radius_meters: number;             // Geofence radius in meters (constant: 75)
   status: string;                             // "scheduled" | "in_progress" | "completed" | "cancelled"
   outcome: string | null;                      // From Shunya RecordingAnalysis.outcome: "won" | "lost" | "pending" (if analysis exists)
 }
@@ -460,6 +566,9 @@ interface SalesRepTodayAppointment {
 - `customer_name` → Display as primary text in list item
 - `scheduled_time` → Display as time (e.g., "10:00 AM") and date if needed
 - `address_line` → Display as secondary text or in detail view
+- `location_address` → Preferred address field (from Shunya entities, for geofencing)
+- `location_lat`, `location_lng` → Used for geofence detection in Recording Tab (pass to geofence service)
+- `geofence_radius_meters` → Constant (75 meters) used for geofence radius in Recording Tab
 - `status` → Display as status badge (e.g., "Scheduled", "Completed", "Cancelled")
 - `outcome` → Display as outcome badge if not null (e.g., "Won", "Lost", "Pending")
 
@@ -521,6 +630,7 @@ const appointments = await apiGet<SalesRepTodayAppointment[]>(
 - **Sorted by Time**: Appointments are sorted by `scheduled_time` (ascending)
 - **Outcome from Shunya**: The `outcome` field comes from `RecordingAnalysis.outcome` if analysis exists, otherwise `null`
 - **Status vs Outcome**: `status` is the appointment status (scheduled/completed/etc.), while `outcome` is the Shunya-derived result (won/lost/pending)
+- **Geofence Fields**: `location_lat`, `location_lng`, and `geofence_radius_meters` (constant: 75) are populated from `Appointment` model fields, with fallback to `ContactCard.property_snapshot` if appointment doesn't have lat/lng. These fields are used for geofencing in the Recording Tab (see Recording Tab section for details)
 
 ---
 

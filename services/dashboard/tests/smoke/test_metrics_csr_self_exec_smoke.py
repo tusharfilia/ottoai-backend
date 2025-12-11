@@ -348,7 +348,7 @@ class TestCSRSelfScopedEndpoints:
         assert "data" in data
         assert "total_missed_calls" in data["data"]
     
-    @patch('app.routes.metrics_kpis.MetricsService')
+    @patch('app.routes.leads.MetricsService')
     def test_leads_missed_self_returns_200(
         self,
         mock_service_class,

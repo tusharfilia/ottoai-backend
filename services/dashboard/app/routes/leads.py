@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session, selectinload
@@ -19,9 +19,14 @@ from app.schemas.domain import (
 from app.schemas.responses import APIResponse, ErrorCodes, create_error_response
 from app.services.domain_entities import ensure_contact_card_and_lead
 from app.services.domain_events import emit_domain_event
+from app.services.metrics_service import MetricsService
+from app.schemas.metrics import MissedLeadsSelfResponse
+from app.obs.logging import get_logger
+from app.core.tenant import get_tenant_id
 from pydantic import BaseModel, Field, validator
 
 router = APIRouter(prefix="/api/v1/leads", tags=["leads"])
+logger = get_logger(__name__)
 
 
 @router.get("/{lead_id}", response_model=APIResponse[LeadResponse])
@@ -787,3 +792,79 @@ async def list_leads(
 
 
 
+
+
+
+def parse_date_param(date_str: Optional[str]) -> Optional[datetime]:
+    """
+    Parse ISO8601 date string to datetime.
+    
+    Handles both date-only (YYYY-MM-DD) and full ISO8601 formats.
+    Returns None if date_str is None or empty.
+    """
+    if not date_str:
+        return None
+    try:
+        # Try parsing as full ISO8601 datetime
+        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+    except ValueError:
+        try:
+            # Try parsing as date-only (YYYY-MM-DD)
+            return datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            logger.warning(f"Invalid date format: {date_str}")
+            return None
+
+
+@router.get("/missed/self", response_model=APIResponse[MissedLeadsSelfResponse])
+@require_role("csr", "manager")
+async def get_leads_missed_self(
+    request: Request,
+    status: Optional[Literal["booked", "pending", "dead"]] = Query(None, description="Filter by status: booked, pending, or dead"),
+    date_from: Optional[str] = Query(None, description="Start date (ISO8601, optional)"),
+    date_to: Optional[str] = Query(None, description="End date (ISO8601, optional)"),
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get paginated missed leads for CSR self.
+    
+    **Roles**: csr, manager
+    
+    **Query Parameters**:
+    - `status`: Filter by status (booked, pending, dead) - optional
+    - `date_from`: Start date (ISO8601, optional)
+    - `date_to`: End date (ISO8601, optional)
+    
+    **Returns**: MissedLeadsSelfResponse with paginated missed leads.
+    Uses Shunya booking/outcome for status, plus Otto's call/twilio interaction counts for attempt_count.
+    """
+    try:
+        # Parse dates
+        parsed_from = parse_date_param(date_from)
+        parsed_to = parse_date_param(date_to)
+        
+        # Get CSR user ID from auth
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found in request")
+        
+        # Instantiate metrics service
+        metrics_service = MetricsService(db)
+        
+        # Call the service method
+        response = await metrics_service.get_csr_missed_leads_self(
+            csr_user_id=user_id,
+            tenant_id=tenant_id,
+            status=status,
+            date_from=parsed_from,
+            date_to=parsed_to
+        )
+        
+        return APIResponse(success=True, data=response)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to get missed leads for CSR")
+        raise HTTPException(status_code=500, detail="Failed to get missed leads")

@@ -1,183 +1,215 @@
 """
-Service for managing recording sessions with Ghost Mode support.
+Recording Session Service for managing geofenced appointment recordings.
+
+Handles:
+- Starting recording sessions
+- Stopping recording sessions
+- Triggering Shunya analysis jobs
 """
-from typing import Optional
 from datetime import datetime, timedelta
-
+from typing import Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 
-from app.models.recording_session import (
-    RecordingSession,
-    RecordingMode,
-    AudioStorageMode,
-)
-from app.models.company import Company, GhostModeRetention, GhostModeStorage
+from app.models.recording_session import RecordingSession
+from app.models.appointment import Appointment, AppointmentStatus
+from app.models.shunya_job import ShunyaJob, ShunyaJobType, ShunyaJobStatus
+from app.services.shunya_job_service import ShunyaJobService
 from app.core.pii_masking import PIISafeLogger
 
 logger = PIISafeLogger(__name__)
 
 
+class RecordingSessionError(Exception):
+    """Raised when recording session operation fails."""
+    pass
+
+
 class RecordingSessionService:
-    """
-    Service for recording session operations with privacy-aware Ghost Mode.
-    """
+    """Service for managing recording sessions."""
     
-    def get_audio_storage_mode(
-        self,
-        mode: RecordingMode,
-        company_id: str,
-        db: Optional[Session] = None,
-    ) -> AudioStorageMode:
-        """
-        Determine audio storage mode based on recording mode and tenant config.
-        
-        Args:
-            mode: Recording mode (normal, ghost, off)
-            company_id: Tenant/company ID
-            db: Optional database session (if provided, fetches company config)
-            
-        Returns:
-            AudioStorageMode (persistent, ephemeral, not_stored)
-        """
-        if mode == RecordingMode.OFF:
-            return AudioStorageMode.NOT_STORED
-        
-        if mode == RecordingMode.GHOST:
-            # Get from company config
-            if db:
-                company = db.query(Company).filter(Company.id == company_id).first()
-                if company:
-                    if company.ghost_mode_storage == GhostModeStorage.NOT_STORED:
-                        return AudioStorageMode.NOT_STORED
-                    elif company.ghost_mode_storage == GhostModeStorage.EPHEMERAL:
-                        return AudioStorageMode.EPHEMERAL
-            
-            # Default: NOT_STORED (most private)
-            return AudioStorageMode.NOT_STORED
-        
-        # Normal mode: persistent storage
-        return AudioStorageMode.PERSISTENT
+    def __init__(self, db: Session):
+        self.db = db
+        self.shunya_job_service = ShunyaJobService()
     
-    def apply_ghost_mode_restrictions(
+    async def start_session(
         self,
-        session: RecordingSession,
-        company_id: str,
-        db: Optional[Session] = None,
+        *,
+        tenant_id: str,
+        rep_id: str,
+        appointment_id: str
     ) -> RecordingSession:
         """
-        Apply Ghost Mode restrictions to a session for API responses.
-        
-        In Ghost Mode:
-        - audio_url is always None (not exposed)
-        - Full transcript may be restricted based on tenant config
+        Start a recording session for an appointment.
         
         Args:
-            session: RecordingSession instance
-            company_id: Tenant/company ID
-            db: Optional database session (if provided, fetches company config)
-            
+            tenant_id: Company/tenant ID
+            rep_id: Sales rep user ID
+            appointment_id: Appointment ID
+        
         Returns:
-            Session with restrictions applied (modified in place)
+            Created RecordingSession instance
+        
+        Raises:
+            RecordingSessionError: If session cannot be started
         """
-        if session.mode != RecordingMode.GHOST:
-            return session
+        # Validate appointment exists
+        appointment = self.db.query(Appointment).filter(
+            Appointment.id == appointment_id,
+            Appointment.company_id == tenant_id
+        ).first()
         
-        # In Ghost Mode, never expose audio_url
-        session.audio_url = None
+        if not appointment:
+            raise RecordingSessionError(f"Appointment {appointment_id} not found")
         
-        # Check if transcript should be restricted
-        if db:
-            company = db.query(Company).filter(Company.id == company_id).first()
-            if company:
-                if company.ghost_mode_retention == GhostModeRetention.NONE:
-                    # Hide transcript if it exists
-                    if hasattr(session, 'transcript') and session.transcript:
-                        session.transcript.transcript_text = None
-                elif company.ghost_mode_retention == GhostModeRetention.AGGREGATES_ONLY:
-                    # Hide full transcript, only show aggregates
-                    if hasattr(session, 'transcript') and session.transcript:
-                        session.transcript.transcript_text = None
+        # Validate rep owns the appointment
+        if appointment.assigned_rep_id != rep_id:
+            raise RecordingSessionError(
+                f"Appointment {appointment_id} is not assigned to rep {rep_id}"
+            )
+        
+        # Validate appointment is scheduled (allow some window for early starts)
+        now = datetime.utcnow()
+        window_minutes = 30  # Allow starting 30 minutes before scheduled time
+        earliest_start = appointment.scheduled_start - timedelta(minutes=window_minutes)
+        
+        if now < earliest_start:
+            raise RecordingSessionError(
+                f"Appointment {appointment_id} is scheduled for {appointment.scheduled_start}, "
+                f"cannot start recording more than {window_minutes} minutes early"
+            )
+        
+        # Check if session already exists for this appointment
+        existing_session = self.db.query(RecordingSession).filter(
+            RecordingSession.appointment_id == appointment_id,
+            RecordingSession.company_id == tenant_id,
+            RecordingSession.status.in_(["pending", "recording"])
+        ).first()
+        
+        if existing_session:
+            raise RecordingSessionError(
+                f"Recording session already exists for appointment {appointment_id} (session: {existing_session.id})"
+            )
+        
+        # Create recording session
+        session = RecordingSession(
+            company_id=tenant_id,
+            rep_id=rep_id,
+            appointment_id=appointment_id,
+            started_at=now,
+            status="recording"
+        )
+        
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        
+        logger.info(
+            f"Started recording session {session.id} for appointment {appointment_id}",
+            extra={
+                "session_id": session.id,
+                "appointment_id": appointment_id,
+                "rep_id": rep_id,
+                "tenant_id": tenant_id
+            }
+        )
         
         return session
     
-    def should_retain_transcript(
+    async def stop_session(
         self,
-        session: RecordingSession,
-        company_id: str,
-        db: Optional[Session] = None,
-    ) -> bool:
+        *,
+        tenant_id: str,
+        session_id: str,
+        rep_id: str,
+        audio_url: str
+    ) -> RecordingSession:
         """
-        Determine if transcript should be retained in Ghost Mode.
+        Stop a recording session and trigger Shunya analysis.
         
         Args:
-            session: RecordingSession instance
-            company_id: Tenant/company ID
-            db: Optional database session (if provided, fetches company config)
-            
+            tenant_id: Company/tenant ID
+            session_id: Recording session ID
+            rep_id: Sales rep user ID (for validation)
+            audio_url: URL to the recorded audio file
+        
         Returns:
-            True if transcript should be retained, False otherwise
+            Updated RecordingSession instance
+        
+        Raises:
+            RecordingSessionError: If session cannot be stopped
         """
-        if session.mode != RecordingMode.GHOST:
-            return True  # Always retain in normal mode
+        # Fetch session
+        session = self.db.query(RecordingSession).filter(
+            RecordingSession.id == session_id,
+            RecordingSession.company_id == tenant_id
+        ).first()
         
-        # Get from company config
-        if db:
-            company = db.query(Company).filter(Company.id == company_id).first()
-            if company:
-                if company.ghost_mode_retention == GhostModeRetention.NONE:
-                    return False  # No transcript retention
-                elif company.ghost_mode_retention == GhostModeRetention.AGGREGATES_ONLY:
-                    return False  # No full transcript, only aggregates
-                elif company.ghost_mode_retention == GhostModeRetention.MINIMAL:
-                    return True  # Retain summary transcript
+        if not session:
+            raise RecordingSessionError(f"Recording session {session_id} not found")
         
-        # Default: Don't retain full transcript in Ghost Mode
-        return False
-    
-    def should_retain_audio(
-        self,
-        session: RecordingSession,
-    ) -> bool:
-        """
-        Determine if audio should be retained.
+        # Validate rep owns the session
+        if session.rep_id != rep_id:
+            raise RecordingSessionError(
+                f"Recording session {session_id} does not belong to rep {rep_id}"
+            )
         
-        Args:
-            session: RecordingSession instance
+        # Validate status
+        if session.status != "recording":
+            raise RecordingSessionError(
+                f"Recording session {session_id} is not in 'recording' status (current: {session.status})"
+            )
+        
+        # Update session
+        now = datetime.utcnow()
+        session.ended_at = now
+        session.status = "completed"
+        session.audio_url = audio_url
+        
+        self.db.commit()
+        self.db.refresh(session)
+        
+        # Trigger Shunya final analysis job (reuse existing patterns)
+        try:
+            # Create Shunya job for analysis
+            shunya_job = self.shunya_job_service.create_job(
+                db=self.db,
+                company_id=tenant_id,
+                job_type=ShunyaJobType.SALES_VISIT,
+                input_payload={
+                    "recording_session_id": session_id,
+                    "audio_url": audio_url,
+                    "appointment_id": session.appointment_id
+                },
+                appointment_id=session.appointment_id,
+                recording_session_id=session_id
+            )
             
-        Returns:
-            True if audio should be retained, False otherwise
-        """
-        return session.audio_storage_mode == AudioStorageMode.PERSISTENT
-    
-    def cleanup_ephemeral_sessions(
-        self,
-        db: Session,
-        company_id: Optional[str] = None,
-    ) -> int:
-        """
-        Clean up expired ephemeral recording sessions.
-        
-        Deletes sessions with expires_at < now and audio_storage_mode = EPHEMERAL.
-        
-        Args:
-            db: Database session
-            company_id: Optional tenant filter
+            # Link job to session
+            session.shunya_analysis_job_id = shunya_job.id
+            self.db.commit()
+            self.db.refresh(session)
             
-        Returns:
-            Number of sessions cleaned up
-        """
-        query = db.query(RecordingSession).filter(
-            RecordingSession.audio_storage_mode == AudioStorageMode.EPHEMERAL,
-            RecordingSession.expires_at < datetime.utcnow(),
-        )
+            logger.info(
+                f"Stopped recording session {session_id} and triggered Shunya analysis job {shunya_job.id}",
+                extra={
+                    "session_id": session_id,
+                    "appointment_id": session.appointment_id,
+                    "shunya_job_id": shunya_job.id,
+                    "tenant_id": tenant_id
+                }
+            )
+        except Exception as e:
+            # Log error but don't fail the stop operation
+            logger.error(
+                f"Failed to trigger Shunya analysis for session {session_id}: {str(e)}",
+                extra={"session_id": session_id},
+                exc_info=True
+            )
+            # Mark session as failed if we can't trigger analysis
+            session.status = "failed"
+            session.error_message = f"Failed to trigger Shunya analysis: {str(e)}"
+            self.db.commit()
+            self.db.refresh(session)
         
-        if company_id:
-            query = query.filter(RecordingSession.company_id == company_id)
-        
-        count = query.count()
-        query.delete(synchronize_session=False)
-        db.commit()
-        
-        logger.info(f"Cleaned up {count} expired ephemeral recording sessions")
-        return count
-
+        return session

@@ -420,7 +420,11 @@ interface SalesRepTodayAppointment {
   customer_id: string | null;
   customer_name: string | null;
   scheduled_time: string;                    // ISO8601 datetime
-  address_line: string | null;
+  address_line: string | null;               // Legacy field (deprecated, use location_address)
+  location_address: string | null;            // Address from Shunya entities (for geofencing)
+  location_lat: number | null;                // Latitude for geofencing
+  location_lng: number | null;                // Longitude for geofencing
+  geofence_radius_meters: number;             // Geofence radius in meters (constant: 75)
   status: string;                             // "scheduled" | "in_progress" | "completed" | "cancelled"
   outcome: string | null;                      // From Shunya RecordingAnalysis.outcome: "won" | "lost" | "pending" (if analysis exists)
 }
@@ -446,6 +450,10 @@ const appointments = await apiGet<SalesRepTodayAppointment[]>(
       "customer_name": "John Doe",
       "scheduled_time": "2025-01-15T10:00:00Z",
       "address_line": "123 Main St, City, State 12345",
+      "location_address": "123 Main St, City, State 12345",
+      "location_lat": 37.7749,
+      "location_lng": -122.4194,
+      "geofence_radius_meters": 75,
       "status": "scheduled",
       "outcome": null
     },
@@ -476,10 +484,153 @@ const appointments = await apiGet<SalesRepTodayAppointment[]>(
 - **Sorted by Time**: Appointments are sorted by `scheduled_time` (ascending)
 - **Outcome from Shunya**: The `outcome` field comes from `RecordingAnalysis.outcome` if analysis exists, otherwise `null`
 - **Status vs Outcome**: `status` is the appointment status (scheduled/completed/etc.), while `outcome` is the Shunya-derived result (won/lost/pending)
+- **Geofence Fields**: `location_address`, `location_lat`, `location_lng`, and `geofence_radius_meters` (constant: 75) are populated from `Appointment` model fields, with fallback to `ContactCard.property_snapshot` if appointment doesn't have lat/lng. These fields are used for geofencing in the mobile app.
 
 ---
 
-## 7. Follow-Ups List (Self)
+## 7. Recording Sessions
+
+### POST `/api/v1/recordings/sessions/start`
+
+**Roles**: `sales_rep` only
+
+**Description**: Start a recording session for an appointment. This endpoint is called by the mobile app when the rep enters the geofence around an appointment location. The session tracks the recording lifecycle and triggers Shunya analysis when stopped.
+
+**Request Body**:
+
+```typescript
+interface StartRecordingSessionRequest {
+  appointment_id: string;  // Appointment ID to record
+}
+```
+
+**Response**:
+
+```typescript
+interface RecordingSessionResponse {
+  id: string;                              // Recording session ID
+  appointment_id: string;                  // Appointment ID
+  started_at: string;                      // ISO8601 datetime
+  ended_at: string | null;                 // ISO8601 datetime (null until stopped)
+  status: string;                          // "pending" | "recording" | "completed" | "failed"
+  audio_url: string | null;               // URL to recorded audio (null until stopped)
+  shunya_job_id: string | null;            // Shunya analysis job ID (null until analysis triggered)
+}
+```
+
+**Example Request**:
+
+```typescript
+const response = await apiPost<RecordingSessionResponse>(
+  '/api/v1/recordings/sessions/start',
+  {
+    appointment_id: 'apt_001'
+  }
+);
+```
+
+**Example Response**:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "session_123",
+    "appointment_id": "apt_001",
+    "started_at": "2025-01-15T10:00:00Z",
+    "ended_at": null,
+    "status": "recording",
+    "audio_url": null,
+    "shunya_job_id": null
+  }
+}
+```
+
+**Validations**:
+- Appointment must exist and belong to the tenant
+- Rep must own the appointment (`Appointment.assigned_rep_id == authenticated_rep_id`)
+- Appointment must be scheduled (allows 30-minute early start window)
+- No existing active session for this appointment
+
+**Errors**:
+- `400`: Appointment not found, not assigned to rep, too early, or session already exists
+- `401`: User ID not found in request
+- `500`: Failed to start recording session
+
+---
+
+### POST `/api/v1/recordings/sessions/{session_id}/stop`
+
+**Roles**: `sales_rep` only
+
+**Description**: Stop a recording session and trigger Shunya analysis. This endpoint is called by the mobile app when the rep exits the geofence or manually stops recording. The audio file should already be uploaded to S3 (or similar storage) before calling this endpoint.
+
+**Path Parameters**:
+- `session_id` (required): Recording session ID
+
+**Request Body**:
+
+```typescript
+interface StopRecordingSessionRequest {
+  audio_url: string;  // URL to the recorded audio file (S3 URL or similar)
+}
+```
+
+**Response**: Same `RecordingSessionResponse` schema as start endpoint, with updated fields.
+
+**Example Request**:
+
+```typescript
+const response = await apiPost<RecordingSessionResponse>(
+  '/api/v1/recordings/sessions/session_123/stop',
+  {
+    audio_url: 'https://s3.example.com/recordings/session_123.mp3'
+  }
+);
+```
+
+**Example Response**:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "session_123",
+    "appointment_id": "apt_001",
+    "started_at": "2025-01-15T10:00:00Z",
+    "ended_at": "2025-01-15T10:45:00Z",
+    "status": "completed",
+    "audio_url": "https://s3.example.com/recordings/session_123.mp3",
+    "shunya_job_id": "shunya_job_456"
+  }
+}
+```
+
+**Validations**:
+- Session must exist and belong to the tenant
+- Rep must own the session
+- Session status must be "recording"
+
+**Behavior**:
+- Sets `ended_at` to current time
+- Sets `status` to "completed"
+- Updates `audio_url` with provided URL
+- Triggers Shunya final analysis job (creates `ShunyaJob` and links via `shunya_analysis_job_id`)
+- If Shunya job creation fails, session is marked as "failed" with error message
+
+**Errors**:
+- `400`: Session not found, not owned by rep, or not in recording status
+- `401`: User ID not found in request
+- `500`: Failed to trigger Shunya analysis (session marked as failed)
+
+**Important Notes**:
+- **Shunya Integration**: When a session is stopped, a Shunya analysis job is automatically created to process the audio and generate insights (transcription, objections, compliance, sentiment, outcome, etc.)
+- **Idempotency**: Stopping an already-stopped session will return an error
+- **Audio Upload**: The mobile app should upload the audio file to S3 (or similar) before calling this endpoint. The `audio_url` should be the final storage URL.
+
+---
+
+## 8. Follow-Ups List (Self)
 
 ### GET `/api/v1/tasks/sales-rep/self`
 
@@ -561,7 +712,7 @@ const tasks = await apiGet<SalesRepFollowupTask[]>(
 
 ---
 
-## 8. Meeting Detail (Self)
+## 9. Meeting Detail (Self)
 
 ### GET `/api/v1/meetings/{appointment_id}/analysis`
 
@@ -664,7 +815,7 @@ const detail = await apiGet<SalesRepMeetingDetail>(
 
 ---
 
-## 9. RBAC & Scoping
+## 10. RBAC & Scoping
 
 ### Sales Rep Permissions
 
@@ -692,7 +843,7 @@ const detail = await apiGet<SalesRepMeetingDetail>(
 
 ---
 
-## 10. Shunya Integration Notes
+## 11. Shunya Integration Notes
 
 ### Frontend Never Calls Shunya Directly
 
@@ -725,7 +876,7 @@ When a sales rep uses Ask Otto or other Shunya-integrated features, the backend 
 
 ---
 
-## 11. Error Handling
+## 12. Error Handling
 
 All endpoints return standard error responses:
 
@@ -763,7 +914,7 @@ interface ErrorResponse {
 
 ---
 
-## 12. Next Steps
+## 13. Next Steps
 
 1. **Review [SALES_REP_APP_INTEGRATION.md](./SALES_REP_APP_INTEGRATION.md)** for detailed UI → API integration mapping
 2. **Set up API client** using the example code in Section 3
