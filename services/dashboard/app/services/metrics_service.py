@@ -15,6 +15,8 @@ from app.models.call import Call
 from app.models.call_analysis import CallAnalysis
 from app.models.appointment import Appointment, AppointmentStatus, AppointmentOutcome
 from app.models.recording_analysis import RecordingAnalysis
+from app.models.recording_session import RecordingSession
+from app.models.recording_transcript import RecordingTranscript
 from app.models.task import Task, TaskStatus, TaskAssignee
 from app.models.sales_rep import SalesRep
 from app.models.user import User
@@ -376,10 +378,17 @@ class MetricsService:
         analysis_by_appointment_id = {analysis.appointment_id: analysis for analysis in analyses}
         
         # Count appointments by status and outcome
+        # IMPORTANT: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
         completed_appointments = 0
         won_appointments = 0
         lost_appointments = 0
         pending_appointments = 0
+        
+        # Track first-touch vs follow-up wins
+        first_touch_wins = 0
+        first_touch_completed = 0
+        followup_wins = 0
+        followup_completed = 0
         
         # Aggregate metrics
         total_objections = 0
@@ -387,21 +396,92 @@ class MetricsService:
         meeting_structure_scores = []
         sentiment_scores = []
         
+        # Track scheduled vs attended for attendance_rate
+        scheduled_appointments = len(all_appointments)
+        attended_appointments = 0
+        
+        # Track auto usage hours
+        total_audio_duration_seconds = 0.0
+        
+        # Get RecordingSession records for these appointments to compute auto_usage_hours
+        recording_sessions = self.db.query(RecordingSession).filter(
+            RecordingSession.appointment_id.in_(appointment_ids),
+            RecordingSession.company_id == tenant_id
+        ).all()
+        
+        session_by_appointment_id = {session.appointment_id: session for session in recording_sessions if session.appointment_id}
+        
+        # Get lead IDs to track first-touch vs follow-up
+        lead_ids = [apt.lead_id for apt in all_appointments if apt.lead_id]
+        
+        # For first-touch detection: get earliest appointment per lead for this rep
+        # TODO: This is a simplified heuristic - we need full appointment history per lead to be accurate
+        first_appointment_by_lead: dict[str, str] = {}
+        if lead_ids:
+            first_appts = self.db.query(
+                Appointment.lead_id,
+                func.min(Appointment.scheduled_start).label('first_scheduled')
+            ).filter(
+                Appointment.company_id == tenant_id,
+                Appointment.assigned_rep_id == rep_id,
+                Appointment.lead_id.in_(lead_ids)
+            ).group_by(Appointment.lead_id).all()
+            
+            for lead_id, first_scheduled in first_appts:
+                first_appointment_by_lead[lead_id] = first_scheduled
+        
         for appointment in all_appointments:
-            # Count by status
+            # Check if attended (has recording session or analysis)
+            has_recording = appointment.id in session_by_appointment_id
+            has_analysis = appointment.id in analysis_by_appointment_id
+            if has_recording or has_analysis:
+                attended_appointments += 1
+            
+            # Count completed appointments (status-based)
             if appointment.status == AppointmentStatus.COMPLETED.value:
                 completed_appointments += 1
-                
-                # Count by outcome
-                if appointment.outcome == AppointmentOutcome.WON.value:
-                    won_appointments += 1
-                elif appointment.outcome == AppointmentOutcome.LOST.value:
-                    lost_appointments += 1
-                elif appointment.outcome == AppointmentOutcome.PENDING.value:
-                    pending_appointments += 1
             
-            # Get analysis for metrics
+            # Get analysis for outcome (Shunya-first)
             analysis = analysis_by_appointment_id.get(appointment.id)
+            
+            # OUTCOME: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
+            # Only count outcomes for completed appointments
+            if appointment.status == AppointmentStatus.COMPLETED.value and analysis and analysis.outcome:
+                outcome_lower = analysis.outcome.lower()
+                
+                # Track first-touch vs follow-up
+                is_first_touch = False
+                if appointment.lead_id and appointment.lead_id in first_appointment_by_lead:
+                    first_scheduled = first_appointment_by_lead[appointment.lead_id]
+                    # If this appointment is the first one for this lead, it's first-touch
+                    if appointment.scheduled_start == first_scheduled:
+                        is_first_touch = True
+                
+                if outcome_lower == "won":
+                    won_appointments += 1
+                    
+                    if is_first_touch:
+                        first_touch_wins += 1
+                        first_touch_completed += 1
+                    else:
+                        followup_wins += 1
+                        followup_completed += 1
+                elif outcome_lower == "lost":
+                    lost_appointments += 1
+                    
+                    if is_first_touch:
+                        first_touch_completed += 1
+                    else:
+                        followup_completed += 1
+                elif outcome_lower in ("pending", "qualified", "rescheduled"):
+                    pending_appointments += 1
+                    
+                    if is_first_touch:
+                        first_touch_completed += 1
+                    else:
+                        followup_completed += 1
+            
+            # Aggregate metrics from analysis
             if analysis:
                 # Objections
                 if analysis.objections and isinstance(analysis.objections, list):
@@ -419,23 +499,95 @@ class MetricsService:
                 # Sentiment score
                 if analysis.sentiment_score is not None:
                     sentiment_scores.append(analysis.sentiment_score)
+            
+            # Auto usage hours: sum RecordingSession.audio_duration_seconds
+            session = session_by_appointment_id.get(appointment.id)
+            if session and session.audio_duration_seconds:
+                total_audio_duration_seconds += session.audio_duration_seconds
         
         # Compute rates (null-safe)
         win_rate = won_appointments / completed_appointments if completed_appointments > 0 else None
+        
+        # First-touch and follow-up win rates
+        first_touch_win_rate = first_touch_wins / first_touch_completed if first_touch_completed > 0 else None
+        followup_win_rate = followup_wins / followup_completed if followup_completed > 0 else None
+        
+        # TODO: First-touch and follow-up detection is simplified - we need full appointment history
+        # per lead to accurately determine if an appointment is truly first-touch vs follow-up.
+        # For now, we use a heuristic based on earliest scheduled_start per lead.
+        # If we don't have enough historical data, these will be None.
+        
+        # Auto usage hours
+        auto_usage_hours = total_audio_duration_seconds / 3600.0 if total_audio_duration_seconds > 0 else None
+        
+        # Attendance rate
+        attendance_rate = attended_appointments / scheduled_appointments if scheduled_appointments > 0 else None
+        
         avg_objections = total_objections / total_appointments if total_appointments > 0 else None
         avg_compliance = sum(compliance_scores) / len(compliance_scores) if compliance_scores else None
         avg_meeting_structure = sum(meeting_structure_scores) / len(meeting_structure_scores) if meeting_structure_scores else None
         avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else None
         
+        # Follow-up rate: (# leads with ≥ 1 follow-up task completed) / (# leads owned by this rep)
+        # Get all leads owned by this rep (assigned_rep_id == rep_id)
+        from app.models.lead import Lead
+        rep_leads = self.db.query(Lead).filter(
+            Lead.company_id == tenant_id,
+            Lead.assigned_rep_id == rep_id
+        ).all()
+        rep_lead_ids = [lead.id for lead in rep_leads]
+        total_leads = len(rep_lead_ids)
+        
+        leads_with_followup = 0
+        if rep_lead_ids:
+            # Count distinct leads that have at least one completed follow-up task
+            # Filter for follow-up action types using ActionType enum
+            from app.models.enums import ActionType
+            followup_action_types = [
+                ActionType.CALL_BACK.value,
+                ActionType.FOLLOW_UP_CALL.value,
+                ActionType.SEND_QUOTE.value,
+                ActionType.SCHEDULE_APPOINTMENT.value,
+                ActionType.SEND_ESTIMATE.value,
+                ActionType.SEND_CONTRACT.value,
+                ActionType.SEND_INFO.value,
+                ActionType.SEND_DETAILS.value,
+                ActionType.CHECK_IN.value,
+            ]
+            
+            completed_followup_leads = self.db.query(distinct(Task.lead_id)).filter(
+                Task.company_id == tenant_id,
+                Task.lead_id.in_(rep_lead_ids),
+                Task.status == TaskStatus.COMPLETED.value,
+                Task.assigned_to == TaskAssignee.REP.value,
+                # Filter for follow-up action types
+                Task.action_type.in_(followup_action_types) if hasattr(Task, 'action_type') else True
+            ).count()
+            leads_with_followup = completed_followup_leads
+        
+        followup_rate = leads_with_followup / total_leads if total_leads > 0 else None
+        
         # Task metrics (followups)
-        # NOTE: Task model uses assigned_to (enum) not assignee_id (user ID)
-        # TODO: Add Task.assignee_id field and filter by rep_id
         now = datetime.utcnow()
         open_tasks_query = self.db.query(Task).filter(
             Task.company_id == tenant_id,
-            Task.assigned_to == TaskAssignee.REP.value,  # Sales rep role
             Task.status.in_([TaskStatus.OPEN.value, TaskStatus.PENDING.value])
         )
+        
+        # Filter by rep: prefer assignee_id if available, else fallback to assigned_to role
+        if hasattr(Task, 'assignee_id'):
+            open_tasks_query = open_tasks_query.filter(
+                or_(
+                    Task.assignee_id == rep_id,
+                    and_(
+                        Task.assignee_id.is_(None),
+                        Task.assigned_to == TaskAssignee.REP.value
+                    )
+                )
+            )
+        else:
+            # Fallback to role-based filtering
+            open_tasks_query = open_tasks_query.filter(Task.assigned_to == TaskAssignee.REP.value)
         
         all_open_tasks = open_tasks_query.all()
         
@@ -449,6 +601,13 @@ class MetricsService:
             if task.due_at is not None and task.due_at < now
         )
         
+        # Pending followups: open tasks with due_date >= today
+        today = now.date()
+        pending_followups_count = sum(
+            1 for task in all_open_tasks
+            if task.due_at is None or task.due_at.date() >= today
+        )
+        
         return SalesRepMetrics(
             total_appointments=total_appointments,
             completed_appointments=completed_appointments,
@@ -456,12 +615,18 @@ class MetricsService:
             lost_appointments=lost_appointments,
             pending_appointments=pending_appointments,
             win_rate=win_rate,
+            first_touch_win_rate=first_touch_win_rate,
+            followup_win_rate=followup_win_rate,
+            auto_usage_hours=auto_usage_hours,
+            attendance_rate=attendance_rate,
+            followup_rate=followup_rate,
             avg_objections_per_appointment=avg_objections,
             avg_compliance_score=avg_compliance,
             avg_meeting_structure_score=avg_meeting_structure,
             avg_sentiment_score=avg_sentiment,
             open_followups=open_followups,
-            overdue_followups=overdue_followups
+            overdue_followups=overdue_followups,
+            pending_followups_count=pending_followups_count
         )
     
     async def get_sales_team_metrics(
@@ -3220,4 +3385,286 @@ class MetricsService:
             ))
         
         return SalesOpportunitiesResponse(items=items)
+    
+    # Sales Rep App Methods
+    
+    async def get_sales_rep_today_appointments(
+        self,
+        *,
+        tenant_id: str,
+        rep_id: str,
+        today: Optional[datetime] = None,
+    ) -> List['SalesRepTodayAppointment']:
+        """
+        Get today's appointments for a sales rep.
+        
+        Args:
+            tenant_id: Company/tenant ID
+            rep_id: Sales rep user ID
+            today: Date to filter by (defaults to current date)
+        
+        Returns:
+            List of SalesRepTodayAppointment for today
+        """
+        from app.schemas.metrics import SalesRepTodayAppointment
+        from app.models.contact_card import ContactCard
+        
+        if today is None:
+            today = datetime.utcnow()
+        
+        # Get start and end of day
+        start_of_day = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day = today.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Query appointments for today
+        appointments = self.db.query(Appointment).filter(
+            Appointment.company_id == tenant_id,
+            Appointment.assigned_rep_id == rep_id,
+            Appointment.scheduled_start >= start_of_day,
+            Appointment.scheduled_start <= end_of_day
+        ).order_by(Appointment.scheduled_start).all()
+        
+        # Get appointment IDs for analysis lookup
+        appointment_ids = [apt.id for apt in appointments]
+        
+        # Get RecordingAnalysis records
+        analyses = self.db.query(RecordingAnalysis).filter(
+            RecordingAnalysis.appointment_id.in_(appointment_ids),
+            RecordingAnalysis.company_id == tenant_id
+        ).all()
+        
+        analysis_by_appointment_id = {analysis.appointment_id: analysis for analysis in analyses}
+        
+        # Build response
+        items: List[SalesRepTodayAppointment] = []
+        for appointment in appointments:
+            analysis = analysis_by_appointment_id.get(appointment.id)
+            
+            # Get customer name
+            customer_name = None
+            customer_id = None
+            if appointment.contact_card_id:
+                contact_card = self.db.query(ContactCard).filter(
+                    ContactCard.id == appointment.contact_card_id
+                ).first()
+                if contact_card:
+                    customer_name = f"{contact_card.first_name or ''} {contact_card.last_name or ''}".strip() or None
+                    customer_id = contact_card.id
+            elif appointment.lead_id:
+                customer_id = appointment.lead_id
+            
+            # Get outcome from Shunya
+            outcome = None
+            if analysis and analysis.outcome:
+                outcome = analysis.outcome.lower()
+            
+            items.append(SalesRepTodayAppointment(
+                appointment_id=appointment.id,
+                customer_id=customer_id,
+                customer_name=customer_name,
+                scheduled_time=appointment.scheduled_start,
+                address_line=appointment.location,
+                status=appointment.status,
+                outcome=outcome
+            ))
+        
+        return items
+    
+    async def get_sales_rep_followups(
+        self,
+        *,
+        tenant_id: str,
+        rep_id: str,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+    ) -> List['SalesRepFollowupTask']:
+        """
+        Get follow-up tasks for a sales rep.
+        
+        Args:
+            tenant_id: Company/tenant ID
+            rep_id: Sales rep user ID
+            date_from: Start datetime (optional)
+            date_to: End datetime (optional)
+        
+        Returns:
+            List of SalesRepFollowupTask
+        """
+        from app.schemas.metrics import SalesRepFollowupTask
+        from app.models.contact_card import ContactCard
+        from app.models.lead import Lead
+        
+        # Query tasks assigned to this rep
+        tasks_query = self.db.query(Task).filter(
+            Task.company_id == tenant_id,
+            Task.status.in_([TaskStatus.OPEN.value, TaskStatus.PENDING.value])
+        )
+        
+        # Filter by rep: prefer assignee_id if available, else fallback to assigned_to role
+        if hasattr(Task, 'assignee_id'):
+            tasks_query = tasks_query.filter(
+                or_(
+                    Task.assignee_id == rep_id,
+                    and_(
+                        Task.assignee_id.is_(None),
+                        Task.assigned_to == TaskAssignee.REP.value
+                    )
+                )
+            )
+        else:
+            tasks_query = tasks_query.filter(Task.assigned_to == TaskAssignee.REP.value)
+        
+        # Apply date filters if provided
+        if date_from:
+            tasks_query = tasks_query.filter(Task.due_at >= date_from)
+        if date_to:
+            tasks_query = tasks_query.filter(Task.due_at <= date_to)
+        
+        tasks = tasks_query.order_by(Task.due_at).all()
+        
+        # Build response
+        items: List[SalesRepFollowupTask] = []
+        now = datetime.utcnow()
+        
+        for task in tasks:
+            # Get customer name
+            customer_name = None
+            if task.contact_card_id:
+                contact_card = self.db.query(ContactCard).filter(
+                    ContactCard.id == task.contact_card_id
+                ).first()
+                if contact_card:
+                    customer_name = f"{contact_card.first_name or ''} {contact_card.last_name or ''}".strip() or None
+            elif task.lead_id:
+                lead = self.db.query(Lead).filter(Lead.id == task.lead_id).first()
+                if lead:
+                    customer_name = lead.customer_name
+            
+            # Get task type
+            task_type = None
+            if task.action_type:
+                task_type = task.action_type.value if hasattr(task.action_type, 'value') else str(task.action_type)
+            
+            # Determine if overdue
+            overdue = False
+            if task.due_at and task.due_at < now:
+                overdue = True
+            
+            # TODO: Get last_contact_time from CallRail/Twilio integration
+            # For now, set to None
+            last_contact_time = None
+            
+            # TODO: Get next_step from Shunya follow-up recommendations
+            # For now, set to None
+            next_step = None
+            
+            items.append(SalesRepFollowupTask(
+                task_id=task.id,
+                lead_id=task.lead_id,
+                customer_name=customer_name,
+                title=task.description,
+                type=task_type,
+                due_date=task.due_at,
+                status=task.status.value if hasattr(task.status, 'value') else str(task.status),
+                last_contact_time=last_contact_time,
+                next_step=next_step,
+                overdue=overdue
+            ))
+        
+        return items
+    
+    async def get_sales_rep_meeting_detail(
+        self,
+        *,
+        tenant_id: str,
+        rep_id: str,
+        appointment_id: str,
+    ) -> 'SalesRepMeetingDetail':
+        """
+        Get meeting detail for a sales rep appointment.
+        
+        Args:
+            tenant_id: Company/tenant ID
+            rep_id: Sales rep user ID
+            appointment_id: Appointment ID
+        
+        Returns:
+            SalesRepMeetingDetail with analysis, transcript, objections, etc.
+        
+        Raises:
+            HTTPException: If appointment not found or not assigned to rep
+        """
+        from app.schemas.metrics import SalesRepMeetingDetail
+        from app.models.recording_transcript import RecordingTranscript
+        from fastapi import HTTPException
+        
+        # Get appointment with RBAC check
+        appointment = self.db.query(Appointment).filter(
+            Appointment.id == appointment_id,
+            Appointment.company_id == tenant_id,
+            Appointment.assigned_rep_id == rep_id
+        ).first()
+        
+        if not appointment:
+            raise HTTPException(
+                status_code=404,
+                detail="Appointment not found or not assigned to this rep"
+            )
+        
+        # Get RecordingAnalysis
+        analysis = self.db.query(RecordingAnalysis).filter(
+            RecordingAnalysis.appointment_id == appointment_id,
+            RecordingAnalysis.company_id == tenant_id
+        ).first()
+        
+        # Get RecordingTranscript
+        transcript = None
+        if appointment_id:
+            recording_transcript = self.db.query(RecordingTranscript).filter(
+                RecordingTranscript.appointment_id == appointment_id,
+                RecordingTranscript.company_id == tenant_id
+            ).first()
+            if recording_transcript:
+                transcript = recording_transcript.transcript
+        
+        # Get call_id from RecordingSession if linked
+        call_id = None
+        recording_session = self.db.query(RecordingSession).filter(
+            RecordingSession.appointment_id == appointment_id,
+            RecordingSession.company_id == tenant_id
+        ).first()
+        if recording_session and recording_session.call_id:
+            call_id = recording_session.call_id
+        
+        # Get follow-up recommendations from CallAnalysis if available
+        followup_recommendations = None
+        if call_id:
+            call_analysis = self.db.query(CallAnalysis).filter(
+                CallAnalysis.call_id == call_id,
+                CallAnalysis.company_id == tenant_id
+            ).first()
+            if call_analysis and call_analysis.followup_recommendations:
+                followup_recommendations = call_analysis.followup_recommendations
+        
+        # Get summary from RecordingTranscript if available, or use coaching_tips from analysis
+        summary = None
+        if transcript:
+            # Use first 500 chars of transcript as summary if no dedicated summary field
+            summary = transcript[:500] + "..." if len(transcript) > 500 else transcript
+        elif analysis and analysis.coaching_tips:
+            # Fallback to coaching tips as summary
+            if isinstance(analysis.coaching_tips, list) and len(analysis.coaching_tips) > 0:
+                summary = "; ".join([tip.get("tip", "") if isinstance(tip, dict) else str(tip) for tip in analysis.coaching_tips[:3]])
+        
+        return SalesRepMeetingDetail(
+            appointment_id=appointment_id,
+            call_id=call_id,
+            summary=summary,
+            transcript=transcript,
+            objections=analysis.objections if analysis and analysis.objections else None,
+            sop_compliance_score=analysis.sop_compliance_score if analysis else None,
+            sentiment_score=analysis.sentiment_score if analysis else None,
+            outcome=analysis.outcome.lower() if analysis and analysis.outcome else None,
+            followup_recommendations=followup_recommendations
+        )
 

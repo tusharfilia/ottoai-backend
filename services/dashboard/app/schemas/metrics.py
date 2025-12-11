@@ -145,6 +145,37 @@ class SalesRepMetrics(BaseModel):
         description="Number of open/pending tasks assigned to rep with due_at < now"
     )
     
+    # Extended KPIs for Sales Rep app
+    first_touch_win_rate: Optional[float] = Field(
+        None,
+        description="Win rate for first appointment with a lead/customer (0.0-1.0), None if insufficient data"
+    )
+    
+    followup_win_rate: Optional[float] = Field(
+        None,
+        description="Win rate where > 1 appointment or follow-up happened before close (0.0-1.0), None if insufficient data"
+    )
+    
+    auto_usage_hours: Optional[float] = Field(
+        None,
+        description="Total hours of meetings recorded with Otto for this rep (sum of RecordingSession.audio_duration_seconds / 3600)"
+    )
+    
+    attendance_rate: Optional[float] = Field(
+        None,
+        description="Attended appointments / scheduled appointments (0.0-1.0), None if no scheduled appointments"
+    )
+    
+    followup_rate: Optional[float] = Field(
+        None,
+        description="Leads with ≥ 1 follow-up task completed / total leads owned by rep (0.0-1.0), None if no leads"
+    )
+    
+    pending_followups_count: int = Field(
+        ...,
+        description="Count of open follow-up tasks assigned to rep with due_date >= today and status in (pending, open)"
+    )
+    
     class Config:
         json_schema_extra = {
             "example": {
@@ -806,4 +837,47 @@ class SalesOpportunitiesResponse(BaseModel):
     """Sales opportunities response."""
     
     items: List[SalesOpportunityItem] = Field(default_factory=list, description="Sales opportunities per rep")
+
+
+# Sales Rep App Schemas
+
+class SalesRepTodayAppointment(BaseModel):
+    """Today's appointment for Sales Rep app."""
+    
+    appointment_id: str = Field(..., description="Appointment ID")
+    customer_id: Optional[str] = Field(None, description="Customer/lead ID")
+    customer_name: Optional[str] = Field(None, description="Customer name")
+    scheduled_time: datetime = Field(..., description="Scheduled start time")
+    address_line: Optional[str] = Field(None, description="Address/location")
+    status: str = Field(..., description="Appointment status (scheduled, in_progress, completed, cancelled)")
+    outcome: Optional[str] = Field(None, description="Outcome from Shunya RecordingAnalysis (won, lost, pending)")
+
+
+class SalesRepFollowupTask(BaseModel):
+    """Follow-up task for Sales Rep app."""
+    
+    task_id: str = Field(..., description="Task ID")
+    lead_id: Optional[str] = Field(None, description="Lead ID")
+    customer_name: Optional[str] = Field(None, description="Customer name")
+    title: Optional[str] = Field(None, description="Task title/description")
+    type: Optional[str] = Field(None, description="Task type (aligned with ActionType enum)")
+    due_date: Optional[datetime] = Field(None, description="Due date/time")
+    status: str = Field(..., description="Task status (open, completed, overdue, cancelled)")
+    last_contact_time: Optional[datetime] = Field(None, description="Last contact time from CallRail/Twilio")
+    next_step: Optional[str] = Field(None, description="Next step from Shunya recommendations")
+    overdue: bool = Field(..., description="Whether task is overdue")
+
+
+class SalesRepMeetingDetail(BaseModel):
+    """Meeting detail for Sales Rep app."""
+    
+    appointment_id: str = Field(..., description="Appointment ID")
+    call_id: Optional[int] = Field(None, description="Call ID if linked")
+    summary: Optional[str] = Field(None, description="AI meeting summary from RecordingAnalysis")
+    transcript: Optional[str] = Field(None, description="Transcript from RecordingTranscript")
+    objections: Optional[List[dict]] = Field(None, description="Objections from RecordingAnalysis")
+    sop_compliance_score: Optional[float] = Field(None, description="SOP compliance score (0-10) from RecordingAnalysis")
+    sentiment_score: Optional[float] = Field(None, description="Sentiment score (0.0-1.0) from RecordingAnalysis")
+    outcome: Optional[str] = Field(None, description="Outcome from RecordingAnalysis (won, lost, pending)")
+    followup_recommendations: Optional[dict] = Field(None, description="Follow-up recommendations from Shunya (normalized structure)")
 

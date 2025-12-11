@@ -830,3 +830,305 @@ class TestCSRDashboardEndpoints:
         response = client.get("/api/v1/metrics/csr/missed-call-recovery", headers=headers)
         assert response.status_code == 403
 
+
+class TestSalesRepAppEndpoints:
+    """Test Sales Rep app endpoints."""
+    
+    @pytest.fixture
+    def mock_jwt_verification_sales_rep(self, monkeypatch):
+        """Mock JWT verification for sales_rep role."""
+        def mock_verify(*args, **kwargs):
+            return {
+                "id": "test_sales_rep_001",
+                "org_role": "sales_rep",
+                "organization_memberships": [{"organization": {"id": "test_company_123"}}]
+            }
+        
+        async def mock_verify_async(*args, **kwargs):
+            return mock_verify(*args, **kwargs)
+        
+        # Patch sync version
+        monkeypatch.setattr("app.middleware.tenant.verify_clerk_jwt", mock_verify)
+        
+        # Also patch request.state to set user_id and user_role
+        original_get = TestClient.get
+        
+        def patched_get(self, *args, **kwargs):
+            response = original_get(self, *args, **kwargs)
+            # Set state attributes if response has request
+            if hasattr(response, 'request') and hasattr(response.request, 'state'):
+                response.request.state.user_id = "test_sales_rep_001"
+                response.request.state.user_role = "sales_rep"
+                response.request.state.tenant_id = "test_company_123"
+            return response
+        
+        monkeypatch.setattr(TestClient, "get", patched_get)
+        return mock_verify
+    
+    @patch('app.routes.metrics_kpis.MetricsService')
+    def test_sales_rep_overview_self_returns_200(
+        self,
+        mock_service_class,
+        client,
+        auth_headers_factory,
+        mock_jwt_verification_sales_rep
+    ):
+        """Test sales rep overview self endpoint returns 200 and valid SalesRepMetrics."""
+        # Mock service
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        
+        # Mock metrics response
+        mock_metrics = SalesRepMetrics(
+            total_appointments=50,
+            completed_appointments=45,
+            won_appointments=30,
+            lost_appointments=10,
+            pending_appointments=5,
+            win_rate=0.6667,
+            first_touch_win_rate=0.5,
+            followup_win_rate=0.75,
+            auto_usage_hours=12.5,
+            attendance_rate=0.9,
+            followup_rate=0.6,
+            avg_objections_per_appointment=1.2,
+            avg_compliance_score=8.5,
+            avg_meeting_structure_score=0.85,
+            avg_sentiment_score=0.75,
+            open_followups=5,
+            overdue_followups=2,
+            pending_followups_count=3
+        )
+        mock_service.get_sales_rep_overview_metrics = AsyncMock(return_value=mock_metrics)
+        
+        headers = auth_headers_factory(
+            tenant_id="test_company_123",
+            user_id="test_sales_rep_001",
+            org_role="sales_rep"
+        )
+        
+        response = client.get("/api/v1/metrics/sales/rep/overview/self", headers=headers)
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert "data" in data
+        assert data["data"]["total_appointments"] == 50
+        assert data["data"]["win_rate"] == 0.6667
+    
+    @patch('app.routes.metrics_kpis.MetricsService')
+    def test_sales_rep_today_appointments_returns_200(
+        self,
+        mock_service_class,
+        client,
+        auth_headers_factory,
+        mock_jwt_verification_sales_rep
+    ):
+        """Test sales rep today appointments endpoint returns 200."""
+        from app.schemas.metrics import SalesRepTodayAppointment
+        
+        # Mock service
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        
+        # Mock appointments response
+        mock_appointments = [
+            SalesRepTodayAppointment(
+                appointment_id="apt_001",
+                customer_id="customer_001",
+                customer_name="John Doe",
+                scheduled_time=datetime.utcnow(),
+                address_line="123 Main St",
+                status="scheduled",
+                outcome=None
+            )
+        ]
+        mock_service.get_sales_rep_today_appointments = AsyncMock(return_value=mock_appointments)
+        
+        headers = auth_headers_factory(
+            tenant_id="test_company_123",
+            user_id="test_sales_rep_001",
+            org_role="sales_rep"
+        )
+        
+        response = client.get("/api/v1/appointments/today/self", headers=headers)
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert "data" in data
+        assert isinstance(data["data"], list)
+        if len(data["data"]) > 0:
+            assert "appointment_id" in data["data"][0]
+    
+    @patch('app.routes.metrics_kpis.MetricsService')
+    def test_sales_rep_followups_returns_200(
+        self,
+        mock_service_class,
+        client,
+        auth_headers_factory,
+        mock_jwt_verification_sales_rep
+    ):
+        """Test sales rep followups endpoint returns 200."""
+        from app.schemas.metrics import SalesRepFollowupTask
+        
+        # Mock service
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        
+        # Mock tasks response
+        mock_tasks = [
+            SalesRepFollowupTask(
+                task_id="task_001",
+                lead_id="lead_001",
+                customer_name="Jane Doe",
+                title="Follow up call",
+                type="call_back",
+                due_date=datetime.utcnow() + timedelta(days=1),
+                status="open",
+                last_contact_time=None,
+                next_step=None,
+                overdue=False
+            )
+        ]
+        mock_service.get_sales_rep_followups = AsyncMock(return_value=mock_tasks)
+        
+        headers = auth_headers_factory(
+            tenant_id="test_company_123",
+            user_id="test_sales_rep_001",
+            org_role="sales_rep"
+        )
+        
+        response = client.get("/api/v1/tasks/sales-rep/self", headers=headers)
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert "data" in data
+        assert isinstance(data["data"], list)
+    
+    @patch('app.routes.metrics_kpis.MetricsService')
+    def test_sales_rep_meeting_analysis_returns_200(
+        self,
+        mock_service_class,
+        client,
+        auth_headers_factory,
+        mock_jwt_verification_sales_rep
+    ):
+        """Test sales rep meeting analysis endpoint returns 200."""
+        from app.schemas.metrics import SalesRepMeetingDetail
+        
+        # Mock service
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        
+        # Mock meeting detail response
+        mock_detail = SalesRepMeetingDetail(
+            appointment_id="apt_001",
+            call_id=None,
+            summary="Meeting summary",
+            transcript="Full transcript...",
+            objections=[{"type": "price", "timestamp": 45.2}],
+            sop_compliance_score=8.5,
+            sentiment_score=0.75,
+            outcome="won",
+            followup_recommendations={"next_steps": ["Send quote"]}
+        )
+        mock_service.get_sales_rep_meeting_detail = AsyncMock(return_value=mock_detail)
+        
+        headers = auth_headers_factory(
+            tenant_id="test_company_123",
+            user_id="test_sales_rep_001",
+            org_role="sales_rep"
+        )
+        
+        response = client.get("/api/v1/meetings/apt_001/analysis", headers=headers)
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert "data" in data
+        assert data["data"]["appointment_id"] == "apt_001"
+        assert data["data"]["outcome"] == "won"
+    
+    def test_sales_rep_endpoints_rbac_csr_forbidden(
+        self,
+        client,
+        auth_headers_factory,
+        mock_verify_clerk_jwt
+    ):
+        """Test that CSR role is forbidden from Sales Rep endpoints."""
+        headers = auth_headers_factory(
+            tenant_id="test_company_123",
+            user_id="test_csr_001",
+            org_role="csr"
+        )
+        
+        # CSR should be forbidden from Sales Rep endpoints
+        response = client.get("/api/v1/metrics/sales/rep/overview/self", headers=headers)
+        assert response.status_code == 403
+        
+        response = client.get("/api/v1/appointments/today/self", headers=headers)
+        assert response.status_code == 403
+        
+        response = client.get("/api/v1/tasks/sales-rep/self", headers=headers)
+        assert response.status_code == 403
+        
+        response = client.get("/api/v1/meetings/apt_001/analysis", headers=headers)
+        assert response.status_code == 403
+    
+    @patch('app.routes.metrics_kpis.MetricsService')
+    def test_sales_rep_overview_uses_shunya_outcome(
+        self,
+        mock_service_class,
+        client,
+        auth_headers_factory,
+        mock_jwt_verification_sales_rep
+    ):
+        """Test that sales rep overview metrics use Shunya's RecordingAnalysis.outcome, not Appointment.outcome."""
+        # Mock service
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        
+        # Mock metrics response with Shunya-derived outcome
+        mock_metrics = SalesRepMetrics(
+            total_appointments=10,
+            completed_appointments=8,
+            won_appointments=5,  # From Shunya RecordingAnalysis.outcome == "won"
+            lost_appointments=2,  # From Shunya RecordingAnalysis.outcome == "lost"
+            pending_appointments=1,
+            win_rate=0.625,  # 5/8
+            first_touch_win_rate=0.5,
+            followup_win_rate=0.75,
+            auto_usage_hours=5.0,
+            attendance_rate=0.9,
+            followup_rate=0.6,
+            avg_objections_per_appointment=1.2,
+            avg_compliance_score=8.5,
+            avg_meeting_structure_score=0.85,
+            avg_sentiment_score=0.75,
+            open_followups=3,
+            overdue_followups=1,
+            pending_followups_count=2
+        )
+        mock_service.get_sales_rep_overview_metrics = AsyncMock(return_value=mock_metrics)
+        
+        headers = auth_headers_factory(
+            tenant_id="test_company_123",
+            user_id="test_sales_rep_001",
+            org_role="sales_rep"
+        )
+        
+        response = client.get("/api/v1/metrics/sales/rep/overview/self", headers=headers)
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        # Verify that win_rate is computed from Shunya outcomes (won_appointments / completed_appointments)
+        assert data["data"]["won_appointments"] == 5
+        assert data["data"]["win_rate"] == 0.625
+        # Verify all Shunya-derived metrics are present
+        assert "avg_compliance_score" in data["data"]
+        assert "avg_sentiment_score" in data["data"]
+        assert "avg_meeting_structure_score" in data["data"]
+

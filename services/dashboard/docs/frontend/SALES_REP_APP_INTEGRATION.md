@@ -1,1538 +1,869 @@
 # Sales Rep Mobile App Integration Specification
 
-**Date**: 2025-01-20  
-**Status**: ✅ **Production-Ready**  
-**Target Platform**: React Native (Expo)  
-**Validation**: ✅ All 12 validation passes completed
+**Date**: 2025-12-10  
+**Status**: ✅ **Implementation-Ready**
 
 ---
 
 ## 📋 Document Purpose
 
-This document provides a complete, production-grade integration specification for the Sales Rep mobile app to integrate with the Otto FastAPI backend. It defines exactly how Sales Rep screens should communicate with backend APIs, including authentication, data mapping, user actions, error handling, idempotency, and mobile-specific considerations.
+This document provides a complete, production-grade integration specification for the Sales Rep React Native mobile app to integrate with the Otto FastAPI backend. It defines exactly how Sales Rep screens should communicate with backend APIs, including authentication, data mapping, user actions, and error handling.
 
 **Target Audience**: Frontend development agency implementing Sales Rep mobile app  
-**Scope**: Sales Rep mobile app only (not CSR webapp or Executive dashboard)
-
-**All endpoints, schemas, and behaviors have been cross-validated against:**
-- ✅ Backend route files (`app/routes/*.py`)
-- ✅ Pydantic schemas (`app/schemas/*.py`)
-- ✅ SQLAlchemy models (`app/models/*.py`)
-- ✅ OpenAPI specification (`/openapi.json`)
-- ✅ Seed demo data (`scripts/seed_demo_data.py`)
+**Scope**: Sales Rep mobile app only (not CSR webapp or Executive webapp)
 
 ---
 
 ## 0. Global Integration Rules
 
-### 0.1 Auth, Tenancy & RBAC
+### 0.1 Platform & Role
 
-#### JWT from Clerk
+**Platform**: Sales Rep mobile app (React Native)
 
-**Every Sales Rep API call MUST include JWT in Authorization header**:
-```
-Authorization: Bearer <JWT>
-```
+**Role**: `sales_rep` for all screens in this doc
 
-**JWT Claims Structure**:
-- `org_id` / `organization_id` / `tenant_id` / `company_id` → Extracted by backend as `tenant_id`
-- `sub` / `user_id` → Extracted by backend as `user_id`
-- `org_role` / `role` → Must be `"rep"`, `"org:sales_rep"`, or `"sales_rep"` → Mapped to `"sales_rep"` role
+**Auth**: Same as CSR/Exec (JWT from Clerk or equivalent auth provider)
 
-**Backend Role Mapping**:
-```python
-role_mapping = {
-    "admin": "manager",
-    "org:admin": "manager",
-    "exec": "manager",
-    "manager": "manager",
-    "csr": "csr",
-    "org:csr": "csr",
-    "rep": "sales_rep",
-    "sales_rep": "sales_rep",
-    "org:sales_rep": "sales_rep",
-}
-```
+### 0.2 Authentication & Tenant Scoping
 
-**Getting JWT in React Native**:
+**Every Sales Rep frontend API call MUST:**
+
+1. **Include JWT in Authorization header**:
+   ```
+   Authorization: Bearer <JWT>
+   ```
+   - JWT is supplied by the auth layer (Clerk or equivalent)
+   - JWT contains `user_id`, `company_id`, and `role: "sales_rep"` claims
+   - Frontend should extract JWT from auth provider (Clerk session)
+
+2. **Include tenant scoping via header** (if required by endpoint):
+   ```
+   X-Company-Id: <company_id>
+   ```
+   - `company_id` is extracted from JWT claims (not manually set)
+   - Frontend must NOT try to override `company_id` for other tenants
+   - Multi-tenancy is enforced backend-side using `company_id` and role claims from JWT
+
+3. **Never call internal/Shunya endpoints directly**:
+   - ❌ Do NOT call `/internal/ai/*` endpoints
+   - ❌ Do NOT call Shunya/UWC URLs directly
+   - ✅ All AI/analysis/Ask Otto behavior flows through Otto's own APIs
+   - ✅ Frontend only calls `/api/v1/*` public endpoints
+
+**Backend Enforcement**:
+- `TenantContextMiddleware` extracts `tenant_id`, `user_id`, and `user_role` from JWT
+- All database queries are automatically scoped by `company_id`
+- Cross-tenant access attempts return `403 Forbidden`
+
+**Example Request**:
 ```typescript
-import { useAuth } from '@clerk/clerk-expo';
-
-const { getToken } = useAuth();
-const token = await getToken(); // Returns JWT string
+const response = await fetch(`${API_BASE_URL}/api/v1/metrics/sales/rep/overview/self`, {
+  headers: {
+    'Authorization': `Bearer ${jwtToken}`,
+    'Content-Type': 'application/json',
+  },
+});
 ```
 
-#### Tenant Scoping
+### 0.3 Shunya-First Semantics
 
-**All Sales Rep endpoints are tenant-scoped**:
-- Backend automatically extracts `tenant_id` from JWT's `org_id` claim via `TenantContextMiddleware`
-- Reps **only see their own assignments** (appointments, tasks, recordings, etc.)
-- Backend enforces ownership checks: reps cannot access other reps' data
-- **Frontend must NEVER pass `tenant_id` manually** — it's extracted from JWT
+**All semantic analysis comes from Shunya via Otto's backend:**
+
+- **Booking / Qualified**: From `CallAnalysis.booking_status` and `CallAnalysis.lead_quality` (not inferred from appointments)
+- **Outcome (won/lost/pending)**: From `RecordingAnalysis.outcome` (not `Appointment.outcome`)
+- **Objections**: From `RecordingAnalysis.objections` (JSON list)
+- **SOP Compliance**: From `RecordingAnalysis.sop_compliance_score` (0-10 scale)
+- **Sentiment**: From `RecordingAnalysis.sentiment_score` (0.0-1.0)
+- **Meeting Structure**: Derived from `RecordingAnalysis.meeting_segments`
+
+**Important**:
+- ✅ All data fetched via Otto backend; frontend never calls Shunya directly
+- ✅ Otto never overrides Shunya's semantics
+- ✅ All win rates, scores, and KPIs are derived from Shunya fields stored in `CallAnalysis` and `RecordingAnalysis`
+
+### 0.4 Self-Scoping
+
+**All endpoints in this doc are self-scoped:**
+
+- Use current user context (authenticated `sales_rep` user)
+- No explicit `rep_id` needed on "self" endpoints
+- Backend automatically extracts `user_id` from JWT and filters data accordingly
+- All metrics, appointments, tasks, and meeting details are automatically scoped to the authenticated sales rep
 
 **Example**:
-```typescript
-// ✅ Correct: Backend extracts tenant_id from JWT
-GET /api/v1/appointments
-Headers: { Authorization: "Bearer <jwt>" }
+- `GET /api/v1/metrics/sales/rep/overview/self` → Returns metrics for the authenticated rep only
+- `GET /api/v1/appointments/today/self` → Returns today's appointments for the authenticated rep only
+- `GET /api/v1/tasks/sales-rep/self` → Returns follow-up tasks for the authenticated rep only
 
-// ❌ Wrong: Never pass tenant_id manually
-GET /api/v1/appointments?tenant_id=org_123
-```
+### 0.5 RBAC (Role-Based Access Control)
 
-#### Role-Based Access Control
+**Sales Rep Role**:
+- JWT contains `role: "sales_rep"` claim
+- Backend enforces role-based access via `@require_role("sales_rep")` decorators
+- Sales rep may only see/modify resources they own
 
-**Sales Rep Role** (`sales_rep`):
-- ✅ Can access:
-  - `/api/v1/appointments` (own appointments only, filtered by `assigned_rep_id == user_id`)
-  - `/api/v1/tasks` (own tasks only, filtered by `assigned_to == "rep"` and tenant)
-  - `/api/v1/recording-sessions/*` (own recordings only, filtered by `rep_id == user_id`)
-  - `/api/v1/reps/{rep_id}/shifts/*` (own shifts only, filtered by `rep_id == user_id`)
-  - `/api/v1/message-threads/{contact_card_id}` (tenant-scoped)
-  - `/api/v1/rag/query` (Ask Otto - scoped to rep's own data)
-- ❌ Cannot access:
-  - Manager-only endpoints (returns 403)
-  - Other reps' appointments/tasks/recordings (backend enforces ownership)
-  - Company-wide analytics (manager-only)
+**Sales Rep Data Scoping**:
+- ✅ **Can Access**:
+  - Own metrics (self-scoped)
+  - Own appointments (assigned to their `rep_id`)
+  - Own follow-up tasks (assigned to their `rep_id`)
+  - Own meeting details (appointments they own)
+  - Ask Otto scoped to own data
+- ❌ **Cannot Access**:
+  - Other reps' metrics or appointments
   - CSR-specific endpoints
+  - Manager-only endpoints (use Exec endpoints instead)
 
 **Ask Otto RBAC**:
-- When rep uses Ask Otto, backend forwards `X-Target-Role: sales_rep` to Shunya
-- Shunya scopes responses to rep's own data (appointments, recordings, tasks)
-- **Current State**: Backend already defaults to `sales_rep` target_role (correct for rep context)
-
-**Manager Role** (`manager`):
-- ✅ Can access: All rep endpoints + management endpoints
-
-**CSR Role** (`csr`):
-- ✅ Can access: CSR-specific endpoints (not rep endpoints)
+- When sales rep uses Ask Otto, backend automatically sends `X-Target-Role: sales_rep` to Shunya
+- Shunya scopes responses to sales rep-accessible data (own appointments, leads, tasks, recordings)
+- Context includes only that sales rep's identity: `{"user_role": "sales_rep", "rep_id": <current_user_id>}`
 
 **403 Forbidden Handling**:
-```typescript
-if (response.status === 403) {
-  // User doesn't have permission
-  // Show error: "You don't have permission to access this resource"
-  // Do NOT retry
-  showError('Access denied. You do not have permission to perform this action.');
-}
-```
+- If backend returns `403`, treat as "insufficient permissions"
+- Show user-friendly message: "You don't have permission to perform this action"
+- Never force through 403 errors in UI
+- Log 403 errors for security monitoring
 
 ---
 
-### 0.2 Idempotency for Mutating Endpoints
+## 1. Sales Rep Frontend Screens
 
-#### Recording Sessions
+The Sales Rep mobile app consists of the following main screens:
 
-**Endpoint**: `POST /api/v1/recording-sessions/start`  
-**Idempotent**: ✅ Yes  
-**Idempotency Key**: `recording_session_id` (returned in response)  
-**Retry Strategy**: 
-- If network fails after receiving `recording_session_id`, use `GET /api/v1/recording-sessions/{session_id}` to check if session exists
-- If session exists, use existing session ID
-- If session doesn't exist, retry start request
+### 1.1 Sales Rep Home / Ask Otto
+**Purpose**: Chat-like Q&A about their own pipeline, customers, appointments, performance.
 
-**Example**:
-```typescript
-let sessionId: string | null = null;
+### 1.2 Recording Tab
+**Purpose**: Auto-record appointments via geofence + mic. Mostly automatic with no manual interaction required.
 
-try {
-  const response = await apiClient.post('/api/v1/recording-sessions/start', body);
-  sessionId = response.data.recording_session_id;
-} catch (error) {
-  // Network failure - check if session was created
-  if (body.appointment_id) {
-    const existingSession = await checkExistingSession(body.appointment_id);
-    if (existingSession) {
-      sessionId = existingSession.id;
-    } else {
-      // Retry start request
-      const retryResponse = await apiClient.post('/api/v1/recording-sessions/start', body);
-      sessionId = retryResponse.data.recording_session_id;
-    }
-  }
-}
-```
+### 1.3 Main Dashboard Tab / KPIs & Stats
+**Purpose**: Show per-rep performance metrics for a date range.
 
-**Endpoint**: `POST /api/v1/recording-sessions/{session_id}/upload-audio`  
-**Idempotent**: ✅ Yes (safe to retry if upload fails)  
-**Idempotency Key**: `session_id` + `audio_url` combination  
-**Retry Strategy**: 
-- Check if `audio_url` is already set in session before retrying upload
-- If `audio_url` exists, skip upload and proceed to next step
+### 1.4 Main Dashboard Tab / Today's Appointments
+**Purpose**: Show today's appointment list sorted by time.
 
-#### Appointments
+### 1.5 Main Dashboard Tab / Follow-Ups
+**Purpose**: List follow-up tasks with "call" or "message" actions.
 
-**Endpoint**: `PATCH /api/v1/appointments/{appointment_id}`  
-**Idempotent**: ✅ Yes (updates are idempotent)  
-**Idempotency Key**: `appointment_id`  
-**Retry Strategy**: Safe to retry on network failure — backend will apply same update
-
-**Example**:
-```typescript
-// Safe to retry - backend handles idempotency
-const updateAppointment = async (appointmentId: string, outcome: string) => {
-  try {
-    await apiClient.patch(`/api/v1/appointments/${appointmentId}`, { outcome });
-  } catch (error) {
-    if (error.status >= 500) {
-      // Retry with exponential backoff
-      await retryWithBackoff(() => 
-        apiClient.patch(`/api/v1/appointments/${appointmentId}`, { outcome })
-      );
-    }
-  }
-};
-```
-
-#### Tasks
-
-**Endpoint**: `POST /api/v1/tasks`  
-**Idempotent**: ❌ No  
-**Retry Strategy**: **Do NOT auto-retry**. Show user confirmation before retrying to avoid duplicate tasks.
-
-**Example**:
-```typescript
-const createTask = async (taskData: TaskCreateBody) => {
-  try {
-    await apiClient.post('/api/v1/tasks', taskData);
-  } catch (error) {
-    if (error.status >= 500) {
-      // Show confirmation dialog
-      const shouldRetry = await showConfirmDialog(
-        'Failed to create task. Retry?'
-      );
-      if (shouldRetry) {
-        await apiClient.post('/api/v1/tasks', taskData);
-      }
-    }
-  }
-};
-```
-
-**Endpoint**: `POST /api/v1/tasks/{task_id}/complete`  
-**Idempotent**: ✅ Yes (safe to retry)  
-**Idempotency Key**: `task_id`  
-**Retry Strategy**: Safe to retry — backend checks if task is already completed
-
-#### Rep Shifts
-
-**Endpoint**: `POST /api/v1/reps/{rep_id}/shifts/clock-in`  
-**Idempotent**: ✅ Yes  
-**Idempotency Key**: `rep_id` + `shift_date` (today)  
-**Retry Strategy**: Safe to retry — backend returns existing shift if already clocked in
-
-**Example**:
-```typescript
-const clockIn = async (repId: string) => {
-  try {
-    const response = await apiClient.post(`/api/v1/reps/${repId}/shifts/clock-in`, {});
-    return response.data;
-  } catch (error) {
-    // If already clocked in, backend may return existing shift
-    if (error.status === 400 && error.message.includes('already clocked in')) {
-      // Fetch today's shift
-      return await apiClient.get(`/api/v1/reps/${repId}/shifts/today`);
-    }
-    throw error;
-  }
-};
-```
-
-**Endpoint**: `POST /api/v1/reps/{rep_id}/shifts/clock-out`  
-**Idempotent**: ✅ Yes (safe to retry)  
-**Idempotency Key**: `rep_id` + `shift_date`  
-**Retry Strategy**: Safe to retry — backend checks if already clocked out
+### 1.6 Meeting Detail / Customer Card
+**Purpose**: Show AI meeting summary, transcript, objections, SOP scores, sentiment, outcome, and follow-up recommendations.
 
 ---
 
-### 0.3 Production-Grade Behaviors
+## 2. Screen-by-Screen Integration Specs
 
-#### Pagination & Performance
+---
 
-**All list endpoints support pagination**:
+## Screen: Sales Rep Home / Ask Otto
+
+**File(s)**: `src/screens/AskOttoScreen.tsx` (or equivalent)
+
+### Purpose
+
+Chat-like Q&A interface for sales reps. Sales rep can ask natural language questions about their own pipeline, customers, appointments, performance, follow-ups, and recordings. All answers are Shunya-backed RAG responses but role-scoped to the authenticated sales rep's data.
+
+### Data Source
+
+**Endpoint**: `POST /api/v1/rag/query`
+
+**Method**: POST
+
+**Auth**: Requires `sales_rep` role (JWT with `role: "sales_rep"`)
+
+**When Called**: On prompt submit (user types question and clicks submit)
+
+### Request Schema
 
 ```typescript
-// Appointments
-GET /api/v1/appointments?date=2025-01-20&limit=50&offset=0
-
-// Tasks
-GET /api/v1/tasks?limit=100&offset=0&status=open
-
-// Message Threads
-GET /api/v1/message-threads/{contact_card_id}?limit=50&offset=0
-```
-
-**Defaults**:
-- `limit`: 50 (max: 1000)
-- `offset`: 0
-
-**Best Practices**:
-- Use cursor-based pagination for large datasets (implemented via `offset` for now)
-- Load initial page with `limit=50`
-- Implement infinite scroll or "Load More" button
-- Cache paginated results locally for offline access
-
-#### Error Handling
-
-**401 Unauthorized** (Token Expired):
-```typescript
-if (response.status === 401) {
-  // Refresh JWT from Clerk
-  const { getToken } = useAuth();
-  const newToken = await getToken({ template: 'default' });
-  
-  // Retry request with new token
-  return retryRequest(path, options, newToken);
+interface RAGQueryRequest {
+  query: string;                    // Natural language question (3-1000 chars)
+  filters?: {                       // Optional filters
+    date_range?: string;            // e.g., "last_30_days"
+    [key: string]: any;
+  };
+  max_results?: number;             // Max results (1-50, default: 10)
 }
 ```
 
-**403 Forbidden** (RBAC Issue):
+### Response Schema
+
 ```typescript
-if (response.status === 403) {
-  // User doesn't have permission
-  // Show error: "You don't have permission to access this resource"
-  // Do NOT retry
-  showError('Access denied. You do not have permission to perform this action.');
-  return;
+interface RAGQueryResponse {
+  query_id: string;                 // Unique query ID
+  query: string;                    // Original query
+  answer: string;                    // Answer text (guaranteed non-null)
+  citations: Citation[];            // Source citations (may be empty if processing)
+  confidence_score: number;         // 0.0-1.0 (may be 0.0 if processing)
+  latency_ms: number;               // Query latency in milliseconds
+}
+
+interface Citation {
+  doc_id: string;
+  filename?: string;
+  chunk_text: string;
+  similarity_score: number;
+  call_id?: number;
+  timestamp?: number;
 }
 ```
 
-**404 Not Found** (Resource Deleted):
-```typescript
-if (response.status === 404) {
-  // Resource was deleted or doesn't exist
-  // Remove from local cache/state
-  // Show user-friendly message
-  removeFromCache(resourceId);
-  showError('This resource no longer exists.');
-  return;
+### Frontend spec: fields + endpoint + example JSON
+
+**Endpoint**: `POST /api/v1/rag/query`
+
+**Used by UI**:
+- **Input**: `query.question` → User's typed question
+- **Output**:
+  - `answer` → Chat bubble text (display as message)
+  - `citations[]` → "Sources" list (show as expandable section or inline links)
+  - `confidence_score` → Optional confidence indicator (show as badge or progress bar)
+
+**Example Request**:
+```json
+{
+  "query": "What's my win rate this month?",
+  "filters": {
+    "date_range": "last_30_days"
+  },
+  "max_results": 10
 }
 ```
 
-**5xx Server Error**:
-```typescript
-if (response.status >= 500) {
-  // Retry with exponential backoff
-  // Show user: "Server error. Retrying..."
-  // Max 3 retries with backoff: 1s, 2s, 4s
-  
-  const maxRetries = 3;
-  let retryCount = 0;
-  
-  while (retryCount < maxRetries) {
-    await sleep(Math.pow(2, retryCount) * 1000); // 1s, 2s, 4s
-    try {
-      return await retryRequest(path, options);
-    } catch (error) {
-      retryCount++;
-      if (retryCount >= maxRetries) {
-        showError('Server error. Please try again later.');
-        throw error;
+**Example Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "query_id": "query_abc123",
+    "query": "What's my win rate this month?",
+    "answer": "Your win rate this month is 65% (13 won out of 20 completed appointments). This is above your average of 60%.",
+    "citations": [
+      {
+        "doc_id": "appointment_456",
+        "chunk_text": "Appointment completed with outcome: won...",
+        "similarity_score": 0.92,
+        "call_id": 456,
+        "timestamp": 1234567890
       }
+    ],
+    "confidence_score": 0.89,
+    "latency_ms": 1250
+  }
+}
+```
+
+**Important Notes**:
+- **Target Role**: Backend automatically sets `X-Target-Role: sales_rep` when calling Shunya, so context is sales-rep scoped
+- **Scoping**: Only includes that sales rep's appointments, leads, tasks, and recordings, not company-wide data
+- **Shunya Fields**: All semantic analysis (outcomes, objections, compliance, sentiment) comes from Shunya. Otto never overrides Shunya's semantics.
+- **Nullable Fields**: If Shunya is still processing, `citations` may be empty and `confidence_score` may be 0.0
+
+**Example Questions Sales Rep Can Ask**:
+- "Show me my pending follow-ups"
+- "What happened in my last 3 appointments with John Doe?"
+- "What's my win rate this month?"
+- "What are my top objections this quarter?"
+- "Which appointments did I win this week?"
+
+---
+
+## Screen: Recording Tab
+
+**File(s)**: `src/screens/RecordingTab.tsx` (or equivalent)
+
+### Purpose
+
+Auto-record appointments via geofence + mic (Otto mobile). Recording is triggered automatically when the sales rep enters a geofence around an appointment location. The recording tab may display a list of recordings or show recording status.
+
+### Data Source
+
+**No dedicated public API for recording list yet**
+
+**Current State**: Recordings are managed by Otto backend + Shunya and surfaced only through the Meeting Detail view (`GET /api/v1/meetings/{appointment_id}/analysis`).
+
+**Recording Pipeline**:
+- Recording is automatic (geofence + mic trigger)
+- No explicit API calls required beyond the existing recording ingestion pipeline
+- Recordings are processed by Shunya and stored in `RecordingSession`, `RecordingAnalysis`, and `RecordingTranscript` tables
+- Analysis results are available via the Meeting Detail endpoint
+
+### Frontend spec: fields + endpoint + example JSON
+
+**Endpoint**: N/A (no dedicated recording list endpoint)
+
+**Used by UI**:
+- If the recording tab shows a list of recordings, use `GET /api/v1/appointments/today/self` to get appointments, then call `GET /api/v1/meetings/{appointment_id}/analysis` for each appointment to check if recording/analysis exists
+- If the recording tab is just a status indicator, no API calls needed (recording happens automatically)
+
+**Note**: If a dedicated recording list endpoint is needed in the future, it will be documented separately. For now, recordings are accessed through the Meeting Detail view.
+
+---
+
+## Screen: Main Dashboard Tab / KPIs & Stats
+
+**File(s)**: `src/screens/DashboardScreen.tsx` (or equivalent, KPIs section)
+
+### Purpose
+
+Show per-rep performance metrics for a date range. Displays key performance indicators including win rates, attendance, follow-up rates, compliance scores, and sentiment scores. All metrics are derived from Shunya fields.
+
+### Data Source
+
+**Endpoint**: `GET /api/v1/metrics/sales/rep/overview/self`
+
+**Method**: GET
+
+**Auth**: Requires `sales_rep` role (JWT with `role: "sales_rep"`)
+
+**When Called**: On screen load, and when date range is changed
+
+**Query Parameters**:
+- `date_from` (optional, ISO8601): Start date (defaults to 30 days ago)
+- `date_to` (optional, ISO8601): End date (defaults to now)
+
+### Response Schema
+
+```typescript
+interface SalesRepMetrics {
+  total_appointments: number;
+  completed_appointments: number;
+  won_appointments: number;                    // From Shunya RecordingAnalysis.outcome == "won"
+  lost_appointments: number;                   // From Shunya RecordingAnalysis.outcome == "lost"
+  pending_appointments: number;                // From Shunya RecordingAnalysis.outcome == "pending"
+  win_rate: number | null;                    // won_appointments / completed_appointments
+  first_touch_win_rate: number | null;         // Win rate for first appointment with a lead (may be null if insufficient history)
+  followup_win_rate: number | null;            // Win rate where > 1 appointment happened before close (may be null)
+  auto_usage_hours: number | null;            // Total hours of meetings recorded (RecordingSession.audio_duration_seconds / 3600)
+  attendance_rate: number | null;             // Attended appointments / scheduled appointments
+  followup_rate: number | null;               // Leads with ≥ 1 follow-up task completed / total leads owned by rep
+  pending_followups_count: number;             // Count of open follow-up tasks
+  avg_objections_per_appointment: number | null;  // From RecordingAnalysis.objections
+  avg_compliance_score: number | null;        // From RecordingAnalysis.sop_compliance_score (0-10 scale)
+  avg_meeting_structure_score: number | null; // Derived from RecordingAnalysis.meeting_segments
+  avg_sentiment_score: number | null;         // From RecordingAnalysis.sentiment_score (0.0-1.0)
+  open_followups: number;                     // Open/pending tasks with due_at >= now
+  overdue_followups: number;                   // Open/pending tasks with due_at < now
+}
+```
+
+### Frontend spec: fields + endpoint + example JSON
+
+**Endpoint**: `GET /api/v1/metrics/sales/rep/overview/self?date_from=2025-01-01&date_to=2025-01-31`
+
+**Fields used**:
+- `win_rate` → Main KPI card (display as percentage, e.g., "65%")
+- `first_touch_win_rate` vs `followup_win_rate` → Two side-by-side stats (display as percentages, e.g., "50%" and "75%")
+- `auto_usage_hours` → Total Otto hours used (display as hours, e.g., "12.5 hours")
+- `attendance_rate` → Appointments attended % (display as percentage, e.g., "90%")
+- `followup_rate` → Follow-up completion rate (display as percentage, e.g., "60%")
+- `pending_followups_count` → Count badge (display as number, e.g., "8")
+- `avg_compliance_score` → Compliance score (display as score out of 10, e.g., "8.5/10")
+- `avg_meeting_structure_score` → Meeting structure score (display as percentage, e.g., "85%")
+- `avg_sentiment_score` → Sentiment score (display as percentage, e.g., "75%")
+- `open_followups` → Open tasks count (display as number, e.g., "5")
+- `overdue_followups` → Overdue tasks count (display as number, e.g., "2")
+
+**Example Request**:
+```typescript
+const metrics = await apiGet<SalesRepMetrics>(
+  '/api/v1/metrics/sales/rep/overview/self?date_from=2025-01-01&date_to=2025-01-31'
+);
+```
+
+**Example Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "total_appointments": 50,
+    "completed_appointments": 45,
+    "won_appointments": 30,
+    "lost_appointments": 10,
+    "pending_appointments": 5,
+    "win_rate": 0.6667,
+    "first_touch_win_rate": 0.5,
+    "followup_win_rate": 0.75,
+    "auto_usage_hours": 12.5,
+    "attendance_rate": 0.9,
+    "followup_rate": 0.6,
+    "pending_followups_count": 8,
+    "avg_objections_per_appointment": 1.2,
+    "avg_compliance_score": 8.5,
+    "avg_meeting_structure_score": 0.85,
+    "avg_sentiment_score": 0.75,
+    "open_followups": 5,
+    "overdue_followups": 2
+  }
+}
+```
+
+**UI Mapping**:
+- **Main KPI Card**: Display `win_rate` as large percentage (e.g., "66.7%")
+- **Side-by-Side Stats**: Display `first_touch_win_rate` (e.g., "50%") and `followup_win_rate` (e.g., "75%") in two columns
+- **Otto Hours**: Display `auto_usage_hours` as "12.5 hours" with icon
+- **Attendance**: Display `attendance_rate` as "90%" with progress bar
+- **Follow-up Rate**: Display `followup_rate` as "60%" with progress bar
+- **Pending Follow-ups**: Display `pending_followups_count` as badge with number "8"
+- **Scores Section**: Display `avg_compliance_score` (8.5/10), `avg_meeting_structure_score` (85%), and `avg_sentiment_score` (75%) in a scores card
+- **Tasks Summary**: Display `open_followups` (5) and `overdue_followups` (2) in a tasks summary card
+
+**Important Notes**:
+- **Shunya-First**: All win/loss decisions come from Shunya's `RecordingAnalysis.outcome`, not `Appointment.outcome`. Otto never overrides Shunya's semantics.
+- **Scores from Shunya**: `avg_compliance_score`, `avg_sentiment_score`, `avg_meeting_structure_score` all come from Shunya's `RecordingAnalysis` fields.
+- **Rates are null-safe**: All rate fields return `null` if denominator is 0 or if insufficient data exists. Display "N/A" or "-" when null.
+- **First-touch vs Follow-up**: `first_touch_win_rate` and `followup_win_rate` may be `null` if there's insufficient appointment history. Display "N/A" when null.
+
+---
+
+## Screen: Main Dashboard Tab / Today's Appointments
+
+**File(s)**: `src/screens/DashboardScreen.tsx` (or equivalent, Today's Appointments section)
+
+### Purpose
+
+Show today's appointment list sorted by time. Sales rep can see all appointments scheduled for today, sorted chronologically. Each appointment shows customer name, scheduled time, address, status, and outcome (if analysis exists).
+
+### Data Source
+
+**Endpoint**: `GET /api/v1/appointments/today/self`
+
+**Method**: GET
+
+**Auth**: Requires `sales_rep` role (JWT with `role: "sales_rep"`)
+
+**When Called**: On screen load, and when date is changed
+
+**Query Parameters**:
+- `date` (optional, ISO date YYYY-MM-DD): Date to filter by (defaults to "today" if omitted)
+
+### Response Schema
+
+```typescript
+interface SalesRepTodayAppointment {
+  appointment_id: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  scheduled_time: string;                    // ISO8601 datetime
+  address_line: string | null;
+  status: string;                             // "scheduled" | "in_progress" | "completed" | "cancelled"
+  outcome: string | null;                      // From Shunya RecordingAnalysis.outcome: "won" | "lost" | "pending" (if analysis exists)
+}
+```
+
+### Frontend spec: fields + endpoint + example JSON
+
+**Endpoint**: `GET /api/v1/appointments/today/self?date=2025-01-15` (optional date param)
+
+**Fields used**:
+- `appointment_id` → Used for navigation to Meeting Detail (on tap)
+- `customer_name` → Display as primary text in list item
+- `scheduled_time` → Display as time (e.g., "10:00 AM") and date if needed
+- `address_line` → Display as secondary text or in detail view
+- `status` → Display as status badge (e.g., "Scheduled", "Completed", "Cancelled")
+- `outcome` → Display as outcome badge if not null (e.g., "Won", "Lost", "Pending")
+
+**Click Behavior**:
+- On tap → Navigate to customer/meeting detail screen, calling:
+  - `GET /api/v1/meetings/{appointment_id}/analysis` (see Meeting Detail screen)
+
+**Example Request**:
+```typescript
+const appointments = await apiGet<SalesRepTodayAppointment[]>(
+  '/api/v1/appointments/today/self?date=2025-01-15'
+);
+```
+
+**Example Response**:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "appointment_id": "apt_001",
+      "customer_id": "lead_123",
+      "customer_name": "John Doe",
+      "scheduled_time": "2025-01-15T10:00:00Z",
+      "address_line": "123 Main St, City, State 12345",
+      "status": "scheduled",
+      "outcome": null
+    },
+    {
+      "appointment_id": "apt_002",
+      "customer_id": "lead_456",
+      "customer_name": "Jane Smith",
+      "scheduled_time": "2025-01-15T14:00:00Z",
+      "address_line": "456 Oak Ave, City, State 12345",
+      "status": "completed",
+      "outcome": "won"
+    },
+    {
+      "appointment_id": "apt_003",
+      "customer_id": "lead_789",
+      "customer_name": "Bob Johnson",
+      "scheduled_time": "2025-01-15T16:00:00Z",
+      "address_line": null,
+      "status": "scheduled",
+      "outcome": null
+    }
+  ]
+}
+```
+
+**UI Mapping**:
+- **List Item**: Display `customer_name` as primary text, `scheduled_time` as secondary text (formatted as "10:00 AM"), `status` as badge
+- **Outcome Badge**: If `outcome` is not null, display as colored badge (e.g., green for "won", red for "lost", yellow for "pending")
+- **Address**: Display `address_line` in detail view or as tertiary text if space allows
+- **Tap Action**: Navigate to Meeting Detail screen with `appointment_id`
+
+**Important Notes**:
+- **Self-Scoped**: Only returns appointments where `Appointment.assigned_rep_id == authenticated_rep_id`
+- **Sorted by Time**: Appointments are sorted by `scheduled_time` (ascending)
+- **Outcome from Shunya**: The `outcome` field comes from `RecordingAnalysis.outcome` if analysis exists, otherwise `null`
+- **Status vs Outcome**: `status` is the appointment status (scheduled/completed/etc.), while `outcome` is the Shunya-derived result (won/lost/pending)
+
+---
+
+## Screen: Main Dashboard Tab / Follow-Ups
+
+**File(s)**: `src/screens/DashboardScreen.tsx` (or equivalent, Follow-Ups section)
+
+### Purpose
+
+List follow-up tasks with "call" or "message" actions. Sales rep can see all follow-up tasks assigned to them, sorted by due date. Each task shows customer name, task description, type, due date, status, and whether it's overdue.
+
+### Data Source
+
+**Endpoint**: `GET /api/v1/tasks/sales-rep/self`
+
+**Method**: GET
+
+**Auth**: Requires `sales_rep` role (JWT with `role: "sales_rep"`)
+
+**When Called**: On screen load, and when filters are changed
+
+**Query Parameters**:
+- `date_from` (optional, ISO8601): Start date for `due_date` range filter
+- `date_to` (optional, ISO8601): End date for `due_date` range filter
+- `status` (optional): Filter by status - `"open"`, `"pending"`, `"completed"`, `"overdue"`, `"cancelled"`
+
+### Response Schema
+
+```typescript
+interface SalesRepFollowupTask {
+  task_id: string;
+  lead_id: string | null;
+  customer_name: string | null;
+  title: string | null;                        // Task description
+  type: string | null;                         // Aligned with ActionType enum (e.g., "call_back", "send_quote", "schedule_appointment")
+  due_date: string | null;                     // ISO8601 datetime
+  status: string;                              // "open" | "pending" | "completed" | "overdue" | "cancelled"
+  last_contact_time: string | null;            // ISO8601 datetime (currently may be null, TODO: Twilio/CallRail integration)
+  next_step: string | null;                    // Next step recommendation (currently may be null, TODO: Shunya recommendations)
+  overdue: boolean;                            // Whether task is overdue (due_date < now)
+}
+```
+
+### Frontend spec: fields + endpoint + example JSON
+
+**Endpoint**: `GET /api/v1/tasks/sales-rep/self?date_from=2025-01-01&date_to=2025-01-31&status=pending`
+
+**Fields used**:
+- `task_id` → Used for task actions (complete, cancel, etc.)
+- `customer_name` → Display as primary text in list item
+- `title` → Display as task description
+- `type` → Display as task type badge (e.g., "Call Back", "Send Quote")
+- `due_date` → Display as due date/time (formatted, e.g., "Jan 16, 10:00 AM")
+- `status` → Display as status badge
+- `overdue` → Display as visual indicator (red border, warning icon, etc.)
+- `last_contact_time` → Display as "Last contacted X days ago" if not null
+
+**Actions**:
+- **Call Button**: Use Twilio / phone integration on the client side (no special API documented here yet)
+- **Message Button**: Use Twilio SMS integration on the client side (no special API documented here yet)
+- **Tap Row**: Navigate to customer/meeting detail:
+  - If task has `appointment_id` (not in schema but may be linked), call `GET /api/v1/meetings/{appointment_id}/analysis`
+  - Otherwise, navigate to customer details endpoint (if available, reference `/api/v1/leads/{lead_id}` from other docs)
+
+**Example Request**:
+```typescript
+const tasks = await apiGet<SalesRepFollowupTask[]>(
+  '/api/v1/tasks/sales-rep/self?date_from=2025-01-01&date_to=2025-01-31&status=pending'
+);
+```
+
+**Example Response**:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "task_id": "task_001",
+      "lead_id": "lead_123",
+      "customer_name": "John Doe",
+      "title": "Follow up on quote sent last week",
+      "type": "follow_up_call",
+      "due_date": "2025-01-16T10:00:00Z",
+      "status": "open",
+      "last_contact_time": null,
+      "next_step": null,
+      "overdue": false
+    },
+    {
+      "task_id": "task_002",
+      "lead_id": "lead_456",
+      "customer_name": "Jane Smith",
+      "title": "Send contract to customer",
+      "type": "send_contract",
+      "due_date": "2025-01-15T14:00:00Z",
+      "status": "pending",
+      "last_contact_time": "2025-01-14T16:30:00Z",
+      "next_step": "Schedule signing appointment",
+      "overdue": true
+    }
+  ]
+}
+```
+
+**UI Mapping**:
+- **List Item**: Display `customer_name` as primary text, `title` as secondary text, `due_date` as tertiary text (formatted)
+- **Type Badge**: Display `type` as badge (e.g., "Call Back", "Send Quote")
+- **Status Badge**: Display `status` as colored badge
+- **Overdue Indicator**: If `overdue` is `true`, display red border, warning icon, or "OVERDUE" label
+- **Last Contact**: If `last_contact_time` is not null, display as "Last contacted 2 days ago" (calculate days from now)
+- **Next Step**: If `next_step` is not null, display as hint text or in detail view
+- **Call/Message Buttons**: Display action buttons (Twilio integration handled client-side)
+- **Tap Action**: Navigate to customer/meeting detail based on task linkage
+
+**Important Notes**:
+- **Self-Scoped**: Only returns tasks where `Task.assignee_id == authenticated_rep_id` (or `Task.assigned_to == "rep"` if `assignee_id` is not available)
+- **ActionType Enum**: The `type` field uses canonical `ActionType` enum values (30 total values: `call_back`, `send_quote`, `schedule_appointment`, `follow_up_call`, etc.)
+- **Follow-up Semantics**: Tasks are aligned with Shunya's canonical action types for consistency
+- **Last Contact Time**: Currently `null` - will be populated from Twilio/CallRail integration in the future
+- **Next Step**: Currently `null` - will be populated from Shunya follow-up recommendations in the future
+- **Sorted by Due Date**: Tasks are sorted by `due_date` (ascending)
+
+---
+
+## Screen: Meeting Detail / Customer Card
+
+**File(s)**: `src/screens/MeetingDetailScreen.tsx` (or equivalent)
+
+### Purpose
+
+Show AI meeting summary, transcript, objections, SOP scores, sentiment, outcome, and follow-up recommendations. This is the detailed view when a sales rep taps on an appointment or follow-up task. All data is Shunya-derived but normalized by Otto.
+
+### Data Source
+
+**Endpoint**: `GET /api/v1/meetings/{appointment_id}/analysis`
+
+**Method**: GET
+
+**Auth**: Requires `sales_rep` role (JWT with `role: "sales_rep"`)
+
+**When Called**: When user taps on an appointment or follow-up task linked to an appointment
+
+**Path Parameters**:
+- `appointment_id` (required): Appointment ID
+
+### Response Schema
+
+```typescript
+interface SalesRepMeetingDetail {
+  appointment_id: string;
+  call_id: number | null;                      // Call ID if linked to a call
+  summary: string | null;                       // AI meeting summary (from RecordingTranscript or RecordingAnalysis.coaching_tips)
+  transcript: string | null;                   // Full transcript (from RecordingTranscript)
+  objections: Array<{
+    type: string;                               // Objection type (e.g., "price", "timeline", "competitor")
+    timestamp?: number;                         // Timestamp in seconds
+    [key: string]: any;
+  }> | null;                                    // From RecordingAnalysis.objections
+  sop_compliance_score: number | null;         // From RecordingAnalysis.sop_compliance_score (0-10 scale)
+  sentiment_score: number | null;             // From RecordingAnalysis.sentiment_score (0.0-1.0)
+  outcome: string | null;                      // From RecordingAnalysis.outcome: "won" | "lost" | "pending"
+  followup_recommendations: {
+    next_steps?: string[];
+    recommended_actions?: Array<{
+      action_type: string;
+      priority: string;
+      description: string;
+    }>;
+    [key: string]: any;
+  } | null;                                    // From CallAnalysis.followup_recommendations (normalized structure)
+}
+```
+
+### Frontend spec: fields + endpoint + example JSON
+
+**Endpoint**: `GET /api/v1/meetings/{appointment_id}/analysis`
+
+**Fields used**:
+- `summary` → Top section text (display as meeting summary card)
+- `transcript` → Transcript view (scrollable text area)
+- `objections[]` → List of objections with timestamps or metadata (display as objections card with list)
+- `sop_compliance_score` → Display as score out of 10 (e.g., "8.5/10") with progress bar
+- `sentiment_score` → Display as percentage (e.g., "75%") with sentiment indicator (positive/neutral/negative)
+- `outcome` → Display as outcome badge (e.g., "Won", "Lost", "Pending")
+- `followup_recommendations` → Next-step UI (display as recommendations card with action items)
+
+**Example Request**:
+```typescript
+const detail = await apiGet<SalesRepMeetingDetail>(
+  '/api/v1/meetings/apt_001/analysis'
+);
+```
+
+**Example Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "appointment_id": "apt_001",
+    "call_id": 12345,
+    "summary": "Meeting with John Doe focused on pricing discussion. Customer expressed interest but needs to discuss with spouse. Key objections: price too high, timeline concerns. Sentiment was positive overall. Recommended follow-up: send detailed quote within 24 hours.",
+    "transcript": "Rep: Hi John, thanks for meeting with me today. Let's discuss your roofing needs...\nCustomer: I'm interested but the price seems high...\nRep: I understand. Let me break down the value...",
+    "objections": [
+      {
+        "type": "price",
+        "timestamp": 245.5,
+        "severity": "high"
+      },
+      {
+        "type": "timeline",
+        "timestamp": 312.8,
+        "severity": "medium"
+      }
+    ],
+    "sop_compliance_score": 8.5,
+    "sentiment_score": 0.75,
+    "outcome": "pending",
+    "followup_recommendations": {
+      "next_steps": [
+        "Send detailed quote within 24 hours",
+        "Follow up in 3 days to check on spouse discussion"
+      ],
+      "recommended_actions": [
+        {
+          "action_type": "send_quote",
+          "priority": "high",
+          "description": "Send comprehensive quote with breakdown of costs and value proposition"
+        },
+        {
+          "action_type": "follow_up_call",
+          "priority": "medium",
+          "description": "Call in 3 days to follow up on spouse discussion"
+        }
+      ]
     }
   }
 }
 ```
 
-#### Observability & Logging
+**UI Mapping**:
+- **Summary Card**: Display `summary` as text in a card at the top
+- **Transcript Section**: Display `transcript` in a scrollable text area with formatting (speaker labels if available)
+- **Objections Card**: Display `objections[]` as a list with:
+  - Objection type as primary text (e.g., "Price")
+  - Timestamp as secondary text (e.g., "4:05")
+  - Severity/metadata as badge or indicator
+- **Scores Section**: Display `sop_compliance_score` (8.5/10) and `sentiment_score` (75%) in a scores card with progress bars
+- **Outcome Badge**: Display `outcome` as colored badge (green for "won", red for "lost", yellow for "pending")
+- **Follow-up Recommendations**: Display `followup_recommendations` as a recommendations card with:
+  - `next_steps[]` as bullet list
+  - `recommended_actions[]` as action items with priority indicators
 
-**Request ID / Correlation ID**:
-- Backend returns `request_id` / `trace_id` in error responses
-- **Always log this ID** for debugging
-- **Never log JWTs or sensitive PII** (phone numbers, addresses, etc.)
+**Important Notes**:
+- **RBAC**: The sales rep must own the appointment (`Appointment.assigned_rep_id == authenticated_rep_id`). Returns `403 Forbidden` if not owned.
+- **Shunya-First**: All fields (`objections`, `sop_compliance_score`, `sentiment_score`, `outcome`) come from Shunya's `RecordingAnalysis`. Otto never overrides Shunya's semantics.
+- **Transcript Source**: Transcript comes from `RecordingTranscript.transcript` if available, otherwise `null`.
+- **Summary Source**: Summary comes from `RecordingTranscript` (first 500 chars) or `RecordingAnalysis.coaching_tips` as fallback.
+- **Follow-up Recommendations**: Structure reused from the follow-up recommendations integration. May be `null` if not available.
+- **Data Normalization**: This data is largely Shunya-derived, but normalized by Otto for consistent structure.
+
+---
+
+## 3. RBAC & Self-Scoping
+
+### All Endpoints in This Doc
+
+**Require `sales_rep` role**:
+- All endpoints documented in this spec require JWT with `role: "sales_rep"` claim
+- Backend enforces role-based access via `@require_role("sales_rep")` decorators
+- Returns `403 Forbidden` if role is not `sales_rep`
+
+**Are self-scoped using the authenticated user**:
+- All endpoints automatically extract `user_id` from JWT
+- Data is filtered by `rep_id == authenticated_user_id`
+- No explicit `rep_id` parameter needed on "self" endpoints
+- Sales rep can only see their own metrics, appointments, tasks, and meeting details
+
+### Manager/Exec Endpoints
+
+**Any manager/exec endpoints for sales are documented in**:
+- [EXEC_APP_INTEGRATION.md](./EXEC_APP_INTEGRATION.md)
+- [EXEC_API_QUICKSTART.md](./EXEC_API_QUICKSTART.md)
+
+Sales reps should not call manager-only endpoints. If a sales rep needs company-wide data, they should use the Exec dashboard instead.
+
+---
+
+## 4. Error Handling
+
+All endpoints return standard error responses:
+
+```typescript
+interface ErrorResponse {
+  success: false;
+  error: {
+    code: string;
+    message: string;
+    details?: any;
+  };
+}
+```
+
+**Common Error Codes**:
+- `401 Unauthorized`: Missing or invalid JWT token
+- `403 Forbidden`: Role does not have permission (e.g., CSR trying to access sales rep endpoint, or sales rep trying to access another rep's appointment)
+- `404 Not Found`: Resource not found (e.g., appointment not found or not owned by rep)
+- `500 Internal Server Error`: Server error
 
 **Example Error Response**:
+
 ```json
 {
-  "detail": {
-    "error_code": "NOT_FOUND",
-    "message": "Appointment not found",
-    "request_id": "req_abc123xyz",
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Appointment not found or not assigned to this rep",
     "details": {
-      "appointment_id": "appt_123"
+      "appointment_id": "apt_001"
     }
   }
 }
 ```
 
-**Logging Best Practices**:
-```typescript
-// ✅ Good
-logger.error('Failed to fetch appointment', { 
-  appointment_id: 'appt_123',
-  request_id: error.request_id,
-  status_code: error.status
-});
-
-// ❌ Bad (never log JWTs or PII)
-logger.error('Failed', { 
-  token: jwtToken, 
-  phone: '+1234567890',
-  address: '123 Main St'
-});
-```
+**Frontend Error Handling**:
+- Show user-friendly error messages
+- Handle `403` as "insufficient permissions" (should not happen for self-scoped endpoints)
+- Handle `404` as "resource not found" (appointment may have been deleted or not owned by rep)
+- Allow retry for `500` errors
+- Log errors for debugging
 
 ---
 
-### 0.4 Mobile Constraints
+## 5. Next Steps
 
-#### Offline / Flaky Network Considerations
-
-**What Can Be Cached for Offline Read**:
-- ✅ Today's appointments (cache for 5 minutes)
-- ✅ Completed tasks (cache for 1 hour)
-- ✅ Past appointments (cache for 24 hours)
-- ✅ Rep shift status (cache for 1 minute)
-- ✅ Message threads (cache for 15 minutes)
-
-**What Should Be Queued and Retried**:
-- ✅ Recording session start/stop (queue and retry)
-- ✅ Task completion (queue and retry)
-- ✅ Appointment outcome updates (queue and retry)
-- ✅ Clock-in/out (queue and retry)
-
-**What Requires Online Confirmation**:
-- ❌ Creating new tasks (require online)
-- ❌ Posting to wins feed (require online)
-- ❌ Starting recording session (require online for geofence validation)
-
-**Offline Queue Implementation**:
-```typescript
-// Example offline queue
-class OfflineQueue {
-  private queue: Array<{ action: string; payload: any; timestamp: number }> = [];
-  
-  async add(action: string, payload: any) {
-    this.queue.push({ action, payload, timestamp: Date.now() });
-    await this.persistQueue();
-    await this.processQueue();
-  }
-  
-  async processQueue() {
-    if (!navigator.onLine) return;
-    
-    while (this.queue.length > 0) {
-      const item = this.queue[0];
-      try {
-        await this.executeAction(item.action, item.payload);
-        this.queue.shift();
-        await this.persistQueue();
-      } catch (error) {
-        // Retry later
-        break;
-      }
-    }
-  }
-}
-```
-
-#### Timeouts and UX Expectations
-
-**Recommended Timeouts**:
-- **Recording operations**: 30 seconds (large audio uploads)
-- **List endpoints**: 10 seconds
-- **Update endpoints**: 5 seconds
-- **Health checks**: 3 seconds
-
-**UX for Slow Responses**:
-- Show loading indicator after 1 second
-- Show "Retrying..." message after timeout
-- Allow user to cancel long-running operations
-- Cache responses to show stale data while refreshing
-
-**Example**:
-```typescript
-const fetchWithTimeout = async (url: string, options: RequestInit, timeout: number = 10000) => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    clearTimeout(timeoutId);
-    return response;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      throw new Error('Request timeout');
-    }
-    throw error;
-  }
-};
-```
+1. **Review [SALES_REP_API_QUICKSTART.md](./SALES_REP_API_QUICKSTART.md)** for detailed API reference
+2. **Set up API client** with JWT authentication
+3. **Implement Ask Otto screen** with chat interface
+4. **Build dashboard** with KPIs and stats
+5. **Implement today's appointments** list
+6. **Add follow-ups** list with task management
+7. **Wire up meeting detail** view for appointment drill-down
+8. **Handle recording tab** (mostly automatic, no API calls needed)
 
 ---
 
-### 0.5 Security & DO NOTs
-
-#### ❌ DO NOT
-
-1. **Never call Shunya or internal AI endpoints directly**
-   - ✅ Use `/api/v1/*` endpoints only
-   - ❌ Do NOT call `/api/v1/ai/*` or Shunya endpoints directly
-   - ❌ Do NOT bypass Otto's API layer
-
-2. **Do not trust client-supplied `tenant_id`**
-   - ✅ Tenancy is enforced on the server from JWT
-   - ❌ Do NOT pass `X-Company-Id` or `tenant_id` in request body
-   - ❌ Do NOT try to access other tenants' data
-
-3. **Reps cannot access other reps' appointments/leads**
-   - ✅ Backend enforces ownership checks
-   - ❌ Do NOT try to access other reps' data by ID
-   - ❌ Do NOT try to bypass tenant scoping
-
-4. **Only use real `/api/v1/*` endpoints**
-   - ✅ All documented endpoints exist in backend code
-   - ❌ Do NOT invent new endpoints
-   - ❌ Do NOT use endpoints not documented here
-
-5. **Never log JWTs or sensitive PII**
-   - ✅ Log `request_id`, `appointment_id`, etc.
-   - ❌ Do NOT log tokens, phone numbers, addresses in plain text
-   - ❌ Do NOT include sensitive data in error messages shown to users
-
----
-
-## 1. Sales Rep Frontend Screens Identified
-
-Based on exploration of `/Users/tusharmehrotra/Documents/Otto_Salesrep`, the following Sales Rep screens have been identified:
-
-### 1.1 Home / AI Chat Screen
-**File(s)**: `app/(tabs)/index.tsx`
-
-**Components**:
-- `GreetingSection` - Personalized greeting
-- `ChatBubble` - Chat message bubbles
-- `MessageInput` - Text input for Ask Otto queries
-- `SuggestionChips` - Quick suggestion chips
-- `SideDrawer` - Chat history drawer
-
-**Purpose**: Main landing page with Ask Otto chat interface for natural language queries.
-
-**Backend Endpoints**:
-- `POST /api/v1/rag/query` - Ask Otto queries ✅ **Implemented**
-
-**Ask Otto Integration**:
-- **Request**: `POST /api/v1/rag/query` with body `{ "query": "user question", "filters": {...}, "max_results": 10 }`
-- **Response**: `{ "data": { "query_id": "...", "query": "...", "answer": "...", "citations": [...], "confidence_score": 0.85, "latency_ms": 1250 } }`
-- **Field Guarantees**:
-  - `data.answer` (string) - ✅ **Guaranteed non-null**
-  - `data.query_id` (string) - ✅ **Guaranteed non-null**
-  - `data.citations` (array) - ⚠️ **May be empty** if Shunya processing delayed
-  - `data.confidence_score` (number) - ⚠️ **May be 0.0** if processing incomplete
-- **Backend → Shunya**: Currently uses `/api/v1/search/` (legacy). **Target**: Will migrate to `/api/v1/ask-otto/query` with `X-Target-Role: sales_rep` header.
-- **RBAC**: Rep queries are scoped to rep's own data (appointments, recordings, tasks). Backend sets `X-Target-Role: sales_rep` when calling Shunya.
-
----
-
-### 1.2 Sales Dashboard Screen
-**File(s)**: `app/(tabs)/sales.tsx`
-
-**Components**:
-- `SalesDashboard` - Main dashboard container
-- `SalesHeader` - Header with stats
-- `InsightsSection` - AI insights and recommendations
-- `KPIStatsPanel` - KPI metrics (revenue, appointments, etc.)
-- `BookmarkChips` - Bookmarked filters
-- `AppointmentsList` - Upcoming appointments list
-- `FollowUpsSection` - Follow-up tasks and reminders
-
-**Purpose**: Sales rep performance dashboard with appointments, KPIs, and insights.
-
-**Backend Endpoints**:
-- `GET /api/v1/appointments` - List appointments
-- `GET /api/v1/tasks` - List tasks
-- `GET /api/v1/appointments/{appointment_id}` - Get appointment details
-
----
-
-### 1.3 Recording Screen
-**File(s)**: `app/(tabs)/record.tsx`
-
-**Components**:
-- `RecordingPrompt` - Instructions for recording
-- `RecordingControls` - Start/pause/stop recording
-- `RecordingTimer` - Recording duration display
-- `RecordingWaveform` - Audio waveform visualization
-- `PlaybackControl` - Playback controls after recording
-- `OutcomeSelector` - Won/Not Won selector
-- `PostingSection` - Post to wins feed
-
-**Purpose**: Record appointment audio, select outcome, and optionally post to wins feed.
-
-**Backend Endpoints**:
-- `POST /api/v1/recording-sessions/start` - Start recording session
-- `POST /api/v1/recording-sessions/{session_id}/stop` - Stop recording session
-- `POST /api/v1/recording-sessions/{session_id}/upload-audio` - Upload audio
-- `PATCH /api/v1/appointments/{appointment_id}` - Update appointment outcome
-- `POST /api/v1/wins-feed` - Post to wins feed (if implemented)
-
----
-
-### 1.4 Feeds Screen
-**File(s)**: `app/(tabs)/feeds.tsx`
-
-**Components**:
-- `ExploreFeed` - Explore wins feed
-- `MyPostsFeed` - Rep's own posts
-- `SavedFeed` - Saved posts
-
-**Purpose**: Social feed for wins, insights, and team collaboration.
-
-**Backend Endpoints**:
-- `GET /api/v1/wins-feed` - Get wins feed (if implemented)
-- `POST /api/v1/wins-feed` - Post to wins feed (if implemented)
-
----
-
-### 1.5 Messages Screen
-**File(s)**: `app/(tabs)/messages.tsx`
-
-**Components**:
-- `Conversations` - List of conversations
-- `ConversationListItem` - Individual conversation item
-- `ChatHeader` - Chat header
-- `MessageBubble` - Message bubbles
-- `MessageInputBar` - Message input
-
-**Purpose**: SMS/message threads with contacts.
-
-**Backend Endpoints**:
-- `GET /api/v1/message-threads/{contact_card_id}` - Get message thread
-
----
-
-### 1.6 Past Appointments Screen
-**File(s)**: `app/past-appointments.tsx`
-
-**Purpose**: View past appointments and outcomes.
-
-**Backend Endpoints**:
-- `GET /api/v1/appointments?date={past_date}` - List past appointments
-
----
-
-## 2. Detailed Endpoint Documentation
-
-### 2.1 Appointments
-
-#### 2.1.1 List Appointments
-
-**Endpoint**: `GET /api/v1/appointments`
-
-**Roles**: `sales_rep`, `manager`, `csr`
-
-**Query Parameters**:
-- `rep_id` (optional, string): Sales rep ID (defaults to authenticated user if rep)
-- `date` (optional, string): Date filter (ISO format YYYY-MM-DD, defaults to today)
-- `status` (optional, string): Filter by status (`scheduled`, `confirmed`, `completed`, `cancelled`, `no_show`)
-- `outcome` (optional, string): Filter by outcome (`pending`, `won`, `lost`, `no_show`, `rescheduled`)
-
-**Response**:
-```typescript
-{
-  "data": {
-    "appointments": [
-      {
-        "appointment_id": "appt_123",
-        "lead_id": "lead_456",
-        "contact_card_id": "contact_789",
-        "customer_name": "John Doe",
-        "address": "123 Main St",
-        "scheduled_start": "2025-01-20T14:00:00Z",
-        "scheduled_end": "2025-01-20T15:00:00Z",
-        "status": "scheduled",
-        "outcome": "pending",
-        "service_type": "Roof Replacement",
-        "is_assigned_to_me": true,
-        "deal_size": null,
-        "pending_tasks_count": 2
-      }
-    ],
-    "total": 5,
-    "date": "2025-01-20"
-  }
-}
-```
-
-**Tenant Scoping**: ✅ Automatic (rep sees only own appointments)
-
-**Pagination**: ❌ No pagination - returns all appointments for the specified date
-
-**Example**:
-```typescript
-// Get today's appointments
-const appointments = await apiClient.get('/api/v1/appointments', {
-  date: '2025-01-20'
-});
-
-// Get past appointments
-const pastAppointments = await apiClient.get('/api/v1/appointments', {
-  date: '2025-01-19',
-  status: 'completed'
-});
-```
-
----
-
-#### 2.1.2 Get Appointment Details
-
-**Endpoint**: `GET /api/v1/appointments/{appointment_id}`
-
-**Roles**: `sales_rep`, `manager`, `csr`
-
-**Response**:
-```typescript
-{
-  "data": {
-    "appointment": {
-      "id": "appt_123",
-      "lead_id": "lead_456",
-      "contact_card_id": "contact_789",
-      "scheduled_start": "2025-01-20T14:00:00Z",
-      "scheduled_end": "2025-01-20T15:00:00Z",
-      "status": "scheduled",
-      "outcome": "pending",
-      "assigned_rep_id": "rep_123",
-      "location": "123 Main St",
-      "service_type": "Roof Replacement",
-      "notes": "Customer prefers morning appointments",
-      "deal_size": null,
-      "created_at": "2025-01-15T10:00:00Z",
-      "updated_at": "2025-01-15T10:00:00Z"
-    },
-    "lead": {
-      "id": "lead_456",
-      "status": "qualified",
-      "deal_size": null,
-      "created_at": "2025-01-10T08:00:00Z"
-    },
-    "contact": {
-      "id": "contact_789",
-      "first_name": "John",
-      "last_name": "Doe",
-      "phone_number": "+1234567890",
-      "email": "john@example.com",
-      "address": "123 Main St"
-    }
-  }
-}
-```
-
-**Tenant Scoping**: ✅ Automatic (rep can only access own appointments)
-
-**Example**:
-```typescript
-const appointment = await apiClient.get(`/api/v1/appointments/${appointmentId}`);
-```
-
----
-
-#### 2.1.3 Update Appointment
-
-**Endpoint**: `PATCH /api/v1/appointments/{appointment_id}`
-
-**Roles**: `sales_rep`, `manager`, `csr`
-
-**Request Body**:
-```typescript
-{
-  "scheduled_start": "2025-01-20T15:00:00Z", // optional
-  "scheduled_end": "2025-01-20T16:00:00Z", // optional
-  "status": "completed", // optional
-  "outcome": "won", // optional: "pending" | "won" | "lost" | "no_show" | "rescheduled"
-  "deal_size": 5000.00, // optional, required when outcome="won"
-  "location": "123 Main St", // optional
-  "service_type": "Roof Replacement", // optional
-  "notes": "Customer signed contract" // optional
-}
-```
-
-**Response**: Same as `GET /api/v1/appointments/{appointment_id}`
-
-**Idempotency**: ✅ Yes (safe to retry)
-
-**Tenant Scoping**: ✅ Automatic (rep can only update own appointments)
-
-**Example**:
-```typescript
-// Mark appointment as won
-await apiClient.patch(`/api/v1/appointments/${appointmentId}`, {
-  outcome: 'won',
-  deal_size: 5000.00,
-  status: 'completed'
-});
-```
-
----
-
-### 2.2 Tasks
-
-#### 2.2.1 List Tasks
-
-**Endpoint**: `GET /api/v1/tasks`
-
-**Roles**: `sales_rep`, `manager`, `csr`
-
-**Query Parameters**:
-- `assignee_id` (optional, string): Filter by assignee (user ID)
-- `lead_id` (optional, string): Filter by lead ID
-- `contact_card_id` (optional, string): Filter by contact card ID
-- `status` (optional, string): Filter by status (`open`, `completed`, `overdue`, `cancelled`)
-- `overdue` (optional, boolean): Filter by overdue status
-- `due_before` (optional, datetime): Filter tasks due before this date
-- `due_after` (optional, datetime): Filter tasks due after this date
-- `limit` (optional, int): Maximum number of tasks (default: 100, max: 1000)
-- `offset` (optional, int): Number of tasks to skip (default: 0)
-
-**Response**:
-```typescript
-{
-  "data": {
-    "tasks": [
-      {
-        "id": "task_123",
-        "description": "Follow up with customer",
-        "status": "open",
-        "assigned_to": "sales_rep",
-        "due_at": "2025-01-21T10:00:00Z",
-        "priority": "high",
-        "contact_card_id": "contact_789",
-        "lead_id": "lead_456",
-        "appointment_id": "appt_123",
-        "created_at": "2025-01-20T08:00:00Z",
-        "updated_at": "2025-01-20T08:00:00Z"
-      }
-    ],
-    "total": 10,
-    "overdue_count": 2
-  }
-}
-```
-
-**Tenant Scoping**: ✅ Automatic (rep sees only own tasks)
-
-**Pagination**: ✅ `limit` (default: 100, max: 1000), `offset` (default: 0)
-
-**Example**:
-```typescript
-// Get open tasks
-const tasks = await apiClient.get('/api/v1/tasks', {
-  status: 'open',
-  limit: 50
-});
-```
-
----
-
-#### 2.2.2 Create Task
-
-**Endpoint**: `POST /api/v1/tasks`
-
-**Roles**: `sales_rep`, `manager`, `csr`
-
-**Request Body**:
-```typescript
-{
-  "description": "Follow up with customer", // required
-  "assigned_to": "rep", // required: "csr" | "rep" | "manager" | "ai"
-  "contact_card_id": "contact_789", // optional
-  "lead_id": "lead_456", // optional
-  "appointment_id": "appt_123", // optional
-  "call_id": 123, // optional
-  "due_at": "2025-01-21T10:00:00Z", // optional
-  "priority": "high", // optional: "high" | "medium" | "low"
-  "source": "manual" // optional: "manual" | "otto" | "shunya" (default: "manual")
-}
-```
-
-**Response**:
-```typescript
-{
-  "data": {
-    "id": "task_123",
-    "description": "Follow up with customer",
-    "status": "open",
-    "assigned_to": "sales_rep",
-    "due_at": "2025-01-21T10:00:00Z",
-    "priority": "high",
-    "created_at": "2025-01-20T08:00:00Z"
-  }
-}
-```
-
-**Idempotency**: ❌ No (do NOT auto-retry)
-
-**Tenant Scoping**: ✅ Automatic
-
-**Example**:
-```typescript
-const task = await apiClient.post('/api/v1/tasks', {
-  description: 'Follow up with customer',
-  assigned_to: 'sales_rep',
-  appointment_id: appointmentId,
-  due_at: '2025-01-21T10:00:00Z',
-  priority: 'high'
-});
-```
-
----
-
-#### 2.2.3 Complete Task
-
-**Endpoint**: `POST /api/v1/tasks/{task_id}/complete`
-
-**Roles**: `sales_rep`, `manager`, `csr`
-
-**Response**:
-```typescript
-{
-  "data": {
-    "id": "task_123",
-    "status": "completed",
-    "completed_at": "2025-01-20T10:00:00Z",
-    "completed_by": "rep_123"
-  }
-}
-```
-
-**Idempotency**: ✅ Yes (safe to retry)
-
-**Tenant Scoping**: ✅ Automatic
-
-**Example**:
-```typescript
-await apiClient.post(`/api/v1/tasks/${taskId}/complete`);
-```
-
----
-
-#### 2.2.4 Update Task
-
-**Endpoint**: `PATCH /api/v1/tasks/{task_id}`
-
-**Roles**: `sales_rep`, `manager`, `csr`
-
-**Request Body**:
-```typescript
-{
-  "status": "open", // optional
-  "due_at": "2025-01-22T10:00:00Z", // optional
-  "assigned_to": "sales_rep", // optional
-  "description": "Updated description", // optional
-  "priority": "medium", // optional
-  "notes": "Additional notes" // optional
-}
-```
-
-**Response**: Same as `GET /api/v1/tasks/{task_id}`
-
-**Idempotency**: ✅ Yes (safe to retry)
-
-**Tenant Scoping**: ✅ Automatic
-
----
-
-### 2.3 Recording Sessions
-
-#### 2.3.1 Start Recording Session
-
-**Endpoint**: `POST /api/v1/recording-sessions/start`
-
-**Roles**: `sales_rep`, `manager`
-
-**Request Body**:
-```typescript
-{
-  "appointment_id": "appt_123", // required
-  "rep_id": "rep_123", // required
-  "location": { // required
-    "lat": 40.7128,
-    "lng": -74.0060
-  },
-  "mode": "full" // optional: "full" | "ghost" | "ephemeral"
-}
-```
-
-**Response**:
-```typescript
-{
-  "data": {
-    "recording_session_id": "session_123",
-    "mode": "full",
-    "audio_storage_mode": "persistent",
-    "audio_upload_url": "https://s3.amazonaws.com/...", // presigned S3 URL
-    "shunya_job_config": null
-  }
-}
-```
-
-**Idempotency**: ✅ Yes (uses `recording_session_id` as idempotency key)
-
-**Tenant Scoping**: ✅ Automatic (rep can only start sessions for own appointments)
-
-**Prerequisites**:
-- Rep must be clocked in (active shift)
-- Appointment must be assigned to rep
-- Location must be within geofence (validated by mobile app)
-
-**Example**:
-```typescript
-const response = await apiClient.post('/api/v1/recording-sessions/start', {
-  appointment_id: appointmentId,
-  rep_id: repId,
-  location: {
-    lat: currentLocation.latitude,
-    lng: currentLocation.longitude
-  },
-  mode: 'full'
-});
-
-const sessionId = response.data.recording_session_id;
-const uploadUrl = response.data.audio_upload_url;
-```
-
----
-
-#### 2.3.2 Stop Recording Session
-
-**Endpoint**: `POST /api/v1/recording-sessions/{session_id}/stop`
-
-**Roles**: `sales_rep`, `manager`
-
-**Request Body**:
-```typescript
-{
-  "location": { // required
-    "lat": 40.7128,
-    "lng": -74.0060
-  }
-}
-```
-
-**Response**:
-```typescript
-{
-  "data": {
-    "session": {
-      "id": "session_123",
-      "rep_id": "rep_123",
-      "appointment_id": "appt_123",
-      "started_at": "2025-01-20T14:00:00Z",
-      "ended_at": "2025-01-20T15:00:00Z",
-      "mode": "full",
-      "transcription_status": "in_progress",
-      "analysis_status": "not_started"
-    }
-  }
-}
-```
-
-**Idempotency**: ✅ Yes (safe to retry)
-
-**Tenant Scoping**: ✅ Automatic
-
-**Example**:
-```typescript
-await apiClient.post(`/api/v1/recording-sessions/${sessionId}/stop`, {
-  location: {
-    lat: currentLocation.latitude,
-    lng: currentLocation.longitude
-  }
-});
-```
-
----
-
-#### 2.3.3 Upload Audio Complete
-
-**Endpoint**: `POST /api/v1/recording-sessions/{session_id}/upload-audio`
-
-**Roles**: `sales_rep`, `manager`
-
-**Request Body**:
-```typescript
-{
-  "audio_url": "s3://bucket/audio.m4a", // required (S3 URL after upload)
-  "audio_duration_seconds": 120.5, // required
-  "audio_size_bytes": 1024000 // required
-}
-```
-
-**Response**:
-```typescript
-{
-  "data": {
-    "status": "uploaded",
-    "recording_session_id": "session_123"
-  }
-}
-```
-
-**Idempotency**: ✅ Yes (safe to retry if upload fails)
-
-**Tenant Scoping**: ✅ Automatic
-
-**Example**:
-```typescript
-// After uploading audio to S3 presigned URL
-await apiClient.post(`/api/v1/recording-sessions/${sessionId}/upload-audio`, {
-  audio_url: s3Url,
-  audio_duration_seconds: duration,
-  audio_size_bytes: fileSize
-});
-```
-
----
-
-#### 2.3.4 Get Recording Session
-
-**Endpoint**: `GET /api/v1/recording-sessions/{session_id}`
-
-**Roles**: `sales_rep`, `manager`
-
-**Response**: Same as `POST /api/v1/recording-sessions/{session_id}/stop`
-
-**Tenant Scoping**: ✅ Automatic
-
----
-
-### 2.4 Rep Shifts
-
-#### 2.4.1 Clock In
-
-**Endpoint**: `POST /api/v1/reps/{rep_id}/shifts/clock-in`
-
-**Roles**: `sales_rep`, `manager`
-
-**Request Body**:
-```typescript
-{
-  "desired_start_time": "2025-01-20T08:00:00Z", // optional (defaults to now)
-  "notes": "Starting shift" // optional
-}
-```
-
-**Response**:
-```typescript
-{
-  "data": {
-    "shift": {
-      "id": "shift_123",
-      "rep_id": "rep_123",
-      "shift_date": "2025-01-20",
-      "clock_in_at": "2025-01-20T08:00:00Z",
-      "clock_out_at": null,
-      "status": "active",
-      "scheduled_start": "07:00:00",
-      "scheduled_end": "20:00:00"
-    },
-    "effective_start_time": "2025-01-20T08:00:00Z",
-    "effective_end_time": "2025-01-20T20:00:00Z",
-    "recording_mode": "full",
-    "allow_location_tracking": true,
-    "allow_recording": true
-  }
-}
-```
-
-**Idempotency**: ✅ Yes (returns existing shift if already clocked in)
-
-**Tenant Scoping**: ✅ Automatic
-
-**Example**:
-```typescript
-const shift = await apiClient.post(`/api/v1/reps/${repId}/shifts/clock-in`, {
-  notes: 'Starting shift'
-});
-```
-
----
-
-#### 2.4.2 Clock Out
-
-**Endpoint**: `POST /api/v1/reps/{rep_id}/shifts/clock-out`
-
-**Roles**: `sales_rep`, `manager`
-
-**Response**:
-```typescript
-{
-  "data": {
-    "id": "shift_123",
-    "rep_id": "rep_123",
-    "shift_date": "2025-01-20",
-    "clock_in_at": "2025-01-20T08:00:00Z",
-    "clock_out_at": "2025-01-20T20:00:00Z",
-    "status": "completed"
-  }
-}
-```
-
-**Idempotency**: ✅ Yes (safe to retry)
-
-**Tenant Scoping**: ✅ Automatic
-
-**Example**:
-```typescript
-await apiClient.post(`/api/v1/reps/${repId}/shifts/clock-out`);
-```
-
----
-
-#### 2.4.3 Get Today's Shift
-
-**Endpoint**: `GET /api/v1/reps/{rep_id}/shifts/today`
-
-**Roles**: `sales_rep`, `manager`
-
-**Response**: Same as `POST /api/v1/reps/{rep_id}/shifts/clock-in`
-
-**Tenant Scoping**: ✅ Automatic
-
-**Example**:
-```typescript
-const shift = await apiClient.get(`/api/v1/reps/${repId}/shifts/today`);
-```
-
----
-
-### 2.5 Message Threads
-
-#### 2.5.1 Get Message Thread
-
-**Endpoint**: `GET /api/v1/message-threads/{contact_card_id}`
-
-**Roles**: `sales_rep`, `manager`, `csr`
-
-**Query Parameters**:
-- `limit` (optional, int): Maximum number of messages (default: 100, max: 1000)
-- `offset` (optional, int): Number of messages to skip (default: 0)
-
-**Response**:
-```typescript
-{
-  "data": {
-    "contact_card_id": "contact_789",
-    "messages": [
-      {
-        "id": "msg_123",
-        "sender": "+1234567890",
-        "sender_role": "customer",
-        "body": "Hello, I'm interested in your services",
-        "direction": "inbound",
-        "created_at": "2025-01-20T10:00:00Z",
-        "provider": "Twilio",
-        "message_sid": "SM123",
-        "delivered": true,
-        "read": false
-      }
-    ],
-    "total": 10
-  }
-}
-```
-
-**Tenant Scoping**: ✅ Automatic
-
-**Pagination**: ✅ `limit` (default: 100, max: 1000), `offset` (default: 0)
-
-**Example**:
-```typescript
-const thread = await apiClient.get(`/api/v1/message-threads/${contactCardId}`, {
-  limit: 50
-});
-```
-
----
-
-## 3. Shunya Integration Constraints
-
-### 3.1 Shunya-Derived Fields
-
-**Recording Transcripts** (from `app/models/recording_transcript.py`):
-- `transcript_text` - ⚠️ **May be `null`** in Ghost Mode (`audio_storage_mode == "not_stored"`) or if transcription in progress/failed
-- `speaker_labels` - ⚠️ **May be `null`** - Speaker diarization from Shunya (JSON array)
-- `confidence_score` - ⚠️ **May be `null`** - ASR confidence (0.0 to 1.0)
-- `uwc_job_id` - ✅ **Guaranteed non-null** if transcription job created - Shunya job correlation ID
-- `is_ghost_mode` - ✅ **Guaranteed non-null** - Boolean flag indicating Ghost Mode session
-- `transcript_restricted` - ✅ **Guaranteed non-null** - Boolean flag indicating transcript is not available
-
-**Recording Analysis** (from `app/models/recording_analysis.py`):
-- `objections` - ⚠️ **May be empty array** - Array of objection types: `["price", "timeline", "competitor", "need_spouse_approval"]`
-- `objection_details` - ⚠️ **May be `null`** - Detailed objection data with timestamps and quotes
-- `sentiment_score` - ⚠️ **May be `null`** - 0.0 (negative) to 1.0 (positive)
-- `engagement_score` - ⚠️ **May be `null`** - 0.0 to 1.0
-- `coaching_tips` - ⚠️ **May be empty array** - AI-generated coaching recommendations (JSON array)
-- `sop_stages_completed` - ⚠️ **May be empty array** - Array of completed SOP stages
-- `sop_stages_missed` - ⚠️ **May be empty array** - Array of missed SOP stages
-- `sop_compliance_score` - ⚠️ **May be `null`** - 0-10 score
-- `lead_quality` - ⚠️ **May be `null`** - Classification: `"qualified"`, `"unqualified"`, `"hot"`, `"warm"`, `"cold"`
-- `conversion_probability` - ⚠️ **May be `null`** - 0.0 to 1.0
-- `meeting_segments` - ⚠️ **May be `null`** - Meeting phase segmentation (JSON array with `MeetingPhase` values: `rapport_agenda`, `proposal_close`)
-- `outcome` - ⚠️ **May be `null`** - Classification: `"won"`, `"lost"`, `"qualified"`, `"no_show"`, `"rescheduled"`
-- `outcome_confidence` - ⚠️ **May be `null`** - 0.0 to 1.0
-
-### 3.2 Normalization
-
-**How Shunya Data is Normalized**:
-- Shunya responses are normalized into Otto domain models via `app/services/shunya_integration_service.py` and `app/services/shunya_response_normalizer.py`
-- Empty/missing Shunya fields are stored as `null` in database
-- Frontend must handle `null` values gracefully
-
-**Processing Flow**:
-1. Recording session stopped → Audio uploaded → Shunya transcription job enqueued (via `uwc_client.transcribe_audio`)
-2. Shunya webhook received (`POST /api/v1/shunya/webhook`) → Transcript stored in `recording_transcripts` table
-3. Shunya analysis job enqueued (via `uwc_client.start_analysis` or `get_complete_analysis`) → Analysis stored in `recording_analyses` table
-4. Frontend polls `GET /api/v1/recording-sessions/{session_id}` to check `transcription_status` and `analysis_status`
-
-**Target Role Handling**:
-- **Current**: No `X-Target-Role` header sent to Shunya for transcription/analysis calls (not required by contract for these endpoints)
-- **Future**: Follow-up recommendations and Personal Otto will require `X-Target-Role: sales_rep` header
-
-### 3.3 Processing States
-
-**Transcription Status** (from `app/models/recording_session.py`):
-- `"not_started"` - Transcription not yet started
-- `"in_progress"` - Transcription in progress (Shunya processing)
-- `"completed"` - Transcription completed successfully
-- `"failed"` - Transcription failed
-
-**Analysis Status** (from `app/models/recording_session.py`):
-- `"not_started"` - Analysis not yet started
-- `"in_progress"` - Analysis in progress (Shunya processing)
-- `"completed"` - Analysis completed successfully
-- `"failed"` - Analysis failed
-
-### 3.4 Frontend Handling
-
-**Show Loading State**:
-```typescript
-if (session.transcription_status === 'in_progress' || session.analysis_status === 'in_progress') {
-  showLoadingIndicator('Processing recording...');
-}
-```
-
-**Handle Null Transcript in Ghost Mode**:
-```typescript
-if (session.mode === 'ghost' && !session.transcript?.transcript_text) {
-  showMessage('Transcript not available in Ghost Mode');
-}
-```
-
-**Poll for Status Updates**:
-```typescript
-const pollSessionStatus = async (sessionId: string) => {
-  const interval = setInterval(async () => {
-    const session = await apiClient.get(`/api/v1/recording-sessions/${sessionId}`);
-    
-    if (session.transcription_status === 'completed' && session.analysis_status === 'completed') {
-      clearInterval(interval);
-      // Show results
-    } else if (session.transcription_status === 'failed' || session.analysis_status === 'failed') {
-      clearInterval(interval);
-      showError('Processing failed');
-    }
-  }, 5000); // Poll every 5 seconds
-  
-  // Stop polling after 5 minutes
-  setTimeout(() => clearInterval(interval), 5 * 60 * 1000);
-};
-```
-
-**Handle Missing/Delayed Shunya Outputs**:
-- If `transcription_status == "failed"`, show error message
-- If `analysis_status == "failed"`, show error but transcript may still be available
-- If processing takes > 5 minutes, show warning: "Processing is taking longer than expected"
-- Always handle `null` values for Shunya-derived fields gracefully
-
-### 3.5 Ghost Mode Considerations
-
-**Ghost Mode** (`mode == "ghost"`):
-- `audio_storage_mode` may be `"ephemeral"` or `"not_stored"`
-- `audio_url` will be `null` in Ghost Mode
-- `transcript_text` may be `null` (depending on tenant retention policy)
-- Analysis data (objections, coaching tips, etc.) is **always retained** (aggregated data only)
-
-**Frontend Behavior**:
-- Do not show audio playback controls if `audio_url == null`
-- Do not show transcript if `transcript_text == null`
-- Always show analysis data (objections, coaching tips, etc.) even in Ghost Mode
-
----
-
-## 4. Error Codes Reference
-
-### Common Error Codes
-
-| Error Code | HTTP Status | Description | Action |
-|------------|-------------|-------------|--------|
-| `TOKEN_EXPIRED` | 401 | JWT token has expired | Refresh token from Clerk and retry |
-| `MISSING_TENANT_ID` | 401 | Tenant ID not found in JWT | Check JWT claims, ensure user is in organization |
-| `INVALID_TOKEN` | 401 | Invalid JWT token | Re-authenticate with Clerk |
-| `NOT_FOUND` | 404 | Resource not found | Remove from cache, show user-friendly message |
-| `VALIDATION_ERROR` | 400 | Invalid request body | Show validation errors to user |
-| `INVALID_REQUEST` | 400 | Invalid query parameters | Check parameter format |
-| `RBAC_VIOLATION` | 403 | Insufficient permissions | Show permission denied message, do NOT retry |
-| `INTERNAL_ERROR` | 500 | Server error | Retry with exponential backoff (max 3 times) |
-
----
-
-## 5. Testing with Demo Data
-
-### Demo Credentials
-
-**Sales Rep User**:
-- Email: `salesrep@otto-demo.com`
-- Clerk User ID: `user_36M3F0kllDOemX3prAPP1Zb8C5f`
-- Role: `sales_rep`
-- Organization: `org_36EW2DYBw4gpJaL4ASL2ZxFZPO9`
-
-**Manager User**:
-- Email: `manager@otto-demo.com`
-- Clerk User ID: `user_36M3Kp5NQjnGhcmu5NM8nhOCqg2`
-- Role: `manager`
-- Organization: `org_36EW2DYBw4gpJaL4ASL2ZxFZPO9`
-
-### Seeding Demo Data
-
-Run the seed script to populate demo data:
-```bash
-cd /Users/tusharmehrotra/Documents/ottoai-workspace/ottoai-backend/services/dashboard
-python -m scripts.seed_demo_data
-```
-
-This creates:
-- Demo appointments for Sales Rep
-- Demo tasks
-- Demo recording sessions
-- Demo rep shifts
-- Demo message threads
-
----
-
-## 6. Next Steps
-
-1. ✅ Set up Clerk authentication in React Native app
-2. ✅ Implement API client with error handling and retry logic
-3. ✅ Implement offline queue for critical operations
-4. ✅ Test with demo data
-5. ✅ Implement pagination for list endpoints
-6. ✅ Add request ID logging for observability
-
----
-
-**Questions?** Contact the backend team with `request_id` from error responses.
-
----
-
-## 7. Shunya Integration & Enum Alignment
-
-### 7.1 Shunya-Derived Fields (Nullable States)
-
-**Recording Analysis Fields** (from `RecordingAnalysis` model):
-- `transcript` (from `RecordingTranscript.transcript_text`) - ⚠️ **May be `null`** in Ghost Mode or if transcription in progress/failed
-- `objections` (array) - ⚠️ **May be empty array** if analysis not complete
-- `objection_details` (array) - ⚠️ **May be `null`** if objections not yet analyzed
-- `sentiment_score` (number) - ⚠️ **May be `null`** if sentiment analysis not complete (0.0-1.0 scale)
-- `engagement_score` (number) - ⚠️ **May be `null`** if engagement analysis not complete (0.0-1.0 scale)
-- `coaching_tips` (array) - ⚠️ **May be empty array** if coaching analysis not complete
-- `sop_compliance_score` (number) - ⚠️ **May be `null`** if compliance check not run (0-10 scale)
-- `sop_stages_completed` (array) - ⚠️ **May be empty** if analysis incomplete
-- `sop_stages_missed` (array) - ⚠️ **May be empty** if analysis incomplete
-- `lead_quality` (string) - ⚠️ **May be `null`** if qualification analysis not complete
-- `conversion_probability` (number) - ⚠️ **May be `null`** if conversion analysis not complete (0.0-1.0 scale)
-- `meeting_segments` (array) - ⚠️ **May be `null`** if meeting segmentation not complete
-- `outcome` (string) - ⚠️ **May be `null`** if outcome classification not complete
-
-**Frontend Handling**: Always check for `null`/empty values and show appropriate loading/empty states. Poll `GET /api/v1/recording-sessions/{session_id}` to check `transcription_status` and `analysis_status` fields (`"not_started" | "in_progress" | "completed" | "failed"`).
-
-### 7.2 Enum Alignment (Shunya Canonical Values)
-
-**BookingStatus** (from Shunya `enums-inventory-by-service.md`):
-- `booked` - Appointment scheduled ✅ **Implemented**
-- `not_booked` - No appointment scheduled ✅ **Implemented**
-- `service_not_offered` - Customer needs service we don't provide ⚠️ **May not be consistently surfaced in all endpoints yet**
-
-**Appointment Outcome**:
-- `pending` - Outcome not yet determined ✅ **Implemented**
-- `won` - Appointment resulted in closed deal ✅ **Implemented**
-- `lost` - Appointment did not result in deal ✅ **Implemented**
-- `no_show` - Customer did not show up ✅ **Implemented**
-- `rescheduled` - Appointment was rescheduled ✅ **Implemented**
-
-**MeetingPhase** (for sales visit recordings):
-- `rapport_agenda` - Part 1: Rapport building and agenda setting
-- `proposal_close` - Part 2: Proposal presentation and closing
-- **Note**: Used in meeting segmentation analysis; stored in `meeting_segments` array
-
-**ActionType** (Pending Actions):
-- **Current State**: Free-form string in Otto
-- **Target**: Will be migrated to Shunya's canonical 30-value enum (see `OTTO_BACKEND_SHUNYA_AUDIT.md` for full list)
-- Common rep-related values: `site_visit`, `inspection`, `measurement`, `send_quote`, `follow_up_call`, `schedule_visit`, etc.
-
-**CallType**:
-- `sales_call` - Sales rep call ✅ **Used in code**
-- `csr_call` - CSR call (not applicable to rep)
-- **Note**: Currently stored as free-form string; will be enforced as enum
-
-**MissedOpportunityType**:
-- `discovery`, `cross_sell`, `upsell`, `qualification`
-- **Note**: Currently not consistently modeled in Otto; will be aligned with Shunya canonical values
-
-### 7.3 Ask Otto Payload & Headers
-
-**Current Backend → Shunya Payload** (legacy):
-```json
-{
-  "query": "What are my top performing appointments?",
-  "document_types": null,
-  "limit": 10,
-  "score_threshold": 0,
-  "filters": { "date_range": "last_30_days" }
-}
-```
-- Endpoint: `POST /api/v1/search/` (legacy)
-- No `X-Target-Role` header (defaults to `sales_rep` in Shunya - already correct for rep context)
-
-**Target Backend → Shunya Payload** (per Shunya contract):
-```json
-{
-  "question": "What are my top performing appointments?",
-  "conversation_id": "optional_conversation_id",
-  "context": { "tenant_id": "...", "user_role": "sales_rep", "user_id": "rep_123" },
-  "scope": "rep_data_only"
-}
-```
-- Endpoint: `POST /api/v1/ask-otto/query`
-- Header: `X-Target-Role: sales_rep`
-
-**Frontend Impact**: No changes required - frontend continues to call `/api/v1/rag/query`; backend handles Shunya communication internally.
-
-### 7.4 Personal Otto (Not Yet Implemented)
-
-**Status**: ⚠️ **PLANNED, not yet implemented in backend — do not rely on this in production until confirmed**
-
-**Shunya Endpoints** (per `Target_Role_Header.md`):
-- `POST /api/v1/personal-otto/ingest/training-documents` - Upload training documents
-- `POST /api/v1/personal-otto/train` - Train personal profile
-- `GET /api/v1/personal-otto/profile/status` - Get training status
-- `GET /api/v1/personal-otto/profile` - Get personal profile
-
-**Requirements**:
-- All endpoints **require** `X-Target-Role` header (will be `sales_rep` for reps)
-- Otto backend does not yet call these endpoints
-- When implemented, backend will set `X-Target-Role: sales_rep` automatically
-
-### 7.5 Follow-up Recommendations (Not Yet Implemented)
-
-**Status**: ⚠️ **PLANNED, not yet implemented in backend — do not rely on this in production until confirmed**
-
-**Shunya Endpoint**:
-- `POST /api/v1/analysis/followup-recommendations/{call_id}` - Get follow-up recommendations
-
-**Requirements**:
-- Optional `X-Target-Role` header (should be `sales_rep` for rep context)
-- Otto backend does not yet call this endpoint
-- When implemented, will be used for post-appointment follow-up suggestions
-
+**Questions?** Contact the backend team or refer to the full API quickstart docs.

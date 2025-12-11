@@ -9,7 +9,7 @@ Provides endpoints for:
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from app.database import get_db
 from app.middleware.rbac import require_role
@@ -40,7 +40,10 @@ from app.schemas.metrics import (
     CSRMissedCallsSelfResponse,
     MissedLeadsSelfResponse,
     RideAlongAppointmentsResponse,
-    SalesOpportunitiesResponse
+    SalesOpportunitiesResponse,
+    SalesRepTodayAppointment,
+    SalesRepFollowupTask,
+    SalesRepMeetingDetail
 )
 from app.obs.logging import get_logger
 
@@ -1225,4 +1228,177 @@ async def get_sales_opportunities(
     except Exception as e:
         logger.error(f"Error getting sales opportunities: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get sales opportunities: {str(e)}")
+
+
+# Sales Rep App Endpoints
+
+@router.get("/sales/rep/overview/self", response_model=APIResponse[SalesRepMetrics])
+@require_role("sales_rep")
+async def get_sales_rep_overview_self(
+    request: Request,
+    date_from: Optional[str] = Query(None, description="Start date (ISO8601, optional, defaults to 30 days ago)"),
+    date_to: Optional[str] = Query(None, description="End date (ISO8601, optional, defaults to now)"),
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get sales rep overview metrics (self-scoped).
+    
+    **Roles**: sales_rep (can only see their own metrics)
+    
+    **Query Parameters**:
+    - `date_from`: Start date (ISO8601, optional, defaults to 30 days ago)
+    - `date_to`: End date (ISO8601, optional, defaults to now)
+    
+    **Returns**: SalesRepMetrics with appointments, outcomes, compliance, sentiment, and followup metrics.
+    Uses Shunya's RecordingAnalysis.outcome for won/lost decisions.
+    """
+    try:
+        # Get rep user ID from request state
+        rep_id = getattr(request.state, 'user_id', None)
+        if not rep_id:
+            raise HTTPException(status_code=401, detail="User ID not found in request")
+        
+        # Parse dates
+        end = parse_date_param(date_to) or datetime.utcnow()
+        start = parse_date_param(date_from) or (end - timedelta(days=30))
+        
+        service = MetricsService(db)
+        metrics = await service.get_sales_rep_overview_metrics(
+            tenant_id=tenant_id,
+            rep_id=rep_id,
+            date_from=start,
+            date_to=end
+        )
+        
+        return APIResponse(success=True, data=metrics)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error computing sales rep overview metrics: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to compute sales rep metrics: {str(e)}")
+
+
+@router.get("/appointments/today/self", response_model=APIResponse[List[SalesRepTodayAppointment]])
+@require_role("sales_rep")
+async def get_sales_rep_today_appointments(
+    request: Request,
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get today's appointments for the logged-in sales rep.
+    
+    **Roles**: sales_rep (can only see their own appointments)
+    
+    **Returns**: List of SalesRepTodayAppointment for today, sorted by scheduled_time.
+    """
+    try:
+        # Get rep user ID from request state
+        rep_id = getattr(request.state, 'user_id', None)
+        if not rep_id:
+            raise HTTPException(status_code=401, detail="User ID not found in request")
+        
+        service = MetricsService(db)
+        appointments = await service.get_sales_rep_today_appointments(
+            tenant_id=tenant_id,
+            rep_id=rep_id,
+            today=None  # Defaults to current date
+        )
+        
+        return APIResponse(success=True, data=appointments)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting today's appointments: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get today's appointments: {str(e)}")
+
+
+@router.get("/tasks/sales-rep/self", response_model=APIResponse[List[SalesRepFollowupTask]])
+@require_role("sales_rep")
+async def get_sales_rep_followups_self(
+    request: Request,
+    date_from: Optional[str] = Query(None, description="Start date (ISO8601, optional)"),
+    date_to: Optional[str] = Query(None, description="End date (ISO8601, optional)"),
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get follow-up tasks for the logged-in sales rep.
+    
+    **Roles**: sales_rep (can only see their own tasks)
+    
+    **Query Parameters**:
+    - `date_from`: Start date (ISO8601, optional)
+    - `date_to`: End date (ISO8601, optional)
+    
+    **Returns**: List of SalesRepFollowupTask assigned to the rep.
+    """
+    try:
+        # Get rep user ID from request state
+        rep_id = getattr(request.state, 'user_id', None)
+        if not rep_id:
+            raise HTTPException(status_code=401, detail="User ID not found in request")
+        
+        # Parse dates
+        start = parse_date_param(date_from)
+        end = parse_date_param(date_to)
+        
+        service = MetricsService(db)
+        tasks = await service.get_sales_rep_followups(
+            tenant_id=tenant_id,
+            rep_id=rep_id,
+            date_from=start,
+            date_to=end
+        )
+        
+        return APIResponse(success=True, data=tasks)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting sales rep followups: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get sales rep followups: {str(e)}")
+
+
+@router.get("/meetings/{appointment_id}/analysis", response_model=APIResponse[SalesRepMeetingDetail])
+@require_role("sales_rep")
+async def get_sales_rep_meeting_analysis(
+    request: Request,
+    appointment_id: str,
+    tenant_id: str = Depends(get_tenant_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get meeting analysis detail for a sales rep appointment.
+    
+    **Roles**: sales_rep (can only see their own appointments)
+    
+    **Path Parameters**:
+    - `appointment_id`: Appointment ID
+    
+    **Returns**: SalesRepMeetingDetail with AI summary, transcript, objections, compliance, sentiment, outcome, and follow-up recommendations.
+    """
+    try:
+        # Get rep user ID from request state
+        rep_id = getattr(request.state, 'user_id', None)
+        if not rep_id:
+            raise HTTPException(status_code=401, detail="User ID not found in request")
+        
+        service = MetricsService(db)
+        detail = await service.get_sales_rep_meeting_detail(
+            tenant_id=tenant_id,
+            rep_id=rep_id,
+            appointment_id=appointment_id
+        )
+        
+        return APIResponse(success=True, data=detail)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting meeting analysis: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get meeting analysis: {str(e)}")
 
