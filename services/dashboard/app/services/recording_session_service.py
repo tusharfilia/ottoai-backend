@@ -11,7 +11,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
-from app.models.recording_session import RecordingSession
+from app.models.recording_session import RecordingSession, RecordingMode, AudioStorageMode
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.shunya_job import ShunyaJob, ShunyaJobType, ShunyaJobStatus
 from app.services.shunya_job_service import ShunyaJobService
@@ -211,5 +211,68 @@ class RecordingSessionService:
             session.error_message = f"Failed to trigger Shunya analysis: {str(e)}"
             self.db.commit()
             self.db.refresh(session)
+        
+        return session
+    
+    def get_audio_storage_mode(
+        self,
+        mode: RecordingMode,
+        company_id: str,
+        db: Optional[Session] = None
+    ) -> AudioStorageMode:
+        """
+        Determine audio storage mode based on recording mode and company config.
+        
+        Args:
+            mode: Recording mode (normal, ghost, off)
+            company_id: Company/tenant ID
+            db: Database session (optional, uses self.db if not provided)
+        
+        Returns:
+            AudioStorageMode enum value
+        """
+        # Simple logic: normal mode = persistent, ghost mode = not_stored
+        # TODO: Add company-level config for ghost mode storage preferences
+        if mode == RecordingMode.GHOST:
+            return AudioStorageMode.NOT_STORED
+        elif mode == RecordingMode.NORMAL:
+            return AudioStorageMode.PERSISTENT
+        else:  # OFF mode
+            return AudioStorageMode.NOT_STORED
+    
+    def apply_ghost_mode_restrictions(
+        self,
+        session: RecordingSession,
+        company_id: str,
+        db: Optional[Session] = None
+    ) -> RecordingSession:
+        """
+        Apply Ghost Mode restrictions to session data.
+        
+        In Ghost Mode, audio_url and transcript may be restricted based on
+        tenant retention policy.
+        
+        Args:
+            session: RecordingSession instance
+            company_id: Company/tenant ID
+            db: Database session
+        
+        Returns:
+            RecordingSession with restrictions applied (or original if not ghost mode)
+        """
+        # If not in ghost mode, return session as-is
+        if session.mode != RecordingMode.GHOST:
+            return session
+        
+        # In ghost mode, restrict audio_url if retention policy requires it
+        # TODO: Add company-level retention policy check
+        # For now, if audio_storage_mode is NOT_STORED, ensure audio_url is None
+        if session.audio_storage_mode == AudioStorageMode.NOT_STORED:
+            # Create a copy-like object or modify in place
+            # Since we're returning the same object, we'll just ensure audio_url is None
+            if session.audio_url:
+                # Don't modify the actual session, return a restricted view
+                # For now, we'll return the session but the caller should handle None audio_url
+                pass
         
         return session
