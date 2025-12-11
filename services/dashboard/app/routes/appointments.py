@@ -9,6 +9,7 @@ from sqlalchemy import and_, or_, func
 
 from app.database import get_db
 from app.middleware.rbac import require_role
+from app.core.tenant import get_tenant_id
 from app.models.appointment import Appointment, AppointmentOutcome, AppointmentStatus
 from app.models.lead import Lead
 from app.models.task import Task, TaskStatus
@@ -980,3 +981,4 @@ async def assign_appointment_to_rep(
         logger = get_logger(__name__)
         logger.error(f"Error assigning appointment: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to assign appointment: {str(e)}")
+
