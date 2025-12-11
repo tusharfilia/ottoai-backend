@@ -38,8 +38,6 @@ from app.core.pii_masking import PIISafeLogger
 logger = PIISafeLogger(__name__)
 router = APIRouter(prefix="/api/v1/recording-sessions", tags=["recording-sessions"])
 
-recording_service = RecordingSessionService()
-
 
 # Request/Response Models
 class AudioUploadComplete(BaseModel):
@@ -125,6 +123,7 @@ async def start_recording_session(
     mode = body.mode or RecordingMode(rep.recording_mode.value)
     
     # Determine audio storage mode based on mode and company config
+    recording_service = RecordingSessionService(db)
     audio_storage_mode = recording_service.get_audio_storage_mode(mode, company_id, db)
     
     # Create recording session
@@ -424,6 +423,7 @@ async def get_recording_session(
         )
     
     # Apply Ghost Mode restrictions
+    recording_service = RecordingSessionService(db)
     session_data = recording_service.apply_ghost_mode_restrictions(
         session, company_id, db
     )
@@ -433,6 +433,8 @@ async def get_recording_session(
             session=RecordingSessionBase.model_validate(session_data)
         )
     )
+
+
 
 
 
