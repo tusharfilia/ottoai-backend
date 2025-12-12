@@ -352,10 +352,11 @@ class MetricsService:
         Returns:
             SalesRepMetrics with all computed metrics
         """
-        if date_to is None:
-            date_to = datetime.utcnow()
-        if date_from is None:
-            date_from = date_to - timedelta(days=30)
+        try:
+            if date_to is None:
+                date_to = datetime.utcnow()
+            if date_from is None:
+                date_from = date_to - timedelta(days=30)
         
         # Query appointments for this rep
         appointments_query = self.db.query(Appointment).filter(
@@ -458,26 +459,32 @@ class MetricsService:
                     try:
                         # Handle both string and enum values
                         outcome_value = analysis.outcome
+                        outcome_str = None
                         
-                        # If it's an enum, get the value
-                        if hasattr(outcome_value, 'value'):
-                            outcome_str = outcome_value.value
-                        elif hasattr(outcome_value, 'name'):
-                            # It's an enum but we want the value, not the name
-                            outcome_str = getattr(outcome_value, 'value', str(outcome_value))
+                        # Check if it's an enum instance (enum.Enum subclasses have 'value' and 'name' attributes)
+                        if hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name'):
+                            # It's likely an enum instance, get the value
+                            try:
+                                # Access the value property
+                                outcome_str = outcome_value.value
+                            except (AttributeError, TypeError) as enum_err:
+                                # Fallback: try to get string representation
+                                logger.debug(f"Could not access .value on enum: {enum_err}, using str()")
+                                outcome_str = str(outcome_value)
                         else:
                             # It's already a string or other type
                             outcome_str = str(outcome_value) if outcome_value else None
                         
+                        # Normalize to lowercase string
                         if outcome_str:
-                            outcome_lower = outcome_str.lower().strip()
+                            outcome_lower = str(outcome_str).lower().strip()
                         else:
                             outcome_lower = None
                     except Exception as e:
                         # Log the error but continue processing
                         logger.warning(
                             f"Error processing outcome for appointment {appointment.id}: {str(e)}, "
-                            f"outcome type: {type(analysis.outcome)}, outcome value: {analysis.outcome}",
+                            f"outcome type: {type(analysis.outcome)}, outcome value: {repr(analysis.outcome)}",
                             exc_info=True
                         )
                         outcome_lower = None
@@ -669,6 +676,24 @@ class MetricsService:
             overdue_followups=overdue_followups,
             pending_followups_count=pending_followups_count
         )
+        except Exception as e:
+            # Log the full exception with context
+            error_type = type(e).__name__
+            error_msg = str(e)
+            logger.error(
+                f"Error in get_sales_rep_overview_metrics for rep {rep_id}: "
+                f"Type={error_type}, Message='{error_msg}'",
+                exc_info=True
+            )
+            # Re-raise with more context if it's just "PENDING"
+            if error_msg == "PENDING" or (isinstance(e, ValueError) and error_msg == "PENDING"):
+                raise ValueError(
+                    f"Invalid outcome data format in RecordingAnalysis. "
+                    f"Outcome value 'PENDING' could not be processed. "
+                    f"Please check database records for rep {rep_id}."
+                ) from e
+            # Re-raise the original exception
+            raise
     
     async def get_sales_team_metrics(
         self,
