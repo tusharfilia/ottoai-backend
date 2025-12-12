@@ -455,20 +455,43 @@ class MetricsService:
                     # OUTCOME: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
                     # Only count outcomes for completed appointments
                     # RecordingAnalysis.outcome is a String column, so it should always be a string
-                    if appointment.status == AppointmentStatus.COMPLETED.value and analysis and analysis.outcome:
+                    if appointment.status == AppointmentStatus.COMPLETED.value and analysis:
                         try:
-                            # Convert to string and normalize
-                            # The outcome field is defined as String in the model, so it should be a string
-                            outcome_str = str(analysis.outcome).strip()
-                            if outcome_str:
-                                outcome_lower = outcome_str.lower()
-                            else:
+                            # Safely access outcome - handle both string and enum cases
+                            outcome_value = analysis.outcome
+                            if outcome_value is None:
                                 outcome_lower = None
+                            else:
+                                # Handle enum case: if it's an enum, get the value
+                                if hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name'):
+                                    # It's likely an enum, get the value
+                                    outcome_str = str(outcome_value.value) if hasattr(outcome_value, 'value') else str(outcome_value)
+                                else:
+                                    # It's already a string or other type, convert to string
+                                    outcome_str = str(outcome_value)
+                                
+                                # Normalize to lowercase
+                                outcome_str = outcome_str.strip()
+                                if outcome_str:
+                                    outcome_lower = outcome_str.lower()
+                                else:
+                                    outcome_lower = None
+                        except AttributeError as attr_err:
+                            # Handle AttributeError specifically - log and skip this outcome
+                            logger.warning(
+                                f"AttributeError accessing outcome for appointment {appointment.id}: {str(attr_err)}, "
+                                f"outcome type: {type(analysis.outcome) if analysis else 'N/A'}, "
+                                f"outcome value: {repr(analysis.outcome) if analysis else 'N/A'}",
+                                exc_info=True
+                            )
+                            outcome_lower = None
                         except Exception as e:
-                            # Log the error but continue processing
+                            # Log any other error but continue processing
                             logger.warning(
                                 f"Error processing outcome for appointment {appointment.id}: {str(e)}, "
-                                f"outcome type: {type(analysis.outcome)}, outcome value: {repr(analysis.outcome)}",
+                                f"error type: {type(e).__name__}, "
+                                f"outcome type: {type(analysis.outcome) if analysis else 'N/A'}, "
+                                f"outcome value: {repr(analysis.outcome) if analysis else 'N/A'}",
                                 exc_info=True
                             )
                             outcome_lower = None
