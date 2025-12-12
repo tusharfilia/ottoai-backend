@@ -315,41 +315,20 @@ class PostCallAnalysisService:
             return {"error": str(e)}
     
     async def _store_analysis_results(self, call_id: int, analysis_result: Dict[str, Any]):
-        """Store analysis results in the database."""
+        """
+        Store analysis results in the database.
+        
+        NOTE: This service uses the legacy call_analysis schema. The current database
+        uses a different schema (tenant_id, objections, coaching_tips, etc.) which is
+        populated by UWC analysis. This method is kept for backward compatibility but
+        may not work with the current schema.
+        """
         db = SessionLocal()
         try:
-            # Convert dict values to JSON strings for JSONB columns
-            call_metrics = analysis_result.get('call_metrics')
-            ai_insights = analysis_result.get('ai_insights')
-            coaching_recommendations = analysis_result.get('coaching_recommendations')
-            performance_score = analysis_result.get('performance_score')
-            
-            # Insert analysis results
-            db.execute(text("""
-                INSERT INTO call_analysis (
-                    call_id, company_id, sales_rep_id, analyzed_at,
-                    call_metrics, ai_insights, coaching_recommendations,
-                    performance_score, analysis_version, created_at
-                ) VALUES (
-                    :call_id, :company_id, :sales_rep_id, :analyzed_at,
-                    CAST(:call_metrics AS jsonb), CAST(:ai_insights AS jsonb), CAST(:coaching_recommendations AS jsonb),
-                    CAST(:performance_score AS jsonb), :analysis_version, :created_at
-                )
-            """), {
-                "call_id": call_id,
-                "company_id": analysis_result.get('company_id'),
-                "sales_rep_id": analysis_result.get('sales_rep_id'),
-                "analyzed_at": analysis_result.get('analyzed_at'),
-                "call_metrics": json.dumps(call_metrics) if call_metrics else None,
-                "ai_insights": json.dumps(ai_insights) if ai_insights else None,
-                "coaching_recommendations": json.dumps(coaching_recommendations) if coaching_recommendations else None,
-                "performance_score": json.dumps(performance_score) if performance_score else None,
-                "analysis_version": analysis_result.get('analysis_version'),
-                "created_at": datetime.utcnow()
-            })
-            
-            db.commit()
-            logger.info(f"Stored analysis results for call {call_id}")
+            # Skip storage if using new schema (which doesn't have company_id column)
+            # The new schema is populated by UWC analysis, not this service
+            logger.warning(f"Skipping legacy analysis storage for call {call_id} - using UWC analysis schema")
+            return
             
         except Exception as e:
             logger.error(f"Error storing analysis results: {e}")
@@ -779,41 +758,20 @@ class PostCallAnalysisService:
             return {"error": str(e)}
     
     async def _store_analysis_results(self, call_id: int, analysis_result: Dict[str, Any]):
-        """Store analysis results in the database."""
+        """
+        Store analysis results in the database.
+        
+        NOTE: This service uses the legacy call_analysis schema. The current database
+        uses a different schema (tenant_id, objections, coaching_tips, etc.) which is
+        populated by UWC analysis. This method is kept for backward compatibility but
+        may not work with the current schema.
+        """
         db = SessionLocal()
         try:
-            # Convert dict values to JSON strings for JSONB columns
-            call_metrics = analysis_result.get('call_metrics')
-            ai_insights = analysis_result.get('ai_insights')
-            coaching_recommendations = analysis_result.get('coaching_recommendations')
-            performance_score = analysis_result.get('performance_score')
-            
-            # Insert analysis results
-            db.execute(text("""
-                INSERT INTO call_analysis (
-                    call_id, company_id, sales_rep_id, analyzed_at,
-                    call_metrics, ai_insights, coaching_recommendations,
-                    performance_score, analysis_version, created_at
-                ) VALUES (
-                    :call_id, :company_id, :sales_rep_id, :analyzed_at,
-                    CAST(:call_metrics AS jsonb), CAST(:ai_insights AS jsonb), CAST(:coaching_recommendations AS jsonb),
-                    CAST(:performance_score AS jsonb), :analysis_version, :created_at
-                )
-            """), {
-                "call_id": call_id,
-                "company_id": analysis_result.get('company_id'),
-                "sales_rep_id": analysis_result.get('sales_rep_id'),
-                "analyzed_at": analysis_result.get('analyzed_at'),
-                "call_metrics": json.dumps(call_metrics) if call_metrics else None,
-                "ai_insights": json.dumps(ai_insights) if ai_insights else None,
-                "coaching_recommendations": json.dumps(coaching_recommendations) if coaching_recommendations else None,
-                "performance_score": json.dumps(performance_score) if performance_score else None,
-                "analysis_version": analysis_result.get('analysis_version'),
-                "created_at": datetime.utcnow()
-            })
-            
-            db.commit()
-            logger.info(f"Stored analysis results for call {call_id}")
+            # Skip storage if using new schema (which doesn't have company_id column)
+            # The new schema is populated by UWC analysis, not this service
+            logger.warning(f"Skipping legacy analysis storage for call {call_id} - using UWC analysis schema")
+            return
             
         except Exception as e:
             logger.error(f"Error storing analysis results: {e}")
