@@ -460,7 +460,21 @@ class MetricsService:
             ).all()
         
             # Create lookup: appointment_id -> analysis
-            analysis_by_appointment_id = {analysis.appointment_id: analysis for analysis in analyses}
+            # Safely create lookup dict, handling any AttributeErrors when accessing appointment_id
+            analysis_by_appointment_id = {}
+            for analysis in analyses:
+                try:
+                    apt_id = analysis.appointment_id
+                    if apt_id:
+                        analysis_by_appointment_id[apt_id] = analysis
+                except (AttributeError, Exception) as e:
+                    logger.warning(
+                        f"Error accessing appointment_id for analysis {getattr(analysis, 'id', 'unknown')}: {str(e)}, "
+                        f"analysis type: {type(analysis)}",
+                        exc_info=True
+                    )
+                    # Skip this analysis if we can't get its appointment_id
+                    continue
         
             # Count appointments by status and outcome
             # IMPORTANT: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
@@ -794,6 +808,22 @@ class MetricsService:
             overdue_followups=overdue_followups,
             pending_followups_count=pending_followups_count
             )
+        except AttributeError as attr_err:
+            # Handle AttributeError specifically - this is likely from enum/outcome access
+            error_msg = str(attr_err)
+            logger.error(
+                f"AttributeError in get_sales_rep_overview_metrics for rep {rep_id}: {error_msg}",
+                exc_info=True
+            )
+            # If the error message is just a value like 'PENDING', it's likely an enum access issue
+            if error_msg in ("'PENDING'", "PENDING", "'WON'", "'LOST'", "WON", "LOST"):
+                raise ValueError(
+                    f"Invalid outcome data format in RecordingAnalysis. "
+                    f"Outcome value {error_msg} could not be processed. "
+                    f"Please check database records for rep {rep_id}."
+                ) from attr_err
+            # Re-raise the original AttributeError
+            raise
         except Exception as e:
             # Log the full exception with context
             error_type = type(e).__name__
