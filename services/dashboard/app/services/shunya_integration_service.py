@@ -519,6 +519,23 @@ class ShunyaIntegrationService:
         qualification = complete_analysis.get("qualification", {})
         qualification_status = (qualification.get("qualification_status") or "").lower()
         
+        # DEBUG: Log what Shunya returned for qualification and booking status
+        booking_status_raw = qualification.get("booking_status")
+        call_outcome_category_computed = qualification.get("call_outcome_category")
+        logger.info(
+            f"Shunya response for call {call.call_id}: "
+            f"qualification_status='{qualification_status}', "
+            f"booking_status='{booking_status_raw}', "
+            f"call_outcome_category='{call_outcome_category_computed}'",
+            extra={
+                "call_id": call.call_id,
+                "qualification_status": qualification_status,
+                "booking_status": booking_status_raw,
+                "call_outcome_category": call_outcome_category_computed,
+                "qualification_full": qualification
+            }
+        )
+        
         # Get objections (normalized)
         objections_response = complete_analysis.get("objections", {})
         objections_list = objections_response.get("objections", [])
@@ -989,6 +1006,20 @@ class ShunyaIntegrationService:
         else:
             outcome_classification = "pending"
         
+        # DEBUG: Log what Shunya returned for visit outcome
+        logger.info(
+            f"Shunya response for visit {recording_session.id}: "
+            f"outcome='{outcome_classification}' (from complete_analysis.outcome='{complete_analysis.get('outcome')}' "
+            f"or appointment_outcome='{complete_analysis.get('appointment_outcome')}')",
+            extra={
+                "recording_session_id": recording_session.id,
+                "outcome": outcome_classification,
+                "outcome_raw": complete_analysis.get("outcome"),
+                "appointment_outcome_raw": complete_analysis.get("appointment_outcome"),
+                "complete_analysis_keys": list(complete_analysis.keys())
+            }
+        )
+        
         # Map to AppointmentOutcome enum
         outcome_mapping = {
             "won": AppointmentOutcome.WON,
@@ -1415,6 +1446,7 @@ class ShunyaIntegrationService:
 
 # Global service instance
 shunya_integration_service = ShunyaIntegrationService()
+
 
 
 

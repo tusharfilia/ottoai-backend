@@ -102,8 +102,33 @@ class ShunyaResponseNormalizer:
         booking_status_raw = qualification.get("booking_status") or qualification.get("appointment_status")
         booking_status = normalize_booking_status(booking_status_raw)
         
+        # DEBUG: Log raw Shunya values before normalization
+        logger.debug(
+            f"Shunya raw qualification data: "
+            f"qualification_status='{status}' (raw: '{qualification.get('qualification_status')}'), "
+            f"booking_status='{booking_status}' (raw: '{booking_status_raw}')",
+            extra={
+                "qualification_status_raw": qualification.get("qualification_status"),
+                "qualification_status_normalized": status,
+                "booking_status_raw": booking_status_raw,
+                "booking_status_normalized": booking_status,
+                "qualification_full": qualification
+            }
+        )
+        
         # Compute call_outcome_category from qualification_status + booking_status
         call_outcome_category = compute_call_outcome_category(status, booking_status)
+        
+        # DEBUG: Log computed call_outcome_category
+        logger.debug(
+            f"Computed call_outcome_category: '{call_outcome_category}' from "
+            f"qualification_status='{status}' + booking_status='{booking_status}'",
+            extra={
+                "call_outcome_category": call_outcome_category,
+                "qualification_status": status,
+                "booking_status": booking_status
+            }
+        )
         
         return {
             "qualification_status": status,
@@ -466,6 +491,7 @@ class ShunyaResponseNormalizer:
 
 # Global normalizer instance
 shunya_normalizer = ShunyaResponseNormalizer()
+
 
 
 
