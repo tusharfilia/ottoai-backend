@@ -1,10 +1,12 @@
 """
 Post-Call Analysis Service
 Analyzes completed calls and provides insights, coaching recommendations, and performance metrics
+Uses Schema 2 (modern UWC-compatible schema) for storage
 """
 import asyncio
 import json
 import time
+import uuid
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
@@ -84,14 +86,18 @@ class PostCallAnalysisService:
             await asyncio.sleep(self.analysis_interval)
     
     async def _get_calls_for_analysis(self) -> List[Dict[str, Any]]:
-        """Get calls that need analysis."""
+        """
+        Get calls that need analysis.
+        Only analyzes calls that don't already have UWC analysis.
+        """
         db = SessionLocal()
         try:
-            # Find completed calls from the last hour that haven't been analyzed
+            # Find completed calls from the last hour that haven't been analyzed by UWC
+            # This service acts as a fallback for calls without UWC analysis
             result = db.execute(text("""
                 SELECT 
                     c.call_id,
-                    c.company_id,
+                    c.company_id as tenant_id,  -- Use tenant_id for Schema 2
                     c.assigned_rep_id as sales_rep_id,
                     c.phone_number as caller_number,
                     c.last_call_duration as duration,
@@ -110,6 +116,7 @@ class PostCallAnalysisService:
                     SELECT DISTINCT call_id 
                     FROM call_analysis 
                     WHERE call_id IS NOT NULL
+                    AND uwc_job_id IS NOT NULL  -- Only skip if UWC analysis exists
                 )
                 ORDER BY c.created_at DESC
                 LIMIT 10
@@ -137,7 +144,7 @@ class PostCallAnalysisService:
             
             return {
                 "call_id": call['call_id'],
-                "company_id": call['company_id'],
+                "tenant_id": call.get('tenant_id') or call.get('company_id'),  # Support both for compatibility
                 "sales_rep_id": call['sales_rep_id'],
                 "analyzed_at": datetime.utcnow().isoformat(),
                 "call_metrics": call_metrics,
@@ -316,19 +323,118 @@ class PostCallAnalysisService:
     
     async def _store_analysis_results(self, call_id: int, analysis_result: Dict[str, Any]):
         """
-        Store analysis results in the database.
+        Store analysis results in the database using Schema 2 (modern UWC-compatible schema).
         
-        NOTE: This service uses the legacy call_analysis schema. The current database
-        uses a different schema (tenant_id, objections, coaching_tips, etc.) which is
-        populated by UWC analysis. This method is kept for backward compatibility but
-        may not work with the current schema.
+        This service acts as a fallback for calls that don't have UWC analysis yet.
+        Maps legacy analysis data structure to the modern schema.
         """
         db = SessionLocal()
         try:
-            # Skip storage if using new schema (which doesn't have company_id column)
-            # The new schema is populated by UWC analysis, not this service
-            logger.warning(f"Skipping legacy analysis storage for call {call_id} - using UWC analysis schema")
-            return
+            tenant_id = analysis_result.get('tenant_id') or analysis_result.get('company_id')
+            if not tenant_id:
+                logger.error(f"Cannot store analysis for call {call_id}: missing tenant_id/company_id")
+                return
+            
+            # Check if UWC analysis already exists (don't overwrite)
+            existing = db.execute(text("""
+                SELECT id FROM call_analysis 
+                WHERE call_id = :call_id 
+                AND uwc_job_id IS NOT NULL 
+                AND uwc_job_id NOT LIKE 'legacy_analysis_%'
+            """), {"call_id": call_id}).fetchone()
+            
+            if existing:
+                logger.info(f"Skipping storage for call {call_id} - UWC analysis already exists")
+                return
+            
+            # Generate UUID for id and placeholder uwc_job_id
+            analysis_id = str(uuid.uuid4())
+            legacy_uwc_job_id = f"legacy_analysis_{analysis_id}"
+            
+            # Map legacy data to Schema 2
+            call_metrics = analysis_result.get('call_metrics', {})
+            ai_insights = analysis_result.get('ai_insights', {})
+            coaching_recommendations = analysis_result.get('coaching_recommendations', [])
+            performance_score = analysis_result.get('performance_score', {})
+            
+            # Extract sentiment/engagement from AI insights if available
+            sentiment_score = ai_insights.get('sentiment_score') or ai_insights.get('engagement_level')
+            if isinstance(sentiment_score, str):
+                # Map string values to float
+                sentiment_map = {"positive": 0.8, "neutral": 0.5, "negative": 0.2, "good": 0.8, "medium": 0.5, "poor": 0.2}
+                sentiment_score = sentiment_map.get(sentiment_score.lower(), 0.5)
+            
+            engagement_score = ai_insights.get('engagement_level')
+            if isinstance(engagement_score, str):
+                engagement_map = {"high": 0.8, "medium": 0.5, "low": 0.2}
+                engagement_score = engagement_map.get(engagement_score.lower(), 0.5)
+            
+            # Map coaching_recommendations to coaching_tips format
+            coaching_tips = []
+            if isinstance(coaching_recommendations, list):
+                for rec in coaching_recommendations:
+                    if isinstance(rec, dict):
+                        coaching_tips.append({
+                            "tip": rec.get('title') or rec.get('description', ''),
+                            "priority": rec.get('priority', 'medium'),
+                            "category": rec.get('category', 'general'),
+                            "description": rec.get('description') or rec.get('suggestion', '')
+                        })
+            
+            # Extract performance metrics
+            overall_score = performance_score.get('overall_score', 0) if isinstance(performance_score, dict) else 0
+            max_score = performance_score.get('max_score', 100) if isinstance(performance_score, dict) else 100
+            conversion_probability = overall_score / max_score if max_score > 0 else 0
+            
+            # Determine lead quality from performance score
+            lead_quality = None
+            if overall_score >= 80:
+                lead_quality = "hot"
+            elif overall_score >= 60:
+                lead_quality = "warm"
+            elif overall_score >= 40:
+                lead_quality = "qualified"
+            else:
+                lead_quality = "cold"
+            
+            # Calculate talk time ratio if available (placeholder - would need transcript)
+            talk_time_ratio = None
+            
+            # Insert using Schema 2
+            db.execute(text("""
+                INSERT INTO call_analysis (
+                    id, call_id, tenant_id, uwc_job_id,
+                    sentiment_score, engagement_score,
+                    coaching_tips,
+                    lead_quality, conversion_probability,
+                    talk_time_ratio,
+                    analyzed_at, analysis_version, created_at
+                ) VALUES (
+                    :id, :call_id, :tenant_id, :uwc_job_id,
+                    :sentiment_score, :engagement_score,
+                    CAST(:coaching_tips AS jsonb),
+                    :lead_quality, :conversion_probability,
+                    :talk_time_ratio,
+                    :analyzed_at, :analysis_version, :created_at
+                )
+            """), {
+                "id": analysis_id,
+                "call_id": call_id,
+                "tenant_id": tenant_id,
+                "uwc_job_id": legacy_uwc_job_id,
+                "sentiment_score": sentiment_score,
+                "engagement_score": engagement_score,
+                "coaching_tips": json.dumps(coaching_tips) if coaching_tips else None,
+                "lead_quality": lead_quality,
+                "conversion_probability": conversion_probability,
+                "talk_time_ratio": talk_time_ratio,
+                "analyzed_at": datetime.utcnow(),
+                "analysis_version": analysis_result.get('analysis_version', 'legacy_v1'),
+                "created_at": datetime.utcnow()
+            })
+            
+            db.commit()
+            logger.info(f"Stored legacy analysis results for call {call_id} (ID: {analysis_id})")
             
         except Exception as e:
             logger.error(f"Error storing analysis results: {e}")
@@ -527,14 +633,18 @@ class PostCallAnalysisService:
             await asyncio.sleep(self.analysis_interval)
     
     async def _get_calls_for_analysis(self) -> List[Dict[str, Any]]:
-        """Get calls that need analysis."""
+        """
+        Get calls that need analysis.
+        Only analyzes calls that don't already have UWC analysis.
+        """
         db = SessionLocal()
         try:
-            # Find completed calls from the last hour that haven't been analyzed
+            # Find completed calls from the last hour that haven't been analyzed by UWC
+            # This service acts as a fallback for calls without UWC analysis
             result = db.execute(text("""
                 SELECT 
                     c.call_id,
-                    c.company_id,
+                    c.company_id as tenant_id,  -- Use tenant_id for Schema 2
                     c.assigned_rep_id as sales_rep_id,
                     c.phone_number as caller_number,
                     c.last_call_duration as duration,
@@ -553,6 +663,7 @@ class PostCallAnalysisService:
                     SELECT DISTINCT call_id 
                     FROM call_analysis 
                     WHERE call_id IS NOT NULL
+                    AND uwc_job_id IS NOT NULL  -- Only skip if UWC analysis exists
                 )
                 ORDER BY c.created_at DESC
                 LIMIT 10
@@ -580,7 +691,7 @@ class PostCallAnalysisService:
             
             return {
                 "call_id": call['call_id'],
-                "company_id": call['company_id'],
+                "tenant_id": call.get('tenant_id') or call.get('company_id'),  # Support both for compatibility
                 "sales_rep_id": call['sales_rep_id'],
                 "analyzed_at": datetime.utcnow().isoformat(),
                 "call_metrics": call_metrics,
@@ -759,19 +870,118 @@ class PostCallAnalysisService:
     
     async def _store_analysis_results(self, call_id: int, analysis_result: Dict[str, Any]):
         """
-        Store analysis results in the database.
+        Store analysis results in the database using Schema 2 (modern UWC-compatible schema).
         
-        NOTE: This service uses the legacy call_analysis schema. The current database
-        uses a different schema (tenant_id, objections, coaching_tips, etc.) which is
-        populated by UWC analysis. This method is kept for backward compatibility but
-        may not work with the current schema.
+        This service acts as a fallback for calls that don't have UWC analysis yet.
+        Maps legacy analysis data structure to the modern schema.
         """
         db = SessionLocal()
         try:
-            # Skip storage if using new schema (which doesn't have company_id column)
-            # The new schema is populated by UWC analysis, not this service
-            logger.warning(f"Skipping legacy analysis storage for call {call_id} - using UWC analysis schema")
-            return
+            tenant_id = analysis_result.get('tenant_id') or analysis_result.get('company_id')
+            if not tenant_id:
+                logger.error(f"Cannot store analysis for call {call_id}: missing tenant_id/company_id")
+                return
+            
+            # Check if UWC analysis already exists (don't overwrite)
+            existing = db.execute(text("""
+                SELECT id FROM call_analysis 
+                WHERE call_id = :call_id 
+                AND uwc_job_id IS NOT NULL 
+                AND uwc_job_id NOT LIKE 'legacy_analysis_%'
+            """), {"call_id": call_id}).fetchone()
+            
+            if existing:
+                logger.info(f"Skipping storage for call {call_id} - UWC analysis already exists")
+                return
+            
+            # Generate UUID for id and placeholder uwc_job_id
+            analysis_id = str(uuid.uuid4())
+            legacy_uwc_job_id = f"legacy_analysis_{analysis_id}"
+            
+            # Map legacy data to Schema 2
+            call_metrics = analysis_result.get('call_metrics', {})
+            ai_insights = analysis_result.get('ai_insights', {})
+            coaching_recommendations = analysis_result.get('coaching_recommendations', [])
+            performance_score = analysis_result.get('performance_score', {})
+            
+            # Extract sentiment/engagement from AI insights if available
+            sentiment_score = ai_insights.get('sentiment_score') or ai_insights.get('engagement_level')
+            if isinstance(sentiment_score, str):
+                # Map string values to float
+                sentiment_map = {"positive": 0.8, "neutral": 0.5, "negative": 0.2, "good": 0.8, "medium": 0.5, "poor": 0.2}
+                sentiment_score = sentiment_map.get(sentiment_score.lower(), 0.5)
+            
+            engagement_score = ai_insights.get('engagement_level')
+            if isinstance(engagement_score, str):
+                engagement_map = {"high": 0.8, "medium": 0.5, "low": 0.2}
+                engagement_score = engagement_map.get(engagement_score.lower(), 0.5)
+            
+            # Map coaching_recommendations to coaching_tips format
+            coaching_tips = []
+            if isinstance(coaching_recommendations, list):
+                for rec in coaching_recommendations:
+                    if isinstance(rec, dict):
+                        coaching_tips.append({
+                            "tip": rec.get('title') or rec.get('description', ''),
+                            "priority": rec.get('priority', 'medium'),
+                            "category": rec.get('category', 'general'),
+                            "description": rec.get('description') or rec.get('suggestion', '')
+                        })
+            
+            # Extract performance metrics
+            overall_score = performance_score.get('overall_score', 0) if isinstance(performance_score, dict) else 0
+            max_score = performance_score.get('max_score', 100) if isinstance(performance_score, dict) else 100
+            conversion_probability = overall_score / max_score if max_score > 0 else 0
+            
+            # Determine lead quality from performance score
+            lead_quality = None
+            if overall_score >= 80:
+                lead_quality = "hot"
+            elif overall_score >= 60:
+                lead_quality = "warm"
+            elif overall_score >= 40:
+                lead_quality = "qualified"
+            else:
+                lead_quality = "cold"
+            
+            # Calculate talk time ratio if available (placeholder - would need transcript)
+            talk_time_ratio = None
+            
+            # Insert using Schema 2
+            db.execute(text("""
+                INSERT INTO call_analysis (
+                    id, call_id, tenant_id, uwc_job_id,
+                    sentiment_score, engagement_score,
+                    coaching_tips,
+                    lead_quality, conversion_probability,
+                    talk_time_ratio,
+                    analyzed_at, analysis_version, created_at
+                ) VALUES (
+                    :id, :call_id, :tenant_id, :uwc_job_id,
+                    :sentiment_score, :engagement_score,
+                    CAST(:coaching_tips AS jsonb),
+                    :lead_quality, :conversion_probability,
+                    :talk_time_ratio,
+                    :analyzed_at, :analysis_version, :created_at
+                )
+            """), {
+                "id": analysis_id,
+                "call_id": call_id,
+                "tenant_id": tenant_id,
+                "uwc_job_id": legacy_uwc_job_id,
+                "sentiment_score": sentiment_score,
+                "engagement_score": engagement_score,
+                "coaching_tips": json.dumps(coaching_tips) if coaching_tips else None,
+                "lead_quality": lead_quality,
+                "conversion_probability": conversion_probability,
+                "talk_time_ratio": talk_time_ratio,
+                "analyzed_at": datetime.utcnow(),
+                "analysis_version": analysis_result.get('analysis_version', 'legacy_v1'),
+                "created_at": datetime.utcnow()
+            })
+            
+            db.commit()
+            logger.info(f"Stored legacy analysis results for call {call_id} (ID: {analysis_id})")
             
         except Exception as e:
             logger.error(f"Error storing analysis results: {e}")
