@@ -435,6 +435,9 @@ class MetricsService:
         
         for appointment in all_appointments:
             try:
+                # Initialize outcome_lower to None (will be set if we have outcome data)
+                outcome_lower = None
+                
                 # Check if attended (has recording session or analysis)
                 has_recording = appointment.id in session_by_appointment_id
                 has_analysis = appointment.id in analysis_by_appointment_id
