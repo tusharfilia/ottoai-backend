@@ -458,7 +458,17 @@ class MetricsService:
                     if appointment.status == AppointmentStatus.COMPLETED.value and analysis:
                         try:
                             # Safely access outcome - handle both string and enum cases
-                            outcome_value = analysis.outcome
+                            # Wrap the attribute access itself in try-except to catch any SQLAlchemy weirdness
+                            try:
+                                outcome_value = analysis.outcome
+                            except AttributeError as attr_err:
+                                # If accessing analysis.outcome itself raises AttributeError, log and skip
+                                logger.warning(
+                                    f"AttributeError accessing analysis.outcome for appointment {appointment.id}: {str(attr_err)}, "
+                                    f"analysis type: {type(analysis)}, analysis id: {getattr(analysis, 'id', 'N/A')}",
+                                    exc_info=True
+                                )
+                                outcome_value = None
                             if outcome_value is None:
                                 outcome_lower = None
                             else:
