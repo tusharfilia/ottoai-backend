@@ -545,7 +545,15 @@ class MetricsService:
                         completed_appointments += 1
                 
                     # Get analysis for outcome (Shunya-first)
-                    analysis = analysis_by_appointment_id.get(appointment.id)
+                    # Safely get analysis - handle any AttributeErrors when accessing the dict
+                    try:
+                        analysis = analysis_by_appointment_id.get(appointment.id)
+                    except (AttributeError, KeyError, Exception) as e:
+                        logger.warning(
+                            f"Error getting analysis from lookup dict for appointment {appointment.id}: {str(e)}",
+                            exc_info=True
+                        )
+                        analysis = None
                 
                     # OUTCOME: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
                     # Only count outcomes for completed appointments
@@ -570,19 +578,29 @@ class MetricsService:
                                 # Convert to string safely - handle both string and enum cases
                                 outcome_str = None
                                 try:
-                                    # Check if it's a string first (most common case)
-                                    if isinstance(outcome_value, str):
-                                        outcome_str = outcome_value
-                                    # Check if it's an enum (has both 'value' and 'name' attributes, and is not a string)
-                                    elif hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name') and not isinstance(outcome_value, str):
-                                        try:
-                                            outcome_str = str(outcome_value.value)
-                                        except (AttributeError, TypeError):
-                                            # Fallback: try to convert directly
-                                            outcome_str = str(outcome_value)
-                                    else:
-                                        # It's some other type, convert to string
+                                    # Simplest approach: try direct string conversion first
+                                    # This works for strings, and for most other types
+                                    outcome_str = str(outcome_value)
+                                    
+                                    # If it's not already a string and string conversion gives us something that looks like an enum repr,
+                                    # try to get .value attribute using getattr (safer than hasattr + direct access)
+                                    if not isinstance(outcome_value, str) and outcome_str.startswith('<') and 'enum' in outcome_str.lower():
+                                        # Might be an enum, try .value using getattr
+                                        enum_value = getattr(outcome_value, 'value', None)
+                                        if enum_value is not None:
+                                            outcome_str = str(enum_value)
+                                except AttributeError as attr_err:
+                                    # AttributeError when converting - likely trying to access .value on something that doesn't have it
+                                    # Just use the string representation we got, or try one more time with direct conversion
+                                    try:
                                         outcome_str = str(outcome_value)
+                                    except Exception:
+                                        logger.warning(
+                                            f"AttributeError converting outcome for appointment {appointment.id}: {str(attr_err)}, "
+                                            f"outcome type: {type(outcome_value)}, outcome value: {repr(outcome_value)}",
+                                            exc_info=True
+                                        )
+                                        outcome_str = None
                                 except Exception as e:
                                     # If all else fails, log and skip
                                     logger.warning(
