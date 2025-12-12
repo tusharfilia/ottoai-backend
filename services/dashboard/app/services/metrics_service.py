@@ -242,27 +242,108 @@ class MetricsService:
                     total_objections += len(analysis.objections)
             
             # BOOKING: Only use Shunya's booking_status enum - never infer from appointments
-            if analysis.booking_status:
-                if analysis.booking_status == BookingStatus.BOOKED.value:
-                    booked_calls += 1
-                elif analysis.booking_status == BookingStatus.SERVICE_NOT_OFFERED.value:
-                    service_not_offered_calls += 1
-                    missed_booking_reasons["service_not_offered"] = missed_booking_reasons.get("service_not_offered", 0) + 1
-                elif analysis.booking_status == BookingStatus.NOT_BOOKED.value:
-                    # Track reason for not booking (from Shunya objections)
-                    if analysis.objections and isinstance(analysis.objections, list) and len(analysis.objections) > 0:
-                        # Use first objection as reason (from Shunya)
-                        first_obj = analysis.objections[0]
-                        if isinstance(first_obj, str):
-                            missed_booking_reasons[first_obj] = missed_booking_reasons.get(first_obj, 0) + 1
-                        elif isinstance(first_obj, dict) and "type" in first_obj:
-                            missed_booking_reasons[first_obj["type"]] = missed_booking_reasons.get(first_obj["type"], 0) + 1
-                    else:
-                        missed_booking_reasons["no_objection_recorded"] = missed_booking_reasons.get("no_objection_recorded", 0) + 1
+            # Safely access booking_status to handle both string and enum cases
+            try:
+                booking_status_value = analysis.booking_status
+                if booking_status_value is not None:
+                    # Convert to string safely
+                    booking_status_str = None
+                    try:
+                        if isinstance(booking_status_value, str):
+                            booking_status_str = booking_status_value
+                        elif hasattr(booking_status_value, 'value') and hasattr(booking_status_value, 'name') and not isinstance(booking_status_value, str):
+                            try:
+                                booking_status_str = str(booking_status_value.value)
+                            except (AttributeError, TypeError):
+                                booking_status_str = str(booking_status_value)
+                        else:
+                            booking_status_str = str(booking_status_value)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to convert booking_status to string for call {call.call_id}: {str(e)}, "
+                            f"status type: {type(booking_status_value)}, status value: {repr(booking_status_value)}",
+                            exc_info=True
+                        )
+                        booking_status_str = None
+                    
+                    # Compare to enum values (normalize to lowercase for comparison)
+                    if booking_status_str:
+                        booking_status_lower = booking_status_str.lower().strip()
+                        if booking_status_lower == BookingStatus.BOOKED.value.lower():
+                            booked_calls += 1
+                        elif booking_status_lower == BookingStatus.SERVICE_NOT_OFFERED.value.lower():
+                            service_not_offered_calls += 1
+                            missed_booking_reasons["service_not_offered"] = missed_booking_reasons.get("service_not_offered", 0) + 1
+                        elif booking_status_lower == BookingStatus.NOT_BOOKED.value.lower():
+                            # Track reason for not booking (from Shunya objections)
+                            if analysis.objections and isinstance(analysis.objections, list) and len(analysis.objections) > 0:
+                                # Use first objection as reason (from Shunya)
+                                first_obj = analysis.objections[0]
+                                if isinstance(first_obj, str):
+                                    missed_booking_reasons[first_obj] = missed_booking_reasons.get(first_obj, 0) + 1
+                                elif isinstance(first_obj, dict) and "type" in first_obj:
+                                    missed_booking_reasons[first_obj["type"]] = missed_booking_reasons.get(first_obj["type"], 0) + 1
+                            else:
+                                missed_booking_reasons["no_objection_recorded"] = missed_booking_reasons.get("no_objection_recorded", 0) + 1
+            except AttributeError as attr_err:
+                # Handle AttributeError when accessing booking_status
+                logger.warning(
+                    f"AttributeError accessing booking_status for call {call.call_id}: {str(attr_err)}, "
+                    f"analysis type: {type(analysis)}, analysis id: {getattr(analysis, 'id', 'N/A')}",
+                    exc_info=True
+                )
+            except Exception as e:
+                # Log any other error but continue processing
+                logger.warning(
+                    f"Error processing booking_status for call {call.call_id}: {str(e)}, "
+                    f"error type: {type(e).__name__}",
+                    exc_info=True
+                )
             
             # OUTCOME CATEGORY: Only use Shunya's call_outcome_category - never compute ourselves
-            if analysis.call_outcome_category == CallOutcomeCategory.QUALIFIED_BUT_UNBOOKED.value:
-                qualified_but_unbooked_calls += 1
+            # Safely access call_outcome_category to handle both string and enum cases
+            try:
+                outcome_category_value = analysis.call_outcome_category
+                if outcome_category_value is not None:
+                    # Convert to string safely
+                    outcome_category_str = None
+                    try:
+                        if isinstance(outcome_category_value, str):
+                            outcome_category_str = outcome_category_value
+                        elif hasattr(outcome_category_value, 'value') and hasattr(outcome_category_value, 'name') and not isinstance(outcome_category_value, str):
+                            try:
+                                outcome_category_str = str(outcome_category_value.value)
+                            except (AttributeError, TypeError):
+                                outcome_category_str = str(outcome_category_value)
+                        else:
+                            outcome_category_str = str(outcome_category_value)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to convert call_outcome_category to string for call {call.call_id}: {str(e)}, "
+                            f"category type: {type(outcome_category_value)}, category value: {repr(outcome_category_value)}",
+                            exc_info=True
+                        )
+                        outcome_category_str = None
+                    
+                    # Compare to enum value (normalize to lowercase for comparison)
+                    if outcome_category_str:
+                        outcome_category_lower = outcome_category_str.lower().strip()
+                        if outcome_category_lower == CallOutcomeCategory.QUALIFIED_BUT_UNBOOKED.value.lower():
+                            qualified_but_unbooked_calls += 1
+            except AttributeError as attr_err:
+                # Handle AttributeError when accessing call_outcome_category
+                logger.warning(
+                    f"AttributeError accessing call_outcome_category for call {call.call_id}: {str(attr_err)}, "
+                    f"analysis type: {type(analysis)}, analysis id: {getattr(analysis, 'id', 'N/A')}",
+                    exc_info=True
+                )
+            except Exception as e:
+                # Log any other error but continue processing
+                logger.warning(
+                    f"Error processing call_outcome_category for call {call.call_id}: {str(e)}, "
+                    f"error type: {type(e).__name__}",
+                    exc_info=True
+                )
             
             # COMPLIANCE: Only use Shunya's sop_compliance_score
             if analysis.sop_compliance_score is not None:
