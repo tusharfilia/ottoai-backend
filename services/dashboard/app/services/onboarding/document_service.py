@@ -60,7 +60,7 @@ class DocumentService:
         except Exception as e:
             logger.error(
                 f"Failed to upload document to S3: {str(e)}",
-                extra={"tenant_id": tenant_id, "filename": file.filename}
+                extra={"tenant_id": tenant_id, "file_name": file.filename}
             )
             raise ValueError(f"Failed to upload document: {str(e)}")
         

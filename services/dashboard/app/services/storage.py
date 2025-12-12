@@ -114,7 +114,7 @@ class StorageService:
             logger.error(f"S3 upload failed: {str(e)}",
                         extra={
                             "tenant_id": tenant_id,
-                            "filename": filename,
+                            "file_name": filename,
                             "error_code": e.response.get('Error', {}).get('Code')
                         })
             raise StorageException(f"Failed to upload file: {str(e)}")

@@ -303,7 +303,7 @@ async def upload_document(
     except Exception as e:
         logger.error(
             f"Error uploading document: {str(e)}",
-            extra={"tenant_id": tenant_id, "filename": file.filename},
+            extra={"tenant_id": tenant_id, "file_name": file.filename},
             exc_info=True
         )
         raise HTTPException(status_code=500, detail="Failed to upload document")
