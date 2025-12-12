@@ -3,6 +3,7 @@ Post-Call Analysis Service
 Analyzes completed calls and provides insights, coaching recommendations, and performance metrics
 """
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
@@ -317,6 +318,12 @@ class PostCallAnalysisService:
         """Store analysis results in the database."""
         db = SessionLocal()
         try:
+            # Convert dict values to JSON strings for JSONB columns
+            call_metrics = analysis_result.get('call_metrics')
+            ai_insights = analysis_result.get('ai_insights')
+            coaching_recommendations = analysis_result.get('coaching_recommendations')
+            performance_score = analysis_result.get('performance_score')
+            
             # Insert analysis results
             db.execute(text("""
                 INSERT INTO call_analysis (
@@ -325,18 +332,18 @@ class PostCallAnalysisService:
                     performance_score, analysis_version, created_at
                 ) VALUES (
                     :call_id, :company_id, :sales_rep_id, :analyzed_at,
-                    :call_metrics, :ai_insights, :coaching_recommendations,
-                    :performance_score, :analysis_version, :created_at
+                    :call_metrics::jsonb, :ai_insights::jsonb, :coaching_recommendations::jsonb,
+                    :performance_score::jsonb, :analysis_version, :created_at
                 )
             """), {
                 "call_id": call_id,
                 "company_id": analysis_result.get('company_id'),
                 "sales_rep_id": analysis_result.get('sales_rep_id'),
                 "analyzed_at": analysis_result.get('analyzed_at'),
-                "call_metrics": analysis_result.get('call_metrics'),
-                "ai_insights": analysis_result.get('ai_insights'),
-                "coaching_recommendations": analysis_result.get('coaching_recommendations'),
-                "performance_score": analysis_result.get('performance_score'),
+                "call_metrics": json.dumps(call_metrics) if call_metrics else None,
+                "ai_insights": json.dumps(ai_insights) if ai_insights else None,
+                "coaching_recommendations": json.dumps(coaching_recommendations) if coaching_recommendations else None,
+                "performance_score": json.dumps(performance_score) if performance_score else None,
                 "analysis_version": analysis_result.get('analysis_version'),
                 "created_at": datetime.utcnow()
             })
@@ -775,6 +782,12 @@ class PostCallAnalysisService:
         """Store analysis results in the database."""
         db = SessionLocal()
         try:
+            # Convert dict values to JSON strings for JSONB columns
+            call_metrics = analysis_result.get('call_metrics')
+            ai_insights = analysis_result.get('ai_insights')
+            coaching_recommendations = analysis_result.get('coaching_recommendations')
+            performance_score = analysis_result.get('performance_score')
+            
             # Insert analysis results
             db.execute(text("""
                 INSERT INTO call_analysis (
@@ -783,18 +796,18 @@ class PostCallAnalysisService:
                     performance_score, analysis_version, created_at
                 ) VALUES (
                     :call_id, :company_id, :sales_rep_id, :analyzed_at,
-                    :call_metrics, :ai_insights, :coaching_recommendations,
-                    :performance_score, :analysis_version, :created_at
+                    :call_metrics::jsonb, :ai_insights::jsonb, :coaching_recommendations::jsonb,
+                    :performance_score::jsonb, :analysis_version, :created_at
                 )
             """), {
                 "call_id": call_id,
                 "company_id": analysis_result.get('company_id'),
                 "sales_rep_id": analysis_result.get('sales_rep_id'),
                 "analyzed_at": analysis_result.get('analyzed_at'),
-                "call_metrics": analysis_result.get('call_metrics'),
-                "ai_insights": analysis_result.get('ai_insights'),
-                "coaching_recommendations": analysis_result.get('coaching_recommendations'),
-                "performance_score": analysis_result.get('performance_score'),
+                "call_metrics": json.dumps(call_metrics) if call_metrics else None,
+                "ai_insights": json.dumps(ai_insights) if ai_insights else None,
+                "coaching_recommendations": json.dumps(coaching_recommendations) if coaching_recommendations else None,
+                "performance_score": json.dumps(performance_score) if performance_score else None,
                 "analysis_version": analysis_result.get('analysis_version'),
                 "created_at": datetime.utcnow()
             })
@@ -905,6 +918,8 @@ class PostCallAnalysisService:
 
 # Global post-call analysis service instance
 post_call_analysis_service = PostCallAnalysisService()
+
+
 
 
 

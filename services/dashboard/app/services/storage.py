@@ -103,7 +103,7 @@ class StorageService:
             logger.info(f"File uploaded successfully",
                        extra={
                            "tenant_id": tenant_id,
-                           "filename": filename,
+                           "file_name": filename,
                            "s3_key": s3_key,
                            "file_type": file_type
                        })
