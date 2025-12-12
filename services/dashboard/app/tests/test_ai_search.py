@@ -5,17 +5,20 @@ Tests multi-tenant isolation, filtering, and aggregate calculations.
 """
 import pytest
 from datetime import datetime, timedelta
+from typing import Optional, List
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.main import app
 from app.models.call import Call
 from app.models.call_analysis import CallAnalysis
-from app.models.lead import Lead
-from app.models.appointment import Appointment
+from app.models.lead import Lead, LeadStatus, LeadSource
+from app.models.appointment import Appointment, AppointmentOutcome, AppointmentStatus
+from app.models.recording_analysis import RecordingAnalysis
 from app.models.company import Company
 from app.models.sales_rep import SalesRep
 from app.models.contact_card import ContactCard
+from app.models.enums import CallOutcomeCategory
 from app.config import settings
 import json
 
@@ -1104,6 +1107,9 @@ class TestAISearchOptions:
         assert response.status_code == 200
         data = response.json()
         assert len(data["calls"]) == 2
+
+
+
 
 
 

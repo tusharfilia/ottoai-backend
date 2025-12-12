@@ -140,3 +140,41 @@ def require_tenant_context(request: Request) -> dict:
     """
     return get_tenant_context(request)
 
+
+# P0 FIX: Tenant ownership verification helper
+def verify_tenant_ownership(db, model_class, resource_id: str, tenant_id: str) -> bool:
+    """
+    Verify that a resource belongs to the specified tenant.
+    
+    This helper prevents cross-tenant data access by ID enumeration.
+    Returns False (not raises exception) to allow callers to return 404 instead of 403.
+    
+    Args:
+        db: Database session
+        model_class: SQLAlchemy model class (must have company_id or tenant_id column)
+        resource_id: Resource ID to verify
+        tenant_id: Expected tenant ID
+        
+    Returns:
+        bool: True if resource belongs to tenant, False otherwise
+    """
+    try:
+        # Determine tenant column name
+        tenant_column = getattr(model_class, 'company_id', None) or getattr(model_class, 'tenant_id', None)
+        if not tenant_column:
+            logger.error(f"Model {model_class.__name__} has no company_id or tenant_id column")
+            return False
+        
+        # Query resource with tenant filter
+        query = db.query(model_class).filter(
+            model_class.id == resource_id,
+            tenant_column == tenant_id
+        )
+        
+        resource = query.first()
+        return resource is not None
+        
+    except Exception as e:
+        logger.error(f"Error verifying tenant ownership: {str(e)}")
+        return False
+

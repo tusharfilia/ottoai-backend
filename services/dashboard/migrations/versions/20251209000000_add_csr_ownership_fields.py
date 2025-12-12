@@ -32,3 +32,5 @@ def downgrade():
     op.drop_index(op.f('ix_calls_owner_id'), table_name='calls')
     op.drop_column('calls', 'owner_id')
 
+
+

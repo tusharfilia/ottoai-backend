@@ -328,3 +328,5 @@ async def get_personal_otto_profile(
             detail=f"Failed to get profile: {str(e)}"
         )
 
+
+

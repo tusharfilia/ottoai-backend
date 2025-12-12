@@ -87,6 +87,10 @@ def with_idempotency(
             global webhook_duplicates_total
             webhook_duplicates_total += 1
             
+            # P0 FIX: Record dedupe hit metric
+            from app.obs.metrics import metrics
+            metrics.record_webhook_dedupe_hit(provider)
+            
             db.commit()
             return {
                 "status": "duplicate_ignored",

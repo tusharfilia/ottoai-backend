@@ -400,3 +400,5 @@ This is now your north star spec. From here:
   - It passes no extra IDs that break the universal ContactCard model.
   - Scope & role logic match Section 5.
 
+
+

@@ -278,3 +278,5 @@ def test_todays_appointments_include_geofence_fields(client, mock_verify_clerk_j
                 assert "geofence_radius_meters" in appointment_data
                 assert appointment_data["geofence_radius_meters"] == 75
 
+
+

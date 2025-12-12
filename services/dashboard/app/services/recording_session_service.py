@@ -79,30 +79,60 @@ class RecordingSessionService:
                 f"cannot start recording more than {window_minutes} minutes early"
             )
         
-        # Check if session already exists for this appointment
-        existing_session = self.db.query(RecordingSession).filter(
-            RecordingSession.appointment_id == appointment_id,
-            RecordingSession.company_id == tenant_id,
-            RecordingSession.status.in_(["pending", "recording"])
-        ).first()
+        # P0 FIX: Acquire distributed lock to prevent concurrent start requests
+        from app.services.redis_lock_service import redis_lock_service
+        import asyncio
+        lock_key = f"recording_session:start:{appointment_id}"
+        lock_token = None
         
-        if existing_session:
-            raise RecordingSessionError(
-                f"Recording session already exists for appointment {appointment_id} (session: {existing_session.id})"
+        try:
+            lock_token = asyncio.run(
+                redis_lock_service.acquire_lock(
+                    lock_key=lock_key,
+                    tenant_id=tenant_id,
+                    timeout=60  # 1 minute
+                )
             )
-        
-        # Create recording session
-        session = RecordingSession(
-            company_id=tenant_id,
-            rep_id=rep_id,
-            appointment_id=appointment_id,
-            started_at=now,
-            status="recording"
-        )
-        
-        self.db.add(session)
-        self.db.commit()
-        self.db.refresh(session)
+            
+            if not lock_token:
+                raise RecordingSessionError(
+                    f"Could not acquire lock for starting recording session for appointment {appointment_id}"
+                )
+            
+            # Check if session already exists for this appointment (inside lock)
+            existing_session = self.db.query(RecordingSession).filter(
+                RecordingSession.appointment_id == appointment_id,
+                RecordingSession.company_id == tenant_id,
+                RecordingSession.status.in_(["pending", "recording"])
+            ).first()
+            
+            if existing_session:
+                raise RecordingSessionError(
+                    f"Recording session already exists for appointment {appointment_id} (session: {existing_session.id})"
+                )
+            
+            # Create recording session
+            session = RecordingSession(
+                company_id=tenant_id,
+                rep_id=rep_id,
+                appointment_id=appointment_id,
+                started_at=now,
+                status="recording"
+            )
+            
+            self.db.add(session)
+            self.db.commit()
+            self.db.refresh(session)
+        finally:
+            # Always release lock
+            if lock_token:
+                asyncio.run(
+                    redis_lock_service.release_lock(
+                        lock_key=lock_key,
+                        tenant_id=tenant_id,
+                        lock_token=lock_token
+                    )
+                )
         
         logger.info(
             f"Started recording session {session.id} for appointment {appointment_id}",

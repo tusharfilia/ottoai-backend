@@ -38,3 +38,5 @@ def downgrade():
     op.drop_column('call_analysis', 'compliance_positive_behaviors')
     op.drop_column('call_analysis', 'compliance_violations')
 
+
+

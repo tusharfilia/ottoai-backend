@@ -69,3 +69,5 @@ class AISearchResponse(BaseModel):
     """Response schema for AI search endpoint."""
     calls: List[AISearchCallItem] = Field(default_factory=list, description="List of matching calls")
     aggregates: Optional[AISearchAggregates] = Field(None, description="Aggregate analytics")
+
+

@@ -79,3 +79,4 @@ python3 -m scripts.seed_demo_data
 - The script is idempotent - safe to run multiple times
 - If no demo company exists, the script exits gracefully
 
+

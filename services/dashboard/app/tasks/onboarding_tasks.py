@@ -81,6 +81,19 @@ def ingest_document_with_shunya(
                 return {"status": "error", "error": "UWC not available"}
             
             try:
+                # Extract target_role from document metadata or default (REQUIRED for Shunya)
+                target_role = None
+                if document.role_target:
+                    # Use role_target from document if available
+                    target_role = uwc_client._map_otto_role_to_shunya_target_role(document.role_target)
+                elif document.metadata_json and "role_target" in document.metadata_json:
+                    # Fallback to metadata_json if available
+                    role_target = document.metadata_json["role_target"]
+                    target_role = uwc_client._map_otto_role_to_shunya_target_role(role_target)
+                else:
+                    # Default to sales_rep if no role specified (most common case for onboarding docs)
+                    target_role = uwc_client._map_otto_role_to_shunya_target_role("sales_rep")
+                
                 # Run async UWC client call
                 result = asyncio.run(
                     uwc_client.ingest_document(
@@ -93,7 +106,8 @@ def ingest_document_with_shunya(
                             "document_id": document_id,
                             "role_target": document.role_target,
                             **(document.metadata_json or {})
-                        }
+                        },
+                        target_role=target_role  # REQUIRED: Shunya requires ?target_role= query parameter
                     )
                 )
                 

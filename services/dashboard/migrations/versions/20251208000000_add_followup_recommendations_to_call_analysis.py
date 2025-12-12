@@ -28,3 +28,5 @@ def downgrade():
     # Remove followup_recommendations column
     op.drop_column('call_analysis', 'followup_recommendations')
 
+
+

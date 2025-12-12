@@ -163,6 +163,32 @@ uwc_retries_total = Counter(
     ['endpoint']
 )
 
+# P0 FIX: Shunya Job Failure Metrics
+shunya_job_failures_total = Counter(
+    'shunya_job_failures_total',
+    'Total number of Shunya job failures',
+    ['job_type', 'error_type']
+)
+
+shunya_api_errors_total = Counter(
+    'shunya_api_errors_total',
+    'Total number of Shunya API errors',
+    ['endpoint', 'error_type']
+)
+
+# P0 FIX: Webhook Deduplication Metrics
+webhook_dedupe_hits_total = Counter(
+    'webhook_dedupe_hits_total',
+    'Total number of webhook deduplication hits (duplicates caught)',
+    ['provider']
+)
+
+webhook_dedupe_misses_total = Counter(
+    'webhook_dedupe_misses_total',
+    'Total number of webhook deduplication misses (should have been caught)',
+    ['provider']
+)
+
 
 class MetricsCollector:
     """Centralized metrics collection and management."""
@@ -217,6 +243,22 @@ class MetricsCollector:
     def record_idempotency_purged(self, provider: str, count: int = 1):
         """Record idempotency key purge metrics."""
         webhook_idempotency_purged_total.labels(provider=provider).inc(count)
+    
+    def record_shunya_job_failure(self, job_type: str, error_type: str = "unknown"):
+        """Record Shunya job failure metrics."""
+        shunya_job_failures_total.labels(job_type=job_type, error_type=error_type).inc()
+    
+    def record_shunya_api_error(self, endpoint: str, error_type: str = "unknown"):
+        """Record Shunya API error metrics."""
+        shunya_api_errors_total.labels(endpoint=endpoint, error_type=error_type).inc()
+    
+    def record_webhook_dedupe_hit(self, provider: str):
+        """Record webhook deduplication hit (duplicate caught)."""
+        webhook_dedupe_hits_total.labels(provider=provider).inc()
+    
+    def record_webhook_dedupe_miss(self, provider: str):
+        """Record webhook deduplication miss (should have been caught)."""
+        webhook_dedupe_misses_total.labels(provider=provider).inc()
     
     def record_asr_minutes(self, tenant_id: str, minutes: float):
         """Record ASR usage metrics."""

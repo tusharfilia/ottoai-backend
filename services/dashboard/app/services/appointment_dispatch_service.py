@@ -89,40 +89,73 @@ class AppointmentDispatchService:
                             f"Appointment cannot be assigned: booking_status is '{booking_status}', expected 'booked'"
                         )
         
-        # Double-booking check (unless allowed)
-        if not allow_double_booking:
-            # Check for overlapping appointments for the same rep
-            # Overlap: same rep, scheduled_start within appointment window
-            appointment_start = appointment.scheduled_start
-            appointment_end = appointment.scheduled_end or (appointment_start + timedelta(hours=1))  # Default 1 hour
-            
-            overlapping = self.db.query(Appointment).filter(
-                Appointment.company_id == tenant_id,
-                Appointment.assigned_rep_id == rep_id,
-                Appointment.id != appointment_id,  # Exclude current appointment
-                Appointment.status.in_([AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED]),
-                # Overlap condition: other appointment starts before this one ends AND ends after this one starts
-                Appointment.scheduled_start < appointment_end,
-                or_(
-                    Appointment.scheduled_end.is_(None),
-                    Appointment.scheduled_end > appointment_start
+        # P0 FIX: Acquire distributed lock to prevent concurrent assignment requests
+        from app.services.redis_lock_service import redis_lock_service
+        import asyncio
+        lock_key = f"appointment:assign:{appointment_id}"
+        lock_token = None
+        
+        try:
+            lock_token = asyncio.run(
+                redis_lock_service.acquire_lock(
+                    lock_key=lock_key,
+                    tenant_id=tenant_id,
+                    timeout=60  # 1 minute
                 )
-            ).first()
+            )
             
-            if overlapping:
+            if not lock_token:
                 raise AppointmentDispatchError(
-                    f"Double-booking conflict: Rep {rep_id} already has appointment {overlapping.id} "
-                    f"scheduled at {overlapping.scheduled_start} (overlaps with {appointment_start})"
+                    f"Could not acquire lock for assigning appointment {appointment_id}"
                 )
-        
-        # Update assignment fields
-        appointment.assigned_rep_id = rep_id
-        appointment.assigned_by_csr_id = actor_id
-        appointment.assigned_by = actor_id  # Also update legacy field
-        appointment.assigned_at = datetime.utcnow()
-        
-        self.db.commit()
-        self.db.refresh(appointment)
+            
+            # Refresh appointment from DB to get latest state (inside lock)
+            self.db.refresh(appointment)
+            
+            # Double-booking check (unless allowed) - inside lock
+            if not allow_double_booking:
+                # Check for overlapping appointments for the same rep
+                # Overlap: same rep, scheduled_start within appointment window
+                appointment_start = appointment.scheduled_start
+                appointment_end = appointment.scheduled_end or (appointment_start + timedelta(hours=1))  # Default 1 hour
+                
+                overlapping = self.db.query(Appointment).filter(
+                    Appointment.company_id == tenant_id,
+                    Appointment.assigned_rep_id == rep_id,
+                    Appointment.id != appointment_id,  # Exclude current appointment
+                    Appointment.status.in_([AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED]),
+                    # Overlap condition: other appointment starts before this one ends AND ends after this one starts
+                    Appointment.scheduled_start < appointment_end,
+                    or_(
+                        Appointment.scheduled_end.is_(None),
+                        Appointment.scheduled_end > appointment_start
+                    )
+                ).first()
+                
+                if overlapping:
+                    raise AppointmentDispatchError(
+                        f"Double-booking conflict: Rep {rep_id} already has appointment {overlapping.id} "
+                        f"scheduled at {overlapping.scheduled_start} (overlaps with {appointment_start})"
+                    )
+            
+            # Update assignment fields
+            appointment.assigned_rep_id = rep_id
+            appointment.assigned_by_csr_id = actor_id
+            appointment.assigned_by = actor_id  # Also update legacy field
+            appointment.assigned_at = datetime.utcnow()
+            
+            self.db.commit()
+            self.db.refresh(appointment)
+        finally:
+            # Always release lock
+            if lock_token:
+                asyncio.run(
+                    redis_lock_service.release_lock(
+                        lock_key=lock_key,
+                        tenant_id=tenant_id,
+                        lock_token=lock_token
+                    )
+                )
         
         logger.info(
             f"Assigned appointment {appointment_id} to rep {rep_id} by CSR {actor_id}",

@@ -89,3 +89,5 @@ def downgrade():
     if column_exists('appointments', 'appointment_type'):
         op.drop_column('appointments', 'appointment_type')
 
+
+

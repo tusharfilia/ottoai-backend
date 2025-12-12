@@ -332,8 +332,8 @@ class PostCallAnalysisService:
                     performance_score, analysis_version, created_at
                 ) VALUES (
                     :call_id, :company_id, :sales_rep_id, :analyzed_at,
-                    :call_metrics::jsonb, :ai_insights::jsonb, :coaching_recommendations::jsonb,
-                    :performance_score::jsonb, :analysis_version, :created_at
+                    CAST(:call_metrics AS jsonb), CAST(:ai_insights AS jsonb), CAST(:coaching_recommendations AS jsonb),
+                    CAST(:performance_score AS jsonb), :analysis_version, :created_at
                 )
             """), {
                 "call_id": call_id,
@@ -796,8 +796,8 @@ class PostCallAnalysisService:
                     performance_score, analysis_version, created_at
                 ) VALUES (
                     :call_id, :company_id, :sales_rep_id, :analyzed_at,
-                    :call_metrics::jsonb, :ai_insights::jsonb, :coaching_recommendations::jsonb,
-                    :performance_score::jsonb, :analysis_version, :created_at
+                    CAST(:call_metrics AS jsonb), CAST(:ai_insights AS jsonb), CAST(:coaching_recommendations AS jsonb),
+                    CAST(:performance_score AS jsonb), :analysis_version, :created_at
                 )
             """), {
                 "call_id": call_id,

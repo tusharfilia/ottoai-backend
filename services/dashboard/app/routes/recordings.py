@@ -3,7 +3,8 @@ Recording Session APIs for Sales Rep app.
 
 Simplified endpoints for starting and stopping recording sessions.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -49,7 +50,8 @@ async def start_recording_session(
     request: Request,
     body: StartRecordingSessionRequest,
     tenant_id: str = Depends(get_tenant_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ) -> APIResponse[RecordingSessionResponse]:
     """
     Start a recording session for an appointment.
@@ -72,10 +74,33 @@ async def start_recording_session(
     - 401: User ID not found
     """
     try:
+        # P0 FIX: Check idempotency if key provided
+        from app.services.write_idempotency import check_write_idempotency, store_write_idempotency
+        if idempotency_key:
+            is_duplicate, _ = check_write_idempotency(
+                db=db,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                operation_type="recording_session_start"
+            )
+            if is_duplicate:
+                logger.info(f"Idempotency key {idempotency_key} already processed, returning success")
+                # Return success response for duplicate (operation already completed)
+                return APIResponse(
+                    success=True, 
+                    data={"status": "already_processed", "idempotency_key": idempotency_key}
+                )
+        
         # Get rep user ID from request state
         rep_id = getattr(request.state, 'user_id', None)
         if not rep_id:
             raise HTTPException(status_code=401, detail="User ID not found in request")
+        
+        # P0 FIX: Verify tenant ownership of appointment
+        from app.core.tenant import verify_tenant_ownership
+        from app.models.appointment import Appointment
+        if not verify_tenant_ownership(db, Appointment, body.appointment_id, tenant_id):
+            raise HTTPException(status_code=404, detail="Appointment not found")
         
         # Call service
         service = RecordingSessionService(db)
@@ -114,7 +139,8 @@ async def stop_recording_session(
     session_id: str,
     body: StopRecordingSessionRequest,
     tenant_id: str = Depends(get_tenant_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ) -> APIResponse[RecordingSessionResponse]:
     """
     Stop a recording session and trigger Shunya analysis.
@@ -140,6 +166,29 @@ async def stop_recording_session(
     - 500: Failed to trigger Shunya analysis (session marked as failed)
     """
     try:
+        # P0 FIX: Check idempotency if key provided
+        from app.services.write_idempotency import check_write_idempotency, store_write_idempotency
+        if idempotency_key:
+            is_duplicate, _ = check_write_idempotency(
+                db=db,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                operation_type="recording_session_stop"
+            )
+            if is_duplicate:
+                logger.info(f"Idempotency key {idempotency_key} already processed, returning success")
+                # Return success response for duplicate (operation already completed)
+                return APIResponse(
+                    success=True, 
+                    data={"status": "already_processed", "idempotency_key": idempotency_key}
+                )
+        
+        # P0 FIX: Verify tenant ownership of session
+        from app.core.tenant import verify_tenant_ownership
+        from app.models.recording_session import RecordingSession as RecordingSessionModel
+        if not verify_tenant_ownership(db, RecordingSessionModel, session_id, tenant_id):
+            raise HTTPException(status_code=404, detail="Recording session not found")
+        
         # Get rep user ID from request state
         rep_id = getattr(request.state, 'user_id', None)
         if not rep_id:
@@ -164,6 +213,17 @@ async def stop_recording_session(
             audio_url=session.audio_url,
             shunya_job_id=session.shunya_analysis_job_id
         )
+        
+        # P0 FIX: Store idempotency key if provided
+        if idempotency_key:
+            response_data = response.dict() if hasattr(response, 'dict') else response
+            store_write_idempotency(
+                db=db,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                operation_type="recording_session_stop",
+                response=response_data
+            )
         
         return APIResponse(success=True, data=response)
     

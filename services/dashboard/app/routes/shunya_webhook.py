@@ -231,61 +231,88 @@ async def shunya_webhook(
             else:
                 normalized_result = shunya_normalizer.normalize_complete_analysis(result)
             
-            # Check idempotency before processing
-            if not shunya_job_service.should_process(db, job, normalized_result):
-                logger.info(
-                    f"Shunya job {job.id} already processed via webhook, skipping",
-                    extra={"job_id": job.id, "shunya_job_id": shunya_job_id}
+            # P0 FIX: Acquire distributed lock to prevent webhook vs polling race condition
+            from app.services.redis_lock_service import redis_lock_service
+            lock_key = f"shunya_job:{job.id}"
+            lock_token = None
+            
+            try:
+                lock_token = await redis_lock_service.acquire_lock(
+                    lock_key=lock_key,
+                    tenant_id=job.company_id,
+                    timeout=300  # 5 minutes
                 )
-                return APIResponse(data={"status": "already_processed", "job_id": job.id})
-            
-            # Mark job as succeeded (idempotent)
-            shunya_job_service.mark_succeeded(db, job, normalized_result)
-            db.refresh(job)  # Refresh to get updated processed_output_hash
-            
-            # Process result and persist to domain models (idempotent)
-            integration_service = ShunyaIntegrationService()
-            
-            if job.job_type.value == "csr_call" and job.call_id:
-                from app.models.call import Call
-                call = db.query(Call).filter(Call.call_id == job.call_id).first()
-                if call:
-                    await integration_service._process_shunya_analysis_for_call(
-                        db=db,
-                        call=call,
-                        company_id=job.company_id,
-                        complete_analysis=normalized_result,
-                        transcript_text=normalized_result.get("transcript", {}).get("transcript_text", ""),
-                        shunya_job=job,  # Pass job for idempotency checking
+                
+                if not lock_token:
+                    logger.warning(
+                        f"Could not acquire lock for Shunya job {job.id}, another process may be handling it",
+                        extra={"job_id": job.id, "shunya_job_id": shunya_job_id}
                     )
-            elif job.job_type.value == "sales_visit" and job.recording_session_id:
-                from app.models.recording_session import RecordingSession
-                session = db.query(RecordingSession).filter(
-                    RecordingSession.id == job.recording_session_id
-                ).first()
-                if session:
-                    await integration_service._process_shunya_analysis_for_visit(
-                        db=db,
-                        recording_session=session,
-                        company_id=job.company_id,
-                        complete_analysis=normalized_result,
-                        transcript_text="",  # May be ghost mode
-                        shunya_job=job,  # Pass job for idempotency checking
+                    return APIResponse(data={"status": "processing_by_another", "job_id": job.id})
+                
+                # Check idempotency before processing (inside lock to prevent race)
+                if not shunya_job_service.should_process(db, job, normalized_result):
+                    logger.info(
+                        f"Shunya job {job.id} already processed via webhook, skipping",
+                        extra={"job_id": job.id, "shunya_job_id": shunya_job_id}
                     )
-            
-            db.commit()
-            
-            # Emit success event (idempotent check)
-            emit(
-                "shunya.job.succeeded",
-                {
-                    "job_id": job.id,
-                    "job_type": job.job_type.value,
-                    "shunya_job_id": shunya_job_id,
-                },
-                tenant_id=job.company_id,
-                lead_id=job.lead_id,
-            )
+                    return APIResponse(data={"status": "already_processed", "job_id": job.id})
+                
+                # Mark job as succeeded (idempotent)
+                shunya_job_service.mark_succeeded(db, job, normalized_result)
+                db.refresh(job)  # Refresh to get updated processed_output_hash
+                
+                # Process result and persist to domain models (idempotent)
+                integration_service = ShunyaIntegrationService()
+                
+                if job.job_type.value == "csr_call" and job.call_id:
+                    from app.models.call import Call
+                    call = db.query(Call).filter(Call.call_id == job.call_id).first()
+                    if call:
+                        await integration_service._process_shunya_analysis_for_call(
+                            db=db,
+                            call=call,
+                            company_id=job.company_id,
+                            complete_analysis=normalized_result,
+                            transcript_text=normalized_result.get("transcript", {}).get("transcript_text", ""),
+                            shunya_job=job,  # Pass job for idempotency checking
+                        )
+                elif job.job_type.value == "sales_visit" and job.recording_session_id:
+                    from app.models.recording_session import RecordingSession
+                    session = db.query(RecordingSession).filter(
+                        RecordingSession.id == job.recording_session_id
+                    ).first()
+                    if session:
+                        await integration_service._process_shunya_analysis_for_visit(
+                            db=db,
+                            recording_session=session,
+                            company_id=job.company_id,
+                            complete_analysis=normalized_result,
+                            transcript_text="",  # May be ghost mode
+                            shunya_job=job,  # Pass job for idempotency checking
+                        )
+                
+                db.commit()
+                
+                # Emit success event (idempotent check)
+                emit(
+                    "shunya.job.succeeded",
+                    {
+                        "job_id": job.id,
+                        "job_type": job.job_type.value,
+                        "shunya_job_id": shunya_job_id,
+                    },
+                    tenant_id=job.company_id,
+                    lead_id=job.lead_id,
+                )
+            finally:
+                # P0 FIX: Always release lock
+                if lock_token:
+                    await redis_lock_service.release_lock(
+                        lock_key=lock_key,
+                        tenant_id=job.company_id,
+                        lock_token=lock_token
+                    )
             
             logger.info(f"Successfully processed Shunya webhook for job {job.id}")
             return APIResponse(data={"status": "processed", "job_id": job.id})
@@ -342,6 +369,10 @@ async def shunya_webhook(
             extra={"job_id": job.id, "shunya_job_id": shunya_job_id, "status": status}
         )
         return APIResponse(data={"status": "ignored", "reason": f"Unknown status: {status}"})
+
+
+
+
 
 
 

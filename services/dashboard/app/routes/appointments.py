@@ -926,7 +926,8 @@ async def assign_appointment_to_rep(
     appointment_id: str,
     body: AppointmentAssignBody,
     tenant_id: str = Depends(get_tenant_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ) -> APIResponse[AppointmentDetail]:
     """
     Assign an appointment to a sales rep.
@@ -946,6 +947,29 @@ async def assign_appointment_to_rep(
     - 400: Appointment not found, booking_status != "booked", or double-booking conflict
     """
     try:
+        # P0 FIX: Check idempotency if key provided
+        from app.services.write_idempotency import check_write_idempotency, store_write_idempotency
+        if idempotency_key:
+            is_duplicate, _ = check_write_idempotency(
+                db=db,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                operation_type="appointment_assign"
+            )
+            if is_duplicate:
+                from app.obs.logging import get_logger
+                logger = get_logger(__name__)
+                logger.info(f"Idempotency key {idempotency_key} already processed, returning success")
+                return APIResponse(
+                    success=True, 
+                    data={"status": "already_processed", "idempotency_key": idempotency_key}
+                )
+        
+        # P0 FIX: Verify tenant ownership of appointment
+        from app.core.tenant import verify_tenant_ownership
+        if not verify_tenant_ownership(db, Appointment, appointment_id, tenant_id):
+            raise HTTPException(status_code=404, detail="Appointment not found")
+        
         # Get actor ID (CSR/manager performing assignment)
         actor_id = getattr(request.state, 'user_id', None)
         if not actor_id:
@@ -969,8 +993,19 @@ async def assign_appointment_to_rep(
         
         # Convert to response schema
         response = AppointmentDetail.from_orm(appointment)
+        response_data = response.dict() if hasattr(response, 'dict') else response
         
-        return APIResponse(success=True, data=response)
+        # P0 FIX: Store idempotency key if provided
+        if idempotency_key:
+            store_write_idempotency(
+                db=db,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                operation_type="appointment_assign",
+                response=response_data
+            )
+        
+        return APIResponse(success=True, data=response_data)
     
     except AppointmentDispatchError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -981,4 +1016,7 @@ async def assign_appointment_to_rep(
         logger = get_logger(__name__)
         logger.error(f"Error assigning appointment: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to assign appointment: {str(e)}")
+
+
+
 

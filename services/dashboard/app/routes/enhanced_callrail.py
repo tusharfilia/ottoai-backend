@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models import call, company
 from app.models.contact_card import ContactCard
 from app.models.lead import Lead, LeadSource, LeadStatus
+from app.models.enums import CallType
 from app.services.twilio_service import TwilioService
 from app.services.uwc_client import get_uwc_client
 from app.middleware.rate_limiter import limits
@@ -143,7 +144,8 @@ async def handle_call_incoming(
                 lead_id=lead.id,
                 created_at=datetime.utcnow(),
                 missed_call=False,  # Will be updated when call status is known
-                status="incoming"  # New status for incoming calls
+                status="incoming",  # New status for incoming calls
+                call_type=CallType.CSR_CALL.value  # Set call type for CSR filtering
             )
             db.add(new_call)
             db.commit()
@@ -211,12 +213,14 @@ async def handle_call_answered(
         # Update call record
         call_record.missed_call = False
         call_record.status = "answered"
+        call_record.call_type = CallType.CSR_CALL.value  # Ensure call_type is set
+        if csr_id:
+            call_record.owner_id = csr_id  # Set owner_id for CSR filtering
         if duration:
             try:
                 call_record.last_call_duration = int(duration)
             except (ValueError, TypeError):
                 pass
-        # Note: csr_id field doesn't exist in Call model, store in JSON if needed
         call_record.updated_at = datetime.utcnow()
         db.commit()
         
@@ -439,7 +443,8 @@ async def handle_call_completed(
                 name=data.get("customer_name") or data.get("callername") or "Unknown Caller",
                 created_at=created_at,
                 missed_call=not is_answered,
-                status="missed" if not is_answered else "completed"
+                status="missed" if not is_answered else "completed",
+                call_type=CallType.CSR_CALL.value  # Set call type for CSR filtering
             )
             db.add(call_record)
             db.commit()
@@ -448,6 +453,9 @@ async def handle_call_completed(
         else:
             call_record.contact_card_id = contact_card.id
             call_record.lead_id = lead.id
+            # Ensure call_type is set if not already set
+            if not call_record.call_type:
+                call_record.call_type = CallType.CSR_CALL.value
             db.commit()
 
         # Check if this was a missed call
@@ -677,6 +685,7 @@ async def get_call_status(
     except Exception as e:
         logger.error(f"Error getting call status: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
