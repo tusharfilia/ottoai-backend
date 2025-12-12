@@ -14,12 +14,12 @@ from app.services.domain_entities import ensure_contact_card_and_lead
 from app.services.uwc_client import get_uwc_client
 from app.services.metrics_service import MetricsService
 from app.schemas.responses import APIResponse
-from app.schemas.metrics import CallsByObjectionSelfResponse
+from app.schemas.metrics import CallsByObjectionSelfResponse, UnbookedCallsSelfResponse
 from uuid import uuid4
 import logging
 import traceback
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/calls", tags=["calls"])
 logger = logging.getLogger(__name__)
 
 # Note: Delete endpoints have been moved to delete.py
