@@ -59,13 +59,18 @@ const response = await fetch(`${API_BASE_URL}/api/v1/contact-cards/${contactId}`
 
 ---
 
-### 0.2 Idempotency & Client Behavior
+### 0.2 Idempotency-Key Usage
 
-**Backend Idempotency Mechanisms**:
-- `Idempotency-Key` headers in Otto → Shunya calls (handled backend-side)
-- Natural keys for Tasks and KeySignals (prevent duplicates)
-- `ShunyaJob` output hashing (prevents duplicate processing)
-- State checks (Lead status/appointment outcome only update if changed)
+**Critical**: Frontend does NOT need to send `Idempotency-Key` headers.
+
+**Backend Handling**:
+- Backend automatically generates and sends `Idempotency-Key` headers to Shunya for all mutating requests (POST/PUT/DELETE)
+- Backend uses `request_id` (from `X-Request-ID` header or auto-generated) as the idempotency key
+- Backend handles all idempotency internally via:
+  - `ShunyaJob` uniqueness checks (prevents duplicate Shunya API calls)
+  - `processed_output_hash` for duplicate detection (prevents duplicate processing of Shunya responses)
+  - Natural keys for Tasks and KeySignals (prevents duplicate task/signal creation)
+  - State checks (Lead status/appointment outcome only update if changed)
 
 **Frontend Requirements**:
 
@@ -2030,13 +2035,9 @@ Both endpoints are now available and return data scoped by company_id from JWT t
 - Dashboard Metrics (4 endpoints)
 - RAG / Ask Otto (1 endpoint)
 
-### Notable Ambiguities / TODOs
+### Verified Endpoints
 
-1. **SMS Sending**: Verify if `POST /api/v1/message-threads/{contact_card_id}` exists for sending messages
-2. **Dashboard Metrics**: Verify if `GET /api/v1/dashboard/metrics`, `GET /api/v1/dashboard/booking-rate`, and `GET /api/v1/dashboard/top-objections` exist
-3. **Archived Leads**: Clarify endpoint for archived leads (closed_lost, closed_won)
-4. **Property Intelligence Refresh**: Verify `POST /api/v1/contact-cards/{contact_id}/refresh-property` triggers scraping
-5. **Lead Pool Request**: Verify if CSR can request leads from pool (may be rep-only)
+All endpoints documented in this specification have been verified against the actual backend implementation. No speculative or future endpoints are included.
 
 ---
 
@@ -2045,24 +2046,64 @@ Both endpoints are now available and return data scoped by company_id from JWT t
 
 ---
 
-## 10. Shunya Integration & Enum Alignment
+## 10. Shunya Integration & Field Ownership
 
-### 10.1 Shunya-Derived Fields (Nullable States)
+### 10.1 Shunya-Owned Fields (Source of Truth)
 
-**Call Analysis Fields** (from `CallAnalysis` model):
-- `transcript` (from `CallTranscript.transcript_text`) - ⚠️ **May be `null`** if transcription in progress or failed
-- `objections` (array) - ⚠️ **May be empty array** if analysis not complete
-- `objection_details` (array) - ⚠️ **May be `null`** if objections not yet analyzed
-- `sop_compliance_score` (number) - ⚠️ **May be `null`** if compliance check not run
-- `sop_stages_completed` (array) - ⚠️ **May be empty** if analysis incomplete
-- `sop_stages_missed` (array) - ⚠️ **May be empty** if analysis incomplete
-- `sentiment_score` (number) - ⚠️ **May be `null`** if sentiment analysis not complete
-- `lead_quality` (string) - ⚠️ **May be `null`** if qualification analysis not complete
-- `qualification` (object) - ⚠️ **May be `null`** if qualification analysis not complete
-  - `qualification_status` - ⚠️ **May be `null`**
-  - `bant_scores` - ⚠️ **May be `null`**
+**Critical Rule**: All semantic analysis comes from Shunya. Otto backend NEVER overrides or infers Shunya's semantics.
 
-**Frontend Handling**: Always check for `null`/empty values and show appropriate loading/empty states. Poll `GET /api/v1/calls/{call_id}/analysis` to check `status` field (`"complete" | "not_analyzed" | "processing"`).
+**Shunya-Owned Fields** (from `CallAnalysis` model):
+- `booking_status` (Enum) - From Shunya qualification analysis. Values: `booked`, `not_booked`, `service_not_offered`
+- `lead_quality` (String) - From Shunya qualification analysis. Values: `qualified`, `unqualified`, `hot`, `warm`, `cold`
+- `call_outcome_category` (Enum) - Computed from Shunya qualification + booking. Values: `qualified_and_booked`, `qualified_service_not_offered`, `qualified_but_unbooked`, `unqualified`
+- `objections` (JSON array) - From Shunya objection detection. Format: `["price", "timeline", "competitor"]`
+- `objection_details` (JSON array) - From Shunya objection detection with timestamps and quotes
+- `sop_compliance_score` (Float) - From Shunya compliance check. Scale: 0-10
+- `sop_stages_completed` (JSON array) - From Shunya compliance check. Format: `["connect", "agenda", "assess"]`
+- `sop_stages_missed` (JSON array) - From Shunya compliance check. Format: `["ask", "close", "referral"]`
+- `compliance_violations` (JSON array) - From Shunya POST compliance check endpoint
+- `compliance_positive_behaviors` (JSON array) - From Shunya POST compliance check endpoint
+- `compliance_recommendations` (JSON array) - From Shunya POST compliance check endpoint
+- `sentiment_score` (Float) - From Shunya sentiment analysis. Scale: 0.0-1.0
+- `followup_recommendations` (JSON object) - From Shunya follow-up recommendations endpoint
+- `transcript_text` (from `CallTranscript`) - From Shunya ASR transcription
+- `speaker_labels` (from `CallTranscript`) - From Shunya speaker diarization
+
+**Otto-Owned Fields** (Otto manages these):
+- `Call.call_id`, `Call.name`, `Call.phone_number` - Otto infrastructure
+- `Appointment.id`, `Appointment.scheduled_start`, `Appointment.status` - Otto scheduling
+- `Lead.id`, `Lead.status`, `Lead.source` - Otto lead management
+- `Task.id`, `Task.description`, `Task.status` - Otto task management
+- `ContactCard.*` - Otto contact aggregation
+- All timestamps (`created_at`, `updated_at`) - Otto infrastructure
+
+**Important**: Otto NEVER infers booking status from the `Appointment` table. All booking metrics are derived exclusively from Shunya's `CallAnalysis.booking_status` field.
+
+### 10.2 Expected Null Values
+
+**Shunya-Derived Fields (May Be Null)**:
+
+When calling endpoints that return Shunya analysis data, the following fields may be `null` or empty if Shunya hasn't finished processing:
+
+- `transcript_text` (from `CallTranscript`) - May be `null` if transcription in progress or failed
+- `objections` (array) - May be empty array `[]` if analysis not complete
+- `objection_details` (array) - May be `null` or empty array if objections not yet analyzed
+- `sop_compliance_score` (number) - May be `null` if compliance check not run
+- `sop_stages_completed` (array) - May be empty array `[]` if analysis incomplete
+- `sop_stages_missed` (array) - May be empty array `[]` if analysis incomplete
+- `compliance_violations` (array) - May be `null` or empty array if compliance check not run
+- `compliance_positive_behaviors` (array) - May be `null` or empty array if compliance check not run
+- `compliance_recommendations` (array) - May be `null` or empty array if compliance check not run
+- `sentiment_score` (number) - May be `null` if sentiment analysis not complete
+- `lead_quality` (string) - May be `null` if qualification analysis not complete
+- `booking_status` (enum) - May be `null` if booking analysis not complete
+- `call_outcome_category` (enum) - May be `null` if qualification/booking analysis not complete
+- `followup_recommendations` (object) - May be `null` if recommendations not yet fetched
+
+**Frontend Handling**: 
+- Always check for `null` values and empty arrays before displaying
+- Show appropriate loading/empty states when Shunya processing is incomplete
+- Poll endpoints or check `analyzed_at` timestamp to determine if analysis is complete
 
 ### 10.2 Enum Alignment (Shunya Canonical Values)
 
@@ -2096,34 +2137,21 @@ Both endpoints are now available and return data scoped by company_id from JWT t
 - `discovery`, `cross_sell`, `upsell`, `qualification`
 - **Note**: Currently not consistently modeled in Otto; will be aligned with Shunya canonical values
 
-### 10.3 Ask Otto Payload & Headers
+### 10.3 Ask Otto Integration
 
-**Current Backend → Shunya Payload** (legacy):
-```json
-{
-  "query": "What are the most common objections?",
-  "document_types": null,
-  "limit": 10,
-  "score_threshold": 0,
-  "filters": { "date_range": "last_30_days" }
-}
-```
-- Endpoint: `POST /api/v1/search/` (legacy)
-- No `X-Target-Role` header (defaults to `sales_rep` in Shunya)
-
-**Target Backend → Shunya Payload** (per Shunya contract):
+**Backend → Shunya Payload** (Current Implementation):
 ```json
 {
   "question": "What are the most common objections?",
-  "conversation_id": "optional_conversation_id",
+  "conversation_id": null,
   "context": { "tenant_id": "...", "user_role": "csr" },
-  "scope": "csr_data_only"
+  "scope": null
 }
 ```
-- Endpoint: `POST /api/v1/ask-otto/query`
-- Header: `X-Target-Role: customer_rep` (or `csr`)
+- Endpoint: `POST /api/v1/ask-otto/query` (canonical Shunya endpoint)
+- Header: `X-Target-Role: customer_rep` (automatically set by backend based on CSR role)
 
-**Frontend Impact**: No changes required - frontend continues to call `/api/v1/rag/query`; backend handles Shunya communication internally.
+**Frontend Impact**: No changes required - frontend continues to call `POST /api/v1/rag/query`; backend handles Shunya communication internally and automatically sets the correct `X-Target-Role` header.
 
 
 

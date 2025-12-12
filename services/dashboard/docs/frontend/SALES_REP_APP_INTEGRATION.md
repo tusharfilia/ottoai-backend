@@ -65,23 +65,69 @@ const response = await fetch(`${API_BASE_URL}/api/v1/metrics/sales/rep/overview/
 });
 ```
 
-### 0.3 Shunya-First Semantics
+### 0.3 Idempotency-Key Usage
 
-**All semantic analysis comes from Shunya via Otto's backend:**
+**Critical**: Frontend does NOT need to send `Idempotency-Key` headers.
 
-- **Booking / Qualified**: From `CallAnalysis.booking_status` and `CallAnalysis.lead_quality` (not inferred from appointments)
-- **Outcome (won/lost/pending)**: From `RecordingAnalysis.outcome` (not `Appointment.outcome`)
-- **Objections**: From `RecordingAnalysis.objections` (JSON list)
-- **SOP Compliance**: From `RecordingAnalysis.sop_compliance_score` (0-10 scale)
-- **Sentiment**: From `RecordingAnalysis.sentiment_score` (0.0-1.0)
-- **Meeting Structure**: Derived from `RecordingAnalysis.meeting_segments`
+**Backend Handling**:
+- Backend automatically generates and sends `Idempotency-Key` headers to Shunya for all mutating requests (POST/PUT/DELETE)
+- Backend uses `request_id` (from `X-Request-ID` header or auto-generated) as the idempotency key
+- Backend handles all idempotency internally via:
+  - `ShunyaJob` uniqueness checks (prevents duplicate Shunya API calls)
+  - `processed_output_hash` for duplicate detection (prevents duplicate processing of Shunya responses)
+  - Natural keys for Tasks and KeySignals (prevents duplicate task/signal creation)
+  - State checks (Appointment outcome only updates if changed)
 
-**Important**:
-- ✅ All data fetched via Otto backend; frontend never calls Shunya directly
-- ✅ Otto never overrides Shunya's semantics
-- ✅ All win rates, scores, and KPIs are derived from Shunya fields stored in `CallAnalysis` and `RecordingAnalysis`
+**Frontend Requirements**:
+- Disable submit buttons while request is in-flight
+- Show loading states during mutations
+- Prevent rapid clicks (debounce or disable button)
+- Handle `409 Conflict` errors gracefully (resource conflict, e.g., duplicate task)
 
-### 0.4 Self-Scoping
+### 0.4 Shunya-Owned vs Otto-Owned Fields
+
+**Critical Rule**: All semantic analysis comes from Shunya. Otto backend NEVER overrides or infers Shunya's semantics.
+
+**Shunya-Owned Fields** (Source of Truth):
+- `RecordingAnalysis.outcome` (String) - From Shunya recording analysis. Values: `"won"`, `"lost"`, `"pending"`, `"no_show"`, `"rescheduled"`. **NOT from `Appointment.outcome`**
+- `RecordingAnalysis.sentiment_score` (Float) - From Shunya sentiment analysis. Scale: 0.0-1.0
+- `RecordingAnalysis.sop_compliance_score` (Float) - From Shunya compliance check. Scale: 0-10
+- `RecordingAnalysis.objections` (JSON array) - From Shunya objection detection
+- `RecordingAnalysis.meeting_segments` (JSON array) - From Shunya meeting segmentation
+- `RecordingTranscript.transcript_text` - From Shunya ASR transcription
+
+**Otto-Owned Fields** (Otto manages these):
+- `Appointment.id`, `Appointment.scheduled_start`, `Appointment.status` - Otto scheduling
+- `RecordingSession.id`, `RecordingSession.status`, `RecordingSession.audio_url` - Otto recording infrastructure
+- `Task.id`, `Task.description`, `Task.status` - Otto task management
+- `Lead.id`, `Lead.status`, `Lead.source` - Otto lead management
+- All timestamps (`created_at`, `updated_at`) - Otto infrastructure
+
+**Important**: 
+- Otto NEVER infers outcome from the `Appointment.outcome` field. All outcomes are derived exclusively from Shunya's `RecordingAnalysis.outcome` field.
+- All win rates, scores, and KPIs are derived from Shunya fields stored in `RecordingAnalysis` and `CallAnalysis`.
+
+### 0.5 Expected Null Values
+
+**Shunya-Derived Fields (May Be Null)**:
+
+When calling endpoints that return Shunya analysis data, the following fields may be `null` or empty if Shunya hasn't finished processing:
+
+- `outcome` (from `RecordingAnalysis`) - May be `null` if recording analysis not complete
+- `sentiment_score` - May be `null` if sentiment analysis not complete
+- `sop_compliance_score` - May be `null` if compliance check not run
+- `objections` (array) - May be empty array `[]` if analysis not complete
+- `meeting_segments` (array) - May be empty array `[]` if segmentation not complete
+- `transcript_text` (from `RecordingTranscript`) - May be `null` if transcription in progress or failed
+- `citations` (from Ask Otto) - May be empty array `[]` if Shunya is still processing
+- `confidence_score` (from Ask Otto) - May be `0.0` if Shunya analysis is incomplete
+
+**Frontend Handling**: 
+- Always check for `null` values and empty arrays before displaying
+- Show appropriate loading/empty states when Shunya processing is incomplete
+- Poll endpoints or check `analyzed_at` timestamp to determine if analysis is complete
+
+### 0.6 Self-Scoping
 
 **All endpoints in this doc are self-scoped:**
 
@@ -257,7 +303,10 @@ interface Citation {
 - **Target Role**: Backend automatically sets `X-Target-Role: sales_rep` when calling Shunya, so context is sales-rep scoped
 - **Scoping**: Only includes that sales rep's appointments, leads, tasks, and recordings, not company-wide data
 - **Shunya Fields**: All semantic analysis (outcomes, objections, compliance, sentiment) comes from Shunya. Otto never overrides Shunya's semantics.
-- **Nullable Fields**: If Shunya is still processing, `citations` may be empty and `confidence_score` may be 0.0
+- **Nullable Fields**: 
+  - `citations` may be empty array `[]` if Shunya is still processing
+  - `confidence_score` may be `0.0` if Shunya analysis is incomplete
+  - Always check for null/empty values and show appropriate loading states
 
 **Example Questions Sales Rep Can Ask**:
 - "Show me my pending follow-ups"
@@ -547,7 +596,7 @@ interface SalesRepTodayAppointment {
   customer_id: string | null;
   customer_name: string | null;
   scheduled_time: string;                    // ISO8601 datetime
-  address_line: string | null;               // Legacy field (deprecated, use location_address)
+  // Note: address_line is deprecated, use location_address instead
   location_address: string | null;            // Address from Shunya entities (for geofencing)
   location_lat: number | null;                // Latitude for geofencing
   location_lng: number | null;                // Longitude for geofencing
@@ -668,8 +717,8 @@ interface SalesRepFollowupTask {
   type: string | null;                         // Aligned with ActionType enum (e.g., "call_back", "send_quote", "schedule_appointment")
   due_date: string | null;                     // ISO8601 datetime
   status: string;                              // "open" | "pending" | "completed" | "overdue" | "cancelled"
-  last_contact_time: string | null;            // ISO8601 datetime (currently may be null, TODO: Twilio/CallRail integration)
-  next_step: string | null;                    // Next step recommendation (currently may be null, TODO: Shunya recommendations)
+  last_contact_time: string | null;            // ISO8601 datetime (may be null if not available)
+  next_step: string | null;                    // Next step recommendation (may be null if not available)
   overdue: boolean;                            // Whether task is overdue (due_date < now)
 }
 ```
@@ -749,8 +798,8 @@ const tasks = await apiGet<SalesRepFollowupTask[]>(
 - **Self-Scoped**: Only returns tasks where `Task.assignee_id == authenticated_rep_id` (or `Task.assigned_to == "rep"` if `assignee_id` is not available)
 - **ActionType Enum**: The `type` field uses canonical `ActionType` enum values (30 total values: `call_back`, `send_quote`, `schedule_appointment`, `follow_up_call`, etc.)
 - **Follow-up Semantics**: Tasks are aligned with Shunya's canonical action types for consistency
-- **Last Contact Time**: Currently `null` - will be populated from Twilio/CallRail integration in the future
-- **Next Step**: Currently `null` - will be populated from Shunya follow-up recommendations in the future
+- **Last Contact Time**: May be `null` if not available. Frontend should handle null gracefully.
+- **Next Step**: May be `null` if not available. Frontend should handle null gracefully.
 - **Sorted by Due Date**: Tasks are sorted by `due_date` (ascending)
 
 ---

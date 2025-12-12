@@ -59,7 +59,76 @@ const response = await fetch(`${API_BASE_URL}/api/v1/metrics/exec/company-overvi
 
 ---
 
-### 0.2 RBAC (Role-Based Access Control)
+### 0.2 Idempotency-Key Usage
+
+**Critical**: Frontend does NOT need to send `Idempotency-Key` headers.
+
+**Backend Handling**:
+- Backend automatically generates and sends `Idempotency-Key` headers to Shunya for all mutating requests (POST/PUT/DELETE)
+- Backend uses `request_id` (from `X-Request-ID` header or auto-generated) as the idempotency key
+- Backend handles all idempotency internally via:
+  - `ShunyaJob` uniqueness checks (prevents duplicate Shunya API calls)
+  - `processed_output_hash` for duplicate detection (prevents duplicate processing of Shunya responses)
+  - Natural keys for Tasks and KeySignals (prevents duplicate task/signal creation)
+  - State checks (Lead status/appointment outcome only update if changed)
+
+**Frontend Requirements**:
+- Disable submit buttons while request is in-flight
+- Show loading states during mutations
+- Prevent rapid clicks (debounce or disable button)
+- Handle `409 Conflict` errors gracefully (resource conflict, e.g., duplicate task)
+
+### 0.3 Shunya-Owned vs Otto-Owned Fields
+
+**Critical Rule**: All semantic analysis comes from Shunya. Otto backend NEVER overrides or infers Shunya's semantics.
+
+**Shunya-Owned Fields** (Source of Truth):
+- `CallAnalysis.booking_status` (Enum) - From Shunya qualification analysis. Values: `booked`, `not_booked`, `service_not_offered`
+- `CallAnalysis.lead_quality` (String) - From Shunya qualification analysis. Values: `qualified`, `unqualified`, `hot`, `warm`, `cold`
+- `CallAnalysis.call_outcome_category` (Enum) - Computed from Shunya qualification + booking
+- `CallAnalysis.objections` (JSON array) - From Shunya objection detection
+- `CallAnalysis.sop_compliance_score` (Float) - From Shunya compliance check. Scale: 0-10
+- `CallAnalysis.sentiment_score` (Float) - From Shunya sentiment analysis. Scale: 0.0-1.0
+- `RecordingAnalysis.outcome` (String) - From Shunya recording analysis. Values: `"won"`, `"lost"`, `"pending"`, `"no_show"`, `"rescheduled"`. **NOT from `Appointment.outcome`**
+- `RecordingAnalysis.sentiment_score` (Float) - From Shunya sentiment analysis
+- `RecordingAnalysis.sop_compliance_score` (Float) - From Shunya compliance check
+- `CallTranscript.transcript_text` - From Shunya ASR transcription
+- `RecordingTranscript.transcript_text` - From Shunya ASR transcription
+
+**Otto-Owned Fields** (Otto manages these):
+- `Call.call_id`, `Call.name`, `Call.phone_number` - Otto infrastructure
+- `Appointment.id`, `Appointment.scheduled_start`, `Appointment.status` - Otto scheduling
+- `Lead.id`, `Lead.status`, `Lead.source` - Otto lead management
+- `Task.id`, `Task.description`, `Task.status` - Otto task management
+- `ContactCard.*` - Otto contact aggregation
+- All timestamps (`created_at`, `updated_at`) - Otto infrastructure
+
+**Important**: Otto NEVER infers booking status from the `Appointment` table. All booking metrics are derived exclusively from Shunya's `CallAnalysis.booking_status` field.
+
+### 0.4 Expected Null Values
+
+**Shunya-Derived Fields (May Be Null)**:
+
+When calling endpoints that return Shunya analysis data, the following fields may be `null` or empty if Shunya hasn't finished processing:
+
+- `sop_compliance_scores` - May be empty dict `{}` if compliance check not run
+- `sentiment_score` - May be `null` if sentiment analysis not complete
+- `outcome` (from `RecordingAnalysis`) - May be `null` if recording analysis not complete
+- `booking_status` (from `CallAnalysis`) - May be `null` if booking analysis not complete
+- `lead_quality` - May be `null` if qualification analysis not complete
+- `objections` (array) - May be empty array `[]` if analysis not complete
+- `transcript_text` - May be `null` if transcription in progress or failed
+- `citations` (from Ask Otto) - May be empty array `[]` if Shunya is still processing
+- `confidence_score` (from Ask Otto) - May be `0.0` if Shunya analysis is incomplete
+- `citations` (from Ask Otto) - May be empty array `[]` if Shunya is still processing
+- `confidence_score` (from Ask Otto) - May be `0.0` if Shunya analysis is incomplete
+
+**Frontend Handling**: 
+- Always check for `null` values and empty arrays before displaying
+- Show appropriate loading/empty states when Shunya processing is incomplete
+- Poll endpoints or check `analyzed_at` timestamp to determine if analysis is complete
+
+### 0.5 RBAC (Role-Based Access Control)
 
 **Manager Role**:
 - JWT contains `role: "manager"` claim
@@ -1079,26 +1148,50 @@ const opportunities = await apiGet<SalesOpportunitiesResponse>(
 
 ### Source of Truth
 
-**All semantic analysis comes from Shunya**. Otto backend never overrides or infers Shunya's semantics. This includes:
-- Booking status (`booking_status` from `CallAnalysis`)
-- Qualification status (`lead_quality` from `CallAnalysis`)
-- Objections (`objections` array from `CallAnalysis`)
-- Compliance scores (`sop_compliance_score` from `CallAnalysis`)
-- Sentiment scores (`sentiment_score` from `CallAnalysis`)
-- Meeting structure scores (derived from `meeting_segments`)
-- Sales outcomes (`outcome` from `RecordingAnalysis`)
+**Critical Rule**: All semantic analysis comes from Shunya. Otto backend NEVER overrides or infers Shunya's semantics.
 
-**Important**: Otto never infers booking from the `Appointment` table. All booking metrics are derived exclusively from Shunya's `CallAnalysis.booking_status` field.
+**Shunya-Owned Fields** (Source of Truth):
+- `CallAnalysis.booking_status` (Enum) - From Shunya qualification analysis. Values: `booked`, `not_booked`, `service_not_offered`
+- `CallAnalysis.lead_quality` (String) - From Shunya qualification analysis. Values: `qualified`, `unqualified`, `hot`, `warm`, `cold`
+- `CallAnalysis.call_outcome_category` (Enum) - Computed from Shunya qualification + booking
+- `CallAnalysis.objections` (JSON array) - From Shunya objection detection
+- `CallAnalysis.sop_compliance_score` (Float) - From Shunya compliance check. Scale: 0-10
+- `CallAnalysis.sentiment_score` (Float) - From Shunya sentiment analysis. Scale: 0.0-1.0
+- `RecordingAnalysis.outcome` (String) - From Shunya recording analysis. Values: `"won"`, `"lost"`, `"pending"`, `"no_show"`, `"rescheduled"`. **NOT from `Appointment.outcome`**
+- `RecordingAnalysis.sentiment_score` (Float) - From Shunya sentiment analysis
+- `RecordingAnalysis.sop_compliance_score` (Float) - From Shunya compliance check
+- `RecordingAnalysis.meeting_segments` (JSON array) - From Shunya meeting segmentation
+- `CallTranscript.transcript_text` - From Shunya ASR transcription
+- `RecordingTranscript.transcript_text` - From Shunya ASR transcription
+
+**Otto-Owned Fields** (Otto manages these):
+- `Call.call_id`, `Call.name`, `Call.phone_number` - Otto infrastructure
+- `Appointment.id`, `Appointment.scheduled_start`, `Appointment.status` - Otto scheduling
+- `Lead.id`, `Lead.status`, `Lead.source` - Otto lead management
+- `Task.id`, `Task.description`, `Task.status` - Otto task management
+- `ContactCard.*` - Otto contact aggregation
+- All timestamps (`created_at`, `updated_at`) - Otto infrastructure
+
+**Important**: Otto NEVER infers booking status from the `Appointment` table. All booking metrics are derived exclusively from Shunya's `CallAnalysis.booking_status` field.
 
 ### Shunya-Derived Fields (May Be Null)
 
 When calling endpoints that return Shunya analysis data, the following fields may be `null` or empty if Shunya hasn't finished processing:
-- `sop_compliance_scores` - May be empty dict if compliance check not run
-- `sentiment_score` - May be `null` if analysis not complete
-- `outcome` - May be `null` if recording analysis not complete
-- `booking_status` - May be `null` if booking analysis not complete
 
-**Frontend Handling**: Always check for `null` values and empty arrays. Show appropriate loading/empty states when Shunya processing is incomplete.
+- `sop_compliance_scores` - May be empty dict `{}` if compliance check not run
+- `sentiment_score` - May be `null` if sentiment analysis not complete
+- `outcome` (from `RecordingAnalysis`) - May be `null` if recording analysis not complete
+- `booking_status` (from `CallAnalysis`) - May be `null` if booking analysis not complete
+- `lead_quality` - May be `null` if qualification analysis not complete
+- `objections` (array) - May be empty array `[]` if analysis not complete
+- `transcript_text` - May be `null` if transcription in progress or failed
+- `citations` (from Ask Otto) - May be empty array `[]` if Shunya is still processing
+- `confidence_score` (from Ask Otto) - May be `0.0` if Shunya analysis is incomplete
+
+**Frontend Handling**: 
+- Always check for `null` values and empty arrays before displaying
+- Show appropriate loading/empty states when Shunya processing is incomplete
+- Poll endpoints or check `analyzed_at` timestamp to determine if analysis is complete
 
 ---
 
