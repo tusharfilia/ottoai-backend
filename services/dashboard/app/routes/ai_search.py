@@ -23,6 +23,7 @@ from app.models.call import Call
 from app.models.call_analysis import CallAnalysis
 from app.models.lead import Lead
 from app.models.appointment import Appointment
+from app.models.recording_analysis import RecordingAnalysis
 from app.core.pii_masking import PIISafeLogger
 
 logger = PIISafeLogger(__name__)
@@ -30,27 +31,54 @@ logger = PIISafeLogger(__name__)
 router = APIRouter(prefix="/internal/ai", tags=["AI Internal"])
 
 
-def _derive_outcome(call: Call, lead: Optional[Lead], appointment: Optional[Appointment]) -> Optional[str]:
-    """Derive outcome string from call/lead/appointment state."""
-    if appointment and appointment.outcome:
-        return appointment.outcome.value
-    if lead and lead.status:
-        status_value = lead.status.value
-        if "won" in status_value:
-            return "won"
-        elif "lost" in status_value:
-            return "lost"
-        elif "booked" in status_value:
-            return "booked"
-        elif "nurturing" in status_value:
-            return "nurturing"
-    if call.booked:
-        return "booked"
-    if call.missed_call:
-        return "missed"
-    if call.cancelled:
-        return "cancelled"
-    return "pending"
+def _derive_outcome(
+    call: Call,
+    analysis: Optional[CallAnalysis],
+    appointment: Optional[Appointment],
+    recording_analysis: Optional[RecordingAnalysis] = None
+) -> Optional[str]:
+    """
+    Derive outcome string from Shunya-derived fields only.
+    
+    CRITICAL: This function MUST NOT infer outcomes from appointments, leads, or call state.
+    It must ONLY use Shunya-provided semantic data:
+    - For CSR calls: CallAnalysis.call_outcome_category
+    - For sales visits: RecordingAnalysis.outcome
+    
+    If Shunya data is missing, returns None (not inferred values).
+    
+    Args:
+        call: Call record
+        analysis: CallAnalysis from Shunya (for CSR calls)
+        appointment: Appointment record (used only to find RecordingAnalysis)
+        recording_analysis: RecordingAnalysis from Shunya (for sales visits)
+    
+    Returns:
+        Outcome string from Shunya data, or None if Shunya data is missing
+    """
+    # Priority 1: Use RecordingAnalysis.outcome for sales visits (Shunya-provided)
+    if recording_analysis and recording_analysis.outcome:
+        return recording_analysis.outcome
+    
+    # Priority 2: Use CallAnalysis.call_outcome_category for CSR calls (Shunya-provided)
+    # Safely handle call_outcome_category - it might be a string if Shunya returned invalid enum value
+    if analysis and analysis.call_outcome_category:
+        try:
+            outcome_cat = analysis.call_outcome_category
+            # If it's already a string, return it directly
+            if isinstance(outcome_cat, str):
+                return outcome_cat
+            # If it's an enum, get the value
+            return getattr(outcome_cat, 'value', str(outcome_cat))
+        except (AttributeError, TypeError) as e:
+            # If accessing .value fails, try to convert to string
+            try:
+                return str(analysis.call_outcome_category)
+            except Exception:
+                return None
+    
+    # If no Shunya data available, return None (do NOT infer from appointments/leads/call state)
+    return None
 
 
 def _get_main_objection_label(objections: Optional[List]) -> Optional[str]:
@@ -83,12 +111,14 @@ def search_calls(
     date_from = filters.date_from or (now - timedelta(days=30))
     date_to = filters.date_to or now
     
-    # Build base query: Call with LEFT JOINs to Analysis, Lead, Appointment
+    # Build base query: Call with LEFT JOINs to Analysis, Lead, Appointment, RecordingAnalysis
+    # Note: RecordingAnalysis is joined via Appointment to get sales visit outcomes
     query = db.query(
         Call,
         CallAnalysis,
         Lead,
-        Appointment
+        Appointment,
+        RecordingAnalysis
     ).outerjoin(
         CallAnalysis, and_(
             CallAnalysis.call_id == Call.call_id,
@@ -103,6 +133,11 @@ def search_calls(
         Appointment, and_(
             Appointment.lead_id == Call.lead_id,
             Appointment.company_id == company_id
+        )
+    ).outerjoin(
+        RecordingAnalysis, and_(
+            RecordingAnalysis.appointment_id == Appointment.id,
+            RecordingAnalysis.company_id == company_id
         )
     ).filter(
         Call.company_id == company_id
@@ -205,7 +240,7 @@ def search_calls(
     # Build call items
     call_items = []
     if options.include_calls:
-        for call, analysis, lead, appointment in results:
+        for call, analysis, lead, appointment, recording_analysis in results:
             # Get appointment_id (use first appointment if multiple)
             appointment_id = None
             if appointment:
@@ -230,8 +265,8 @@ def search_calls(
                 except (json.JSONDecodeError, TypeError):
                     objections_list = None
             
-            # Derive outcome
-            outcome = _derive_outcome(call, lead, appointment)
+            # Derive outcome from Shunya data only (no inference)
+            outcome = _derive_outcome(call, analysis, appointment, recording_analysis)
             
             # Get main objection label
             main_objection = _get_main_objection_label(objections_list)
@@ -262,7 +297,8 @@ def search_calls(
             Call,
             CallAnalysis,
             Lead,
-            Appointment
+            Appointment,
+            RecordingAnalysis
         ).outerjoin(
             CallAnalysis, and_(
                 CallAnalysis.call_id == Call.call_id,
@@ -277,6 +313,11 @@ def search_calls(
             Appointment, and_(
                 Appointment.lead_id == Call.lead_id,
                 Appointment.company_id == company_id
+            )
+        ).outerjoin(
+            RecordingAnalysis, and_(
+                RecordingAnalysis.appointment_id == Appointment.id,
+                RecordingAnalysis.company_id == company_id
             )
         ).filter(
             Call.company_id == company_id,
@@ -341,9 +382,9 @@ def search_calls(
         sentiment_scores = []
         sop_scores = []
         
-        for call, analysis, lead, appointment in agg_results:
-            # Outcome distribution
-            outcome = _derive_outcome(call, lead, appointment)
+        for call, analysis, lead, appointment, recording_analysis in agg_results:
+            # Outcome distribution (from Shunya data only, no inference)
+            outcome = _derive_outcome(call, analysis, appointment, recording_analysis)
             if outcome:
                 calls_by_outcome[outcome] = calls_by_outcome.get(outcome, 0) + 1
             
@@ -392,6 +433,9 @@ def search_calls(
         calls=call_items,
         aggregates=aggregates,
     )
+
+
+
 
 
 
