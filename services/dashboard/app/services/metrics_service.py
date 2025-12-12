@@ -454,34 +454,16 @@ class MetricsService:
                 
                     # OUTCOME: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
                     # Only count outcomes for completed appointments
+                    # RecordingAnalysis.outcome is a String column, so it should always be a string
                     if appointment.status == AppointmentStatus.COMPLETED.value and analysis and analysis.outcome:
-                        # Ensure outcome is a string (handle enum values if any)
                         try:
-                            # Handle both string and enum values
-                            outcome_value = analysis.outcome
-                        
-                            # Convert to string first, then check if it's an enum
-                            # This handles both string and enum cases safely
-                            if outcome_value is None:
-                                outcome_lower = None
+                            # Convert to string and normalize
+                            # The outcome field is defined as String in the model, so it should be a string
+                            outcome_str = str(analysis.outcome).strip()
+                            if outcome_str:
+                                outcome_lower = outcome_str.lower()
                             else:
-                                # Try to get the value if it's an enum
-                                if hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name'):
-                                    # It's likely an enum instance, get the value
-                                    try:
-                                        outcome_str = outcome_value.value
-                                    except (AttributeError, TypeError):
-                                        # Fallback: use string representation
-                                        outcome_str = str(outcome_value)
-                                else:
-                                    # It's already a string or other type
-                                    outcome_str = str(outcome_value)
-                            
-                                # Normalize to lowercase string
-                                if outcome_str:
-                                    outcome_lower = str(outcome_str).lower().strip()
-                                else:
-                                    outcome_lower = None
+                                outcome_lower = None
                         except Exception as e:
                             # Log the error but continue processing
                             logger.warning(
