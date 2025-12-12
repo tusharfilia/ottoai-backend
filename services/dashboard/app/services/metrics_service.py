@@ -459,27 +459,29 @@ class MetricsService:
                     try:
                         # Handle both string and enum values
                         outcome_value = analysis.outcome
-                        outcome_str = None
                         
-                        # Check if it's an enum instance (enum.Enum subclasses have 'value' and 'name' attributes)
-                        if hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name'):
-                            # It's likely an enum instance, get the value
-                            try:
-                                # Access the value property
-                                outcome_str = outcome_value.value
-                            except (AttributeError, TypeError) as enum_err:
-                                # Fallback: try to get string representation
-                                logger.debug(f"Could not access .value on enum: {enum_err}, using str()")
-                                outcome_str = str(outcome_value)
-                        else:
-                            # It's already a string or other type
-                            outcome_str = str(outcome_value) if outcome_value else None
-                        
-                        # Normalize to lowercase string
-                        if outcome_str:
-                            outcome_lower = str(outcome_str).lower().strip()
-                        else:
+                        # Convert to string first, then check if it's an enum
+                        # This handles both string and enum cases safely
+                        if outcome_value is None:
                             outcome_lower = None
+                        else:
+                            # Try to get the value if it's an enum
+                            if hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name'):
+                                # It's likely an enum instance, get the value
+                                try:
+                                    outcome_str = outcome_value.value
+                                except (AttributeError, TypeError):
+                                    # Fallback: use string representation
+                                    outcome_str = str(outcome_value)
+                            else:
+                                # It's already a string or other type
+                                outcome_str = str(outcome_value)
+                            
+                            # Normalize to lowercase string
+                            if outcome_str:
+                                outcome_lower = str(outcome_str).lower().strip()
+                            else:
+                                outcome_lower = None
                     except Exception as e:
                         # Log the error but continue processing
                         logger.warning(
