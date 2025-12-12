@@ -246,18 +246,32 @@ class MetricsService:
             try:
                 booking_status_value = analysis.booking_status
                 if booking_status_value is not None:
-                    # Convert to string safely
+                    # Convert to string safely - avoid hasattr() which can raise AttributeError
                     booking_status_str = None
                     try:
+                        # First try direct string conversion (safest)
                         if isinstance(booking_status_value, str):
                             booking_status_str = booking_status_value
-                        elif hasattr(booking_status_value, 'value') and hasattr(booking_status_value, 'name') and not isinstance(booking_status_value, str):
-                            try:
-                                booking_status_str = str(booking_status_value.value)
-                            except (AttributeError, TypeError):
-                                booking_status_str = str(booking_status_value)
                         else:
+                            # Try to get .value attribute using getattr (safer than hasattr)
+                            enum_value = getattr(booking_status_value, 'value', None)
+                            if enum_value is not None:
+                                booking_status_str = str(enum_value)
+                            else:
+                                # Fallback to direct string conversion
+                                booking_status_str = str(booking_status_value)
+                    except AttributeError as attr_err:
+                        # AttributeError when converting - likely trying to access .value on something that doesn't have it
+                        logger.warning(
+                            f"AttributeError converting booking_status for call {call.call_id}: {str(attr_err)}, "
+                            f"status type: {type(booking_status_value)}, status value: {repr(booking_status_value)}",
+                            exc_info=True
+                        )
+                        # Try one more time with direct string conversion
+                        try:
                             booking_status_str = str(booking_status_value)
+                        except Exception:
+                            booking_status_str = None
                     except Exception as e:
                         logger.warning(
                             f"Failed to convert booking_status to string for call {call.call_id}: {str(e)}, "
@@ -305,18 +319,32 @@ class MetricsService:
             try:
                 outcome_category_value = analysis.call_outcome_category
                 if outcome_category_value is not None:
-                    # Convert to string safely
+                    # Convert to string safely - avoid hasattr() which can raise AttributeError
                     outcome_category_str = None
                     try:
+                        # First try direct string conversion (safest)
                         if isinstance(outcome_category_value, str):
                             outcome_category_str = outcome_category_value
-                        elif hasattr(outcome_category_value, 'value') and hasattr(outcome_category_value, 'name') and not isinstance(outcome_category_value, str):
-                            try:
-                                outcome_category_str = str(outcome_category_value.value)
-                            except (AttributeError, TypeError):
-                                outcome_category_str = str(outcome_category_value)
                         else:
+                            # Try to get .value attribute using getattr (safer than hasattr)
+                            enum_value = getattr(outcome_category_value, 'value', None)
+                            if enum_value is not None:
+                                outcome_category_str = str(enum_value)
+                            else:
+                                # Fallback to direct string conversion
+                                outcome_category_str = str(outcome_category_value)
+                    except AttributeError as attr_err:
+                        # AttributeError when converting - likely trying to access .value on something that doesn't have it
+                        logger.warning(
+                            f"AttributeError converting call_outcome_category for call {call.call_id}: {str(attr_err)}, "
+                            f"category type: {type(outcome_category_value)}, category value: {repr(outcome_category_value)}",
+                            exc_info=True
+                        )
+                        # Try one more time with direct string conversion
+                        try:
                             outcome_category_str = str(outcome_category_value)
+                        except Exception:
+                            outcome_category_str = None
                     except Exception as e:
                         logger.warning(
                             f"Failed to convert call_outcome_category to string for call {call.call_id}: {str(e)}, "
@@ -1347,10 +1375,26 @@ class MetricsService:
             if analysis:
                 if analysis.booking_status and analysis.booking_status != BookingStatus.BOOKED.value:
                     is_unbooked = True
-                elif analysis.call_outcome_category == CallOutcomeCategory.QUALIFIED_BUT_UNBOOKED.value:
-                    is_unbooked = True
-                elif analysis.call_outcome_category == CallOutcomeCategory.QUALIFIED_SERVICE_NOT_OFFERED.value:
-                    is_unbooked = True
+                # Safely compare call_outcome_category - handle both string and enum
+                try:
+                    outcome_cat = analysis.call_outcome_category
+                    if outcome_cat is not None:
+                        # Convert to string for comparison
+                        if isinstance(outcome_cat, str):
+                            outcome_cat_str = outcome_cat.lower().strip()
+                        else:
+                            enum_val = getattr(outcome_cat, 'value', None)
+                            outcome_cat_str = str(enum_val).lower().strip() if enum_val else str(outcome_cat).lower().strip()
+                        
+                        if outcome_cat_str == CallOutcomeCategory.QUALIFIED_BUT_UNBOOKED.value.lower():
+                            is_unbooked = True
+                        elif outcome_cat_str == CallOutcomeCategory.QUALIFIED_SERVICE_NOT_OFFERED.value.lower():
+                            is_unbooked = True
+                except (AttributeError, Exception) as e:
+                    logger.warning(
+                        f"Error comparing call_outcome_category for call {call.call_id}: {str(e)}",
+                        exc_info=True
+                    )
             
             if is_unbooked:
                 # Get primary objection
