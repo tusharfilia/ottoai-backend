@@ -1276,8 +1276,16 @@ async def get_sales_rep_overview_self(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error computing sales rep overview metrics: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to compute sales rep metrics: {str(e)}")
+        error_msg = str(e)
+        logger.error(f"Error computing sales rep overview metrics: {error_msg}", exc_info=True)
+        # Provide more helpful error message
+        if "PENDING" in error_msg and len(error_msg.strip()) == 6:
+            # If error is just "PENDING", it's likely a data type issue
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to compute sales rep metrics: Invalid outcome data format. Please contact support."
+            )
+        raise HTTPException(status_code=500, detail=f"Failed to compute sales rep metrics: {error_msg}")
 
 
 @router.get("/appointments/today/self", response_model=APIResponse[List[SalesRepTodayAppointment]])

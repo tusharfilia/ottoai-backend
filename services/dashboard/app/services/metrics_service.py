@@ -23,6 +23,7 @@ from app.models.user import User
 from app.models.lead import Lead, LeadStatus, LeadSource
 from app.models.contact_card import ContactCard
 from app.models.enums import CallType, BookingStatus, CallOutcomeCategory
+from app.obs.logging import get_logger
 from app.schemas.metrics import (
     CSRMetrics,
     SalesRepMetrics,
@@ -72,6 +73,8 @@ from app.schemas.metrics import (
     SalesOpportunitiesResponse,
     SalesOpportunityItem
 )
+
+logger = get_logger(__name__)
 
 
 class MetricsService:
@@ -431,28 +434,50 @@ class MetricsService:
                 first_appointment_by_lead[lead_id] = first_scheduled
         
         for appointment in all_appointments:
-            # Check if attended (has recording session or analysis)
-            has_recording = appointment.id in session_by_appointment_id
-            has_analysis = appointment.id in analysis_by_appointment_id
-            if has_recording or has_analysis:
-                attended_appointments += 1
-            
-            # Count completed appointments (status-based)
-            if appointment.status == AppointmentStatus.COMPLETED.value:
-                completed_appointments += 1
-            
-            # Get analysis for outcome (Shunya-first)
-            analysis = analysis_by_appointment_id.get(appointment.id)
-            
-            # OUTCOME: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
-            # Only count outcomes for completed appointments
-            if appointment.status == AppointmentStatus.COMPLETED.value and analysis and analysis.outcome:
-                # Ensure outcome is a string (handle enum values if any)
-                outcome_str = str(analysis.outcome) if analysis.outcome else None
-                if outcome_str:
-                    outcome_lower = outcome_str.lower()
-                else:
-                    outcome_lower = None
+            try:
+                # Check if attended (has recording session or analysis)
+                has_recording = appointment.id in session_by_appointment_id
+                has_analysis = appointment.id in analysis_by_appointment_id
+                if has_recording or has_analysis:
+                    attended_appointments += 1
+                
+                # Count completed appointments (status-based)
+                if appointment.status == AppointmentStatus.COMPLETED.value:
+                    completed_appointments += 1
+                
+                # Get analysis for outcome (Shunya-first)
+                analysis = analysis_by_appointment_id.get(appointment.id)
+                
+                # OUTCOME: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
+                # Only count outcomes for completed appointments
+                if appointment.status == AppointmentStatus.COMPLETED.value and analysis and analysis.outcome:
+                    # Ensure outcome is a string (handle enum values if any)
+                    try:
+                        # Handle both string and enum values
+                        outcome_value = analysis.outcome
+                        
+                        # If it's an enum, get the value
+                        if hasattr(outcome_value, 'value'):
+                            outcome_str = outcome_value.value
+                        elif hasattr(outcome_value, 'name'):
+                            # It's an enum but we want the value, not the name
+                            outcome_str = getattr(outcome_value, 'value', str(outcome_value))
+                        else:
+                            # It's already a string or other type
+                            outcome_str = str(outcome_value) if outcome_value else None
+                        
+                        if outcome_str:
+                            outcome_lower = outcome_str.lower().strip()
+                        else:
+                            outcome_lower = None
+                    except Exception as e:
+                        # Log the error but continue processing
+                        logger.warning(
+                            f"Error processing outcome for appointment {appointment.id}: {str(e)}, "
+                            f"outcome type: {type(analysis.outcome)}, outcome value: {analysis.outcome}",
+                            exc_info=True
+                        )
+                        outcome_lower = None
                 
                 # Track first-touch vs follow-up
                 is_first_touch = False
@@ -485,30 +510,38 @@ class MetricsService:
                         first_touch_completed += 1
                     else:
                         followup_completed += 1
-            
-            # Aggregate metrics from analysis
-            if analysis:
-                # Objections
-                if analysis.objections and isinstance(analysis.objections, list):
-                    total_objections += len(analysis.objections)
                 
-                # Compliance score
-                if analysis.sop_compliance_score is not None:
-                    compliance_scores.append(analysis.sop_compliance_score)
+                # Aggregate metrics from analysis
+                if analysis:
+                    # Objections
+                    if analysis.objections and isinstance(analysis.objections, list):
+                        total_objections += len(analysis.objections)
+                    
+                    # Compliance score
+                    if analysis.sop_compliance_score is not None:
+                        compliance_scores.append(analysis.sop_compliance_score)
+                    
+                    # Meeting structure score
+                    structure_score = self._compute_meeting_structure_score(analysis.meeting_segments)
+                    if structure_score is not None:
+                        meeting_structure_scores.append(structure_score)
+                    
+                    # Sentiment score
+                    if analysis.sentiment_score is not None:
+                        sentiment_scores.append(analysis.sentiment_score)
                 
-                # Meeting structure score
-                structure_score = self._compute_meeting_structure_score(analysis.meeting_segments)
-                if structure_score is not None:
-                    meeting_structure_scores.append(structure_score)
-                
-                # Sentiment score
-                if analysis.sentiment_score is not None:
-                    sentiment_scores.append(analysis.sentiment_score)
-            
-            # Auto usage hours: sum RecordingSession.audio_duration_seconds
-            session = session_by_appointment_id.get(appointment.id)
-            if session and session.audio_duration_seconds:
-                total_audio_duration_seconds += session.audio_duration_seconds
+                # Auto usage hours: sum RecordingSession.audio_duration_seconds
+                session = session_by_appointment_id.get(appointment.id)
+                if session and session.audio_duration_seconds:
+                    total_audio_duration_seconds += session.audio_duration_seconds
+            except Exception as e:
+                # Log error for this appointment but continue processing others
+                logger.error(
+                    f"Error processing appointment {appointment.id} in metrics computation: {str(e)}",
+                    exc_info=True
+                )
+                # Continue to next appointment
+                continue
         
         # Compute rates (null-safe)
         win_rate = won_appointments / completed_appointments if completed_appointments > 0 else None
