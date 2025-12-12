@@ -2,7 +2,7 @@ import enum
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import and_, or_, func
@@ -459,7 +459,7 @@ async def update_appointment(
 
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import and_, or_, func
