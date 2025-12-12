@@ -357,308 +357,308 @@ class MetricsService:
                 date_to = datetime.utcnow()
             if date_from is None:
                 date_from = date_to - timedelta(days=30)
-        
-        # Query appointments for this rep
-        appointments_query = self.db.query(Appointment).filter(
-            Appointment.company_id == tenant_id,
-            Appointment.assigned_rep_id == rep_id,
-            Appointment.scheduled_start >= date_from,
-            Appointment.scheduled_start <= date_to
-        )
-        
-        all_appointments = appointments_query.all()
-        total_appointments = len(all_appointments)
-        
-        # Get appointment IDs for analysis lookup
-        appointment_ids = [apt.id for apt in all_appointments]
-        
-        # Get RecordingAnalysis records for these appointments
-        analyses = self.db.query(RecordingAnalysis).filter(
-            RecordingAnalysis.appointment_id.in_(appointment_ids),
-            RecordingAnalysis.company_id == tenant_id
-        ).all()
-        
-        # Create lookup: appointment_id -> analysis
-        analysis_by_appointment_id = {analysis.appointment_id: analysis for analysis in analyses}
-        
-        # Count appointments by status and outcome
-        # IMPORTANT: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
-        completed_appointments = 0
-        won_appointments = 0
-        lost_appointments = 0
-        pending_appointments = 0
-        
-        # Track first-touch vs follow-up wins
-        first_touch_wins = 0
-        first_touch_completed = 0
-        followup_wins = 0
-        followup_completed = 0
-        
-        # Aggregate metrics
-        total_objections = 0
-        compliance_scores = []
-        meeting_structure_scores = []
-        sentiment_scores = []
-        
-        # Track scheduled vs attended for attendance_rate
-        scheduled_appointments = len(all_appointments)
-        attended_appointments = 0
-        
-        # Track auto usage hours
-        total_audio_duration_seconds = 0.0
-        
-        # Get RecordingSession records for these appointments to compute auto_usage_hours
-        recording_sessions = self.db.query(RecordingSession).filter(
-            RecordingSession.appointment_id.in_(appointment_ids),
-            RecordingSession.company_id == tenant_id
-        ).all()
-        
-        session_by_appointment_id = {session.appointment_id: session for session in recording_sessions if session.appointment_id}
-        
-        # Get lead IDs to track first-touch vs follow-up
-        lead_ids = [apt.lead_id for apt in all_appointments if apt.lead_id]
-        
-        # For first-touch detection: get earliest appointment per lead for this rep
-        # TODO: This is a simplified heuristic - we need full appointment history per lead to be accurate
-        first_appointment_by_lead: dict[str, str] = {}
-        if lead_ids:
-            first_appts = self.db.query(
-                Appointment.lead_id,
-                func.min(Appointment.scheduled_start).label('first_scheduled')
-            ).filter(
+            
+            # Query appointments for this rep
+            appointments_query = self.db.query(Appointment).filter(
                 Appointment.company_id == tenant_id,
                 Appointment.assigned_rep_id == rep_id,
-                Appointment.lead_id.in_(lead_ids)
-            ).group_by(Appointment.lead_id).all()
+                Appointment.scheduled_start >= date_from,
+                Appointment.scheduled_start <= date_to
+            )
+        
+            all_appointments = appointments_query.all()
+            total_appointments = len(all_appointments)
+        
+            # Get appointment IDs for analysis lookup
+            appointment_ids = [apt.id for apt in all_appointments]
+        
+            # Get RecordingAnalysis records for these appointments
+            analyses = self.db.query(RecordingAnalysis).filter(
+                RecordingAnalysis.appointment_id.in_(appointment_ids),
+                RecordingAnalysis.company_id == tenant_id
+            ).all()
+        
+            # Create lookup: appointment_id -> analysis
+            analysis_by_appointment_id = {analysis.appointment_id: analysis for analysis in analyses}
+        
+            # Count appointments by status and outcome
+            # IMPORTANT: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
+            completed_appointments = 0
+            won_appointments = 0
+            lost_appointments = 0
+            pending_appointments = 0
+        
+            # Track first-touch vs follow-up wins
+            first_touch_wins = 0
+            first_touch_completed = 0
+            followup_wins = 0
+            followup_completed = 0
+        
+            # Aggregate metrics
+            total_objections = 0
+            compliance_scores = []
+            meeting_structure_scores = []
+            sentiment_scores = []
+        
+            # Track scheduled vs attended for attendance_rate
+            scheduled_appointments = len(all_appointments)
+            attended_appointments = 0
+        
+            # Track auto usage hours
+            total_audio_duration_seconds = 0.0
+        
+            # Get RecordingSession records for these appointments to compute auto_usage_hours
+            recording_sessions = self.db.query(RecordingSession).filter(
+            RecordingSession.appointment_id.in_(appointment_ids),
+            RecordingSession.company_id == tenant_id
+            ).all()
+        
+            session_by_appointment_id = {session.appointment_id: session for session in recording_sessions if session.appointment_id}
+        
+            # Get lead IDs to track first-touch vs follow-up
+            lead_ids = [apt.lead_id for apt in all_appointments if apt.lead_id]
+        
+            # For first-touch detection: get earliest appointment per lead for this rep
+            # TODO: This is a simplified heuristic - we need full appointment history per lead to be accurate
+            first_appointment_by_lead: dict[str, str] = {}
+            if lead_ids:
+                first_appts = self.db.query(
+                    Appointment.lead_id,
+                    func.min(Appointment.scheduled_start).label('first_scheduled')
+                ).filter(
+                    Appointment.company_id == tenant_id,
+                    Appointment.assigned_rep_id == rep_id,
+                    Appointment.lead_id.in_(lead_ids)
+                ).group_by(Appointment.lead_id).all()
+                
+                for lead_id, first_scheduled in first_appts:
+                    first_appointment_by_lead[lead_id] = first_scheduled
             
-            for lead_id, first_scheduled in first_appts:
-                first_appointment_by_lead[lead_id] = first_scheduled
-        
-        for appointment in all_appointments:
-            try:
-                # Initialize outcome_lower to None (will be set if we have outcome data)
-                outcome_lower = None
+            for appointment in all_appointments:
+                try:
+                    # Initialize outcome_lower to None (will be set if we have outcome data)
+                    outcome_lower = None
                 
-                # Check if attended (has recording session or analysis)
-                has_recording = appointment.id in session_by_appointment_id
-                has_analysis = appointment.id in analysis_by_appointment_id
-                if has_recording or has_analysis:
-                    attended_appointments += 1
+                    # Check if attended (has recording session or analysis)
+                    has_recording = appointment.id in session_by_appointment_id
+                    has_analysis = appointment.id in analysis_by_appointment_id
+                    if has_recording or has_analysis:
+                        attended_appointments += 1
                 
-                # Count completed appointments (status-based)
-                if appointment.status == AppointmentStatus.COMPLETED.value:
-                    completed_appointments += 1
+                    # Count completed appointments (status-based)
+                    if appointment.status == AppointmentStatus.COMPLETED.value:
+                        completed_appointments += 1
                 
-                # Get analysis for outcome (Shunya-first)
-                analysis = analysis_by_appointment_id.get(appointment.id)
+                    # Get analysis for outcome (Shunya-first)
+                    analysis = analysis_by_appointment_id.get(appointment.id)
                 
-                # OUTCOME: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
-                # Only count outcomes for completed appointments
-                if appointment.status == AppointmentStatus.COMPLETED.value and analysis and analysis.outcome:
-                    # Ensure outcome is a string (handle enum values if any)
-                    try:
-                        # Handle both string and enum values
-                        outcome_value = analysis.outcome
+                    # OUTCOME: Use Shunya's RecordingAnalysis.outcome for won/lost, not Appointment.outcome
+                    # Only count outcomes for completed appointments
+                    if appointment.status == AppointmentStatus.COMPLETED.value and analysis and analysis.outcome:
+                        # Ensure outcome is a string (handle enum values if any)
+                        try:
+                            # Handle both string and enum values
+                            outcome_value = analysis.outcome
                         
-                        # Convert to string first, then check if it's an enum
-                        # This handles both string and enum cases safely
-                        if outcome_value is None:
-                            outcome_lower = None
-                        else:
-                            # Try to get the value if it's an enum
-                            if hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name'):
-                                # It's likely an enum instance, get the value
-                                try:
-                                    outcome_str = outcome_value.value
-                                except (AttributeError, TypeError):
-                                    # Fallback: use string representation
-                                    outcome_str = str(outcome_value)
-                            else:
-                                # It's already a string or other type
-                                outcome_str = str(outcome_value)
-                            
-                            # Normalize to lowercase string
-                            if outcome_str:
-                                outcome_lower = str(outcome_str).lower().strip()
-                            else:
+                            # Convert to string first, then check if it's an enum
+                            # This handles both string and enum cases safely
+                            if outcome_value is None:
                                 outcome_lower = None
-                    except Exception as e:
-                        # Log the error but continue processing
-                        logger.warning(
-                            f"Error processing outcome for appointment {appointment.id}: {str(e)}, "
-                            f"outcome type: {type(analysis.outcome)}, outcome value: {repr(analysis.outcome)}",
-                            exc_info=True
-                        )
-                        outcome_lower = None
+                            else:
+                                # Try to get the value if it's an enum
+                                if hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name'):
+                                    # It's likely an enum instance, get the value
+                                    try:
+                                        outcome_str = outcome_value.value
+                                    except (AttributeError, TypeError):
+                                        # Fallback: use string representation
+                                        outcome_str = str(outcome_value)
+                                else:
+                                    # It's already a string or other type
+                                    outcome_str = str(outcome_value)
+                            
+                                # Normalize to lowercase string
+                                if outcome_str:
+                                    outcome_lower = str(outcome_str).lower().strip()
+                                else:
+                                    outcome_lower = None
+                        except Exception as e:
+                            # Log the error but continue processing
+                            logger.warning(
+                                f"Error processing outcome for appointment {appointment.id}: {str(e)}, "
+                                f"outcome type: {type(analysis.outcome)}, outcome value: {repr(analysis.outcome)}",
+                                exc_info=True
+                            )
+                            outcome_lower = None
                 
-                # Track first-touch vs follow-up
-                is_first_touch = False
-                if appointment.lead_id and appointment.lead_id in first_appointment_by_lead:
-                    first_scheduled = first_appointment_by_lead[appointment.lead_id]
-                    # If this appointment is the first one for this lead, it's first-touch
-                    if appointment.scheduled_start == first_scheduled:
-                        is_first_touch = True
+                    # Track first-touch vs follow-up
+                    is_first_touch = False
+                    if appointment.lead_id and appointment.lead_id in first_appointment_by_lead:
+                        first_scheduled = first_appointment_by_lead[appointment.lead_id]
+                        # If this appointment is the first one for this lead, it's first-touch
+                        if appointment.scheduled_start == first_scheduled:
+                            is_first_touch = True
                 
-                if outcome_lower and outcome_lower == "won":
-                    won_appointments += 1
+                    if outcome_lower and outcome_lower == "won":
+                        won_appointments += 1
                     
-                    if is_first_touch:
-                        first_touch_wins += 1
-                        first_touch_completed += 1
-                    else:
-                        followup_wins += 1
-                        followup_completed += 1
-                elif outcome_lower and outcome_lower == "lost":
-                    lost_appointments += 1
+                        if is_first_touch:
+                            first_touch_wins += 1
+                            first_touch_completed += 1
+                        else:
+                            followup_wins += 1
+                            followup_completed += 1
+                    elif outcome_lower and outcome_lower == "lost":
+                        lost_appointments += 1
                     
-                    if is_first_touch:
-                        first_touch_completed += 1
-                    else:
-                        followup_completed += 1
-                elif outcome_lower and outcome_lower in ("pending", "qualified", "rescheduled"):
-                    pending_appointments += 1
+                        if is_first_touch:
+                            first_touch_completed += 1
+                        else:
+                            followup_completed += 1
+                    elif outcome_lower and outcome_lower in ("pending", "qualified", "rescheduled"):
+                        pending_appointments += 1
                     
-                    if is_first_touch:
-                        first_touch_completed += 1
-                    else:
-                        followup_completed += 1
+                        if is_first_touch:
+                            first_touch_completed += 1
+                        else:
+                            followup_completed += 1
                 
-                # Aggregate metrics from analysis
-                if analysis:
-                    # Objections
-                    if analysis.objections and isinstance(analysis.objections, list):
-                        total_objections += len(analysis.objections)
+                    # Aggregate metrics from analysis
+                    if analysis:
+                        # Objections
+                        if analysis.objections and isinstance(analysis.objections, list):
+                            total_objections += len(analysis.objections)
                     
-                    # Compliance score
-                    if analysis.sop_compliance_score is not None:
-                        compliance_scores.append(analysis.sop_compliance_score)
+                        # Compliance score
+                        if analysis.sop_compliance_score is not None:
+                            compliance_scores.append(analysis.sop_compliance_score)
                     
-                    # Meeting structure score
-                    structure_score = self._compute_meeting_structure_score(analysis.meeting_segments)
-                    if structure_score is not None:
-                        meeting_structure_scores.append(structure_score)
+                        # Meeting structure score
+                        structure_score = self._compute_meeting_structure_score(analysis.meeting_segments)
+                        if structure_score is not None:
+                            meeting_structure_scores.append(structure_score)
                     
-                    # Sentiment score
-                    if analysis.sentiment_score is not None:
-                        sentiment_scores.append(analysis.sentiment_score)
+                        # Sentiment score
+                        if analysis.sentiment_score is not None:
+                            sentiment_scores.append(analysis.sentiment_score)
                 
-                # Auto usage hours: sum RecordingSession.audio_duration_seconds
-                session = session_by_appointment_id.get(appointment.id)
-                if session and session.audio_duration_seconds:
-                    total_audio_duration_seconds += session.audio_duration_seconds
-            except Exception as e:
-                # Log error for this appointment but continue processing others
-                logger.error(
-                    f"Error processing appointment {appointment.id} in metrics computation: {str(e)}",
-                    exc_info=True
-                )
-                # Continue to next appointment
-                continue
+                    # Auto usage hours: sum RecordingSession.audio_duration_seconds
+                    session = session_by_appointment_id.get(appointment.id)
+                    if session and session.audio_duration_seconds:
+                        total_audio_duration_seconds += session.audio_duration_seconds
+                except Exception as e:
+                    # Log error for this appointment but continue processing others
+                    logger.error(
+                        f"Error processing appointment {appointment.id} in metrics computation: {str(e)}",
+                        exc_info=True
+                    )
+                    # Continue to next appointment
+                    continue
         
-        # Compute rates (null-safe)
-        win_rate = won_appointments / completed_appointments if completed_appointments > 0 else None
+            # Compute rates (null-safe)
+            win_rate = won_appointments / completed_appointments if completed_appointments > 0 else None
         
-        # First-touch and follow-up win rates
-        first_touch_win_rate = first_touch_wins / first_touch_completed if first_touch_completed > 0 else None
-        followup_win_rate = followup_wins / followup_completed if followup_completed > 0 else None
+            # First-touch and follow-up win rates
+            first_touch_win_rate = first_touch_wins / first_touch_completed if first_touch_completed > 0 else None
+            followup_win_rate = followup_wins / followup_completed if followup_completed > 0 else None
         
-        # TODO: First-touch and follow-up detection is simplified - we need full appointment history
-        # per lead to accurately determine if an appointment is truly first-touch vs follow-up.
-        # For now, we use a heuristic based on earliest scheduled_start per lead.
-        # If we don't have enough historical data, these will be None.
+            # TODO: First-touch and follow-up detection is simplified - we need full appointment history
+            # per lead to accurately determine if an appointment is truly first-touch vs follow-up.
+            # For now, we use a heuristic based on earliest scheduled_start per lead.
+            # If we don't have enough historical data, these will be None.
         
-        # Auto usage hours
-        auto_usage_hours = total_audio_duration_seconds / 3600.0 if total_audio_duration_seconds > 0 else None
+            # Auto usage hours
+            auto_usage_hours = total_audio_duration_seconds / 3600.0 if total_audio_duration_seconds > 0 else None
         
-        # Attendance rate
-        attendance_rate = attended_appointments / scheduled_appointments if scheduled_appointments > 0 else None
+            # Attendance rate
+            attendance_rate = attended_appointments / scheduled_appointments if scheduled_appointments > 0 else None
         
-        avg_objections = total_objections / total_appointments if total_appointments > 0 else None
-        avg_compliance = sum(compliance_scores) / len(compliance_scores) if compliance_scores else None
-        avg_meeting_structure = sum(meeting_structure_scores) / len(meeting_structure_scores) if meeting_structure_scores else None
-        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else None
+            avg_objections = total_objections / total_appointments if total_appointments > 0 else None
+            avg_compliance = sum(compliance_scores) / len(compliance_scores) if compliance_scores else None
+            avg_meeting_structure = sum(meeting_structure_scores) / len(meeting_structure_scores) if meeting_structure_scores else None
+            avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else None
         
-        # Follow-up rate: (# leads with ≥ 1 follow-up task completed) / (# leads owned by this rep)
-        # Get all leads owned by this rep (assigned_rep_id == rep_id)
-        from app.models.lead import Lead
-        rep_leads = self.db.query(Lead).filter(
+            # Follow-up rate: (# leads with ≥ 1 follow-up task completed) / (# leads owned by this rep)
+            # Get all leads owned by this rep (assigned_rep_id == rep_id)
+            from app.models.lead import Lead
+            rep_leads = self.db.query(Lead).filter(
             Lead.company_id == tenant_id,
             Lead.assigned_rep_id == rep_id
-        ).all()
-        rep_lead_ids = [lead.id for lead in rep_leads]
-        total_leads = len(rep_lead_ids)
+            ).all()
+            rep_lead_ids = [lead.id for lead in rep_leads]
+            total_leads = len(rep_lead_ids)
         
-        leads_with_followup = 0
-        if rep_lead_ids:
-            # Count distinct leads that have at least one completed follow-up task
-            # Filter for follow-up action types using ActionType enum
-            from app.models.enums import ActionType
-            followup_action_types = [
-                ActionType.CALL_BACK.value,
-                ActionType.FOLLOW_UP_CALL.value,
-                ActionType.SEND_QUOTE.value,
-                ActionType.SCHEDULE_APPOINTMENT.value,
-                ActionType.SEND_ESTIMATE.value,
-                ActionType.SEND_CONTRACT.value,
-                ActionType.SEND_INFO.value,
-                ActionType.SEND_DETAILS.value,
-                ActionType.CHECK_IN.value,
-            ]
-            
-            completed_followup_leads = self.db.query(distinct(Task.lead_id)).filter(
-                Task.company_id == tenant_id,
-                Task.lead_id.in_(rep_lead_ids),
-                Task.status == TaskStatus.COMPLETED.value,
-                Task.assigned_to == TaskAssignee.REP.value,
-                # Filter for follow-up action types
-                Task.action_type.in_(followup_action_types) if hasattr(Task, 'action_type') else True
-            ).count()
-            leads_with_followup = completed_followup_leads
+            leads_with_followup = 0
+            if rep_lead_ids:
+                # Count distinct leads that have at least one completed follow-up task
+                # Filter for follow-up action types using ActionType enum
+                from app.models.enums import ActionType
+                followup_action_types = [
+                    ActionType.CALL_BACK.value,
+                    ActionType.FOLLOW_UP_CALL.value,
+                    ActionType.SEND_QUOTE.value,
+                    ActionType.SCHEDULE_APPOINTMENT.value,
+                    ActionType.SEND_ESTIMATE.value,
+                    ActionType.SEND_CONTRACT.value,
+                    ActionType.SEND_INFO.value,
+                    ActionType.SEND_DETAILS.value,
+                    ActionType.CHECK_IN.value,
+                ]
+                
+                completed_followup_leads = self.db.query(distinct(Task.lead_id)).filter(
+                    Task.company_id == tenant_id,
+                    Task.lead_id.in_(rep_lead_ids),
+                    Task.status == TaskStatus.COMPLETED.value,
+                    Task.assigned_to == TaskAssignee.REP.value,
+                    # Filter for follow-up action types
+                    Task.action_type.in_(followup_action_types) if hasattr(Task, 'action_type') else True
+                ).count()
+                leads_with_followup = completed_followup_leads
         
-        followup_rate = leads_with_followup / total_leads if total_leads > 0 else None
+            followup_rate = leads_with_followup / total_leads if total_leads > 0 else None
         
-        # Task metrics (followups)
-        now = datetime.utcnow()
-        open_tasks_query = self.db.query(Task).filter(
+            # Task metrics (followups)
+            now = datetime.utcnow()
+            open_tasks_query = self.db.query(Task).filter(
             Task.company_id == tenant_id,
             Task.status.in_([TaskStatus.OPEN.value, TaskStatus.PENDING.value])
-        )
+            )
         
-        # Filter by rep: prefer assignee_id if available, else fallback to assigned_to role
-        if hasattr(Task, 'assignee_id'):
-            open_tasks_query = open_tasks_query.filter(
-                or_(
-                    Task.assignee_id == rep_id,
-                    and_(
-                        Task.assignee_id.is_(None),
-                        Task.assigned_to == TaskAssignee.REP.value
+            # Filter by rep: prefer assignee_id if available, else fallback to assigned_to role
+            if hasattr(Task, 'assignee_id'):
+                open_tasks_query = open_tasks_query.filter(
+                    or_(
+                        Task.assignee_id == rep_id,
+                        and_(
+                            Task.assignee_id.is_(None),
+                            Task.assigned_to == TaskAssignee.REP.value
+                        )
                     )
                 )
-            )
-        else:
-            # Fallback to role-based filtering
-            open_tasks_query = open_tasks_query.filter(Task.assigned_to == TaskAssignee.REP.value)
+            else:
+                # Fallback to role-based filtering
+                open_tasks_query = open_tasks_query.filter(Task.assigned_to == TaskAssignee.REP.value)
         
-        all_open_tasks = open_tasks_query.all()
+            all_open_tasks = open_tasks_query.all()
         
-        open_followups = sum(
+            open_followups = sum(
             1 for task in all_open_tasks
             if task.due_at is None or task.due_at >= now
-        )
+            )
         
-        overdue_followups = sum(
+            overdue_followups = sum(
             1 for task in all_open_tasks
             if task.due_at is not None and task.due_at < now
-        )
+            )
         
-        # Pending followups: open tasks with due_date >= today
-        today = now.date()
-        pending_followups_count = sum(
+            # Pending followups: open tasks with due_date >= today
+            today = now.date()
+            pending_followups_count = sum(
             1 for task in all_open_tasks
             if task.due_at is None or task.due_at.date() >= today
-        )
+            )
         
-        return SalesRepMetrics(
+            return SalesRepMetrics(
             total_appointments=total_appointments,
             completed_appointments=completed_appointments,
             won_appointments=won_appointments,
@@ -677,7 +677,7 @@ class MetricsService:
             open_followups=open_followups,
             overdue_followups=overdue_followups,
             pending_followups_count=pending_followups_count
-        )
+            )
         except Exception as e:
             # Log the full exception with context
             error_type = type(e).__name__
