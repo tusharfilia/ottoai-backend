@@ -462,18 +462,38 @@ class MetricsService:
                             if outcome_value is None:
                                 outcome_lower = None
                             else:
-                                # Handle enum case: if it's an enum, get the value
-                                if hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name'):
-                                    # It's likely an enum, get the value
-                                    outcome_str = str(outcome_value.value) if hasattr(outcome_value, 'value') else str(outcome_value)
-                                else:
-                                    # It's already a string or other type, convert to string
-                                    outcome_str = str(outcome_value)
+                                # Convert to string safely - handle both string and enum cases
+                                outcome_str = None
+                                try:
+                                    # Check if it's a string first (most common case)
+                                    if isinstance(outcome_value, str):
+                                        outcome_str = outcome_value
+                                    # Check if it's an enum (has both 'value' and 'name' attributes, and is not a string)
+                                    elif hasattr(outcome_value, 'value') and hasattr(outcome_value, 'name') and not isinstance(outcome_value, str):
+                                        try:
+                                            outcome_str = str(outcome_value.value)
+                                        except (AttributeError, TypeError):
+                                            # Fallback: try to convert directly
+                                            outcome_str = str(outcome_value)
+                                    else:
+                                        # It's some other type, convert to string
+                                        outcome_str = str(outcome_value)
+                                except Exception as e:
+                                    # If all else fails, log and skip
+                                    logger.warning(
+                                        f"Failed to convert outcome to string for appointment {appointment.id}: {str(e)}, "
+                                        f"outcome type: {type(outcome_value)}, outcome value: {repr(outcome_value)}",
+                                        exc_info=True
+                                    )
+                                    outcome_str = None
                                 
                                 # Normalize to lowercase
-                                outcome_str = outcome_str.strip()
                                 if outcome_str:
-                                    outcome_lower = outcome_str.lower()
+                                    outcome_str = outcome_str.strip()
+                                    if outcome_str:
+                                        outcome_lower = outcome_str.lower()
+                                    else:
+                                        outcome_lower = None
                                 else:
                                     outcome_lower = None
                         except AttributeError as attr_err:
