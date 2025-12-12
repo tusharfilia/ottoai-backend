@@ -77,6 +77,53 @@ from app.schemas.metrics import (
 logger = get_logger(__name__)
 
 
+def _safe_get_enum_value(enum_field, field_name: str = "enum", context: str = "") -> Optional[str]:
+    """
+    Safely extract enum value from database field.
+    
+    Handles cases where:
+    - Field is None
+    - Field is already a string (invalid enum value stored in DB)
+    - Field is an enum object (valid enum)
+    
+    This function is defensive and never raises exceptions - it accepts whatever
+    Shunya returns and whatever is stored in the database.
+    
+    Args:
+        enum_field: The enum field from database (could be string, enum, or None)
+        field_name: Name of field for logging (e.g., "booking_status")
+        context: Additional context for logging (e.g., "call_id=123")
+    
+    Returns:
+        String value of enum, or None if field is None or cannot be converted
+    """
+    if enum_field is None:
+        return None
+    
+    try:
+        # If it's already a string, return it directly (might be invalid enum value from DB)
+        if isinstance(enum_field, str):
+            return enum_field.lower().strip()
+        
+        # Try to get .value attribute (for enum objects)
+        enum_value = getattr(enum_field, 'value', None)
+        if enum_value is not None:
+            return str(enum_value).lower().strip()
+        
+        # Fallback: try direct string conversion
+        return str(enum_field).lower().strip()
+    except (AttributeError, TypeError, Exception) as e:
+        # Log but don't raise - gracefully handle any edge case
+        logger.debug(
+            f"Error converting {field_name} to string {context}: {str(e)}, "
+            f"type: {type(enum_field)}, value: {repr(enum_field)}"
+        )
+        try:
+            return str(enum_field).lower().strip()
+        except Exception:
+            return None
+
+
 class MetricsService:
     """
     Service for computing role-scoped metrics and KPIs.
@@ -1075,8 +1122,13 @@ class MetricsService:
             if lead_quality and lead_quality.lower() in ("hot", "warm", "cold", "qualified"):
                 qualified_calls += 1
             
-            # Booking
-            if analysis.booking_status == BookingStatus.BOOKED.value:
+            # Booking - safely handle enum field
+            booking_status_str = _safe_get_enum_value(
+                analysis.booking_status,
+                "booking_status",
+                f"call_id={call.call_id}"
+            )
+            if booking_status_str == BookingStatus.BOOKED.value.lower():
                 booked_calls += 1
             
             # Objections
@@ -1299,7 +1351,12 @@ class MetricsService:
                         qualified_leads += 1
                     
                     # BOOKING: Only use Shunya's booking_status - never infer from appointments
-                    if analysis.booking_status == BookingStatus.BOOKED.value:
+                    booking_status_str = _safe_get_enum_value(
+                        analysis.booking_status,
+                        "booking_status",
+                        f"appointment_id={appointment.id}"
+                    )
+                    if booking_status_str == BookingStatus.BOOKED.value.lower():
                         booked_appointments += 1
             
             booking_rate = booked_appointments / qualified_leads if qualified_leads > 0 else None
@@ -1749,7 +1806,12 @@ class MetricsService:
             # (either for the missed call itself or a follow-up call)
             saved_call_lead_ids = set()
             for analysis in followup_analyses:
-                if analysis.booking_status == BookingStatus.BOOKED.value:
+                booking_status_str = _safe_get_enum_value(
+                    analysis.booking_status,
+                    "booking_status",
+                    f"call_id={analysis.call_id}"
+                )
+                if booking_status_str == BookingStatus.BOOKED.value.lower():
                     # Find the lead_id for this call
                     for call in followup_calls:
                         if call.call_id == analysis.call_id and call.lead_id:
@@ -1813,7 +1875,7 @@ class MetricsService:
                 
                 # Check Shunya's booking_status
                 is_booked = any(
-                    analysis.booking_status == BookingStatus.BOOKED.value
+                    _safe_get_enum_value(analysis.booking_status, "booking_status") == BookingStatus.BOOKED.value.lower()
                     for analysis in lead_analyses
                 )
                 
@@ -2224,7 +2286,12 @@ class MetricsService:
                     if lead_quality and lead_quality.lower() in ("hot", "warm", "cold", "qualified"):
                         qualified_leads += 1
                     
-                    if analysis.booking_status == BookingStatus.BOOKED.value:
+                    booking_status_str = _safe_get_enum_value(
+                        analysis.booking_status,
+                        "booking_status",
+                        f"call_id={call.call_id}"
+                    )
+                    if booking_status_str == BookingStatus.BOOKED.value.lower():
                         booked_calls += 1
             
             booking_rate = booked_calls / qualified_leads if qualified_leads > 0 else None
@@ -2466,7 +2533,12 @@ class MetricsService:
             # Count saved: missed calls where Shunya says booking_status == "booked" in follow-up
             saved_call_lead_ids = set()
             for analysis in followup_analyses:
-                if analysis.booking_status == BookingStatus.BOOKED.value:
+                booking_status_str = _safe_get_enum_value(
+                    analysis.booking_status,
+                    "booking_status",
+                    f"call_id={analysis.call_id}"
+                )
+                if booking_status_str == BookingStatus.BOOKED.value.lower():
                     # Find the lead_id for this call
                     for call in followup_calls:
                         if call.call_id == analysis.call_id and call.lead_id:
@@ -2518,7 +2590,7 @@ class MetricsService:
                 
                 # Check Shunya's booking_status
                 is_booked = any(
-                    analysis.booking_status == BookingStatus.BOOKED.value
+                    _safe_get_enum_value(analysis.booking_status, "booking_status") == BookingStatus.BOOKED.value.lower()
                     for analysis in analyses_for_lead
                 )
                 
@@ -2843,7 +2915,12 @@ class MetricsService:
                     total_qualified_leads += 1
                 
                 # BOOKING: Only from Shunya booking_status
-                if analysis.booking_status == BookingStatus.BOOKED.value:
+                booking_status_str = _safe_get_enum_value(
+                    analysis.booking_status,
+                    "booking_status",
+                    f"call_id={analysis.call_id}"
+                )
+                if booking_status_str == BookingStatus.BOOKED.value.lower():
                     total_booked_calls += 1
         
         current_booking_rate = total_booked_calls / total_qualified_leads if total_qualified_leads > 0 else None
@@ -2879,7 +2956,12 @@ class MetricsService:
                     if lead_quality and lead_quality.lower() in ("hot", "warm", "cold", "qualified"):
                         period_qualified += 1
                     
-                    if analysis.booking_status == BookingStatus.BOOKED.value:
+                    booking_status_str = _safe_get_enum_value(
+                        analysis.booking_status,
+                        "booking_status",
+                        f"call_id={analysis.call_id}"
+                    )
+                    if booking_status_str == BookingStatus.BOOKED.value.lower():
                         period_booked += 1
             
             booking_rate = period_booked / period_qualified if period_qualified > 0 else None
