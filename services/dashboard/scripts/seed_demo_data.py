@@ -672,11 +672,12 @@ def create_demo_appointments(db: Session, company: Company, contact_cards: list[
         scheduled_end = scheduled_start + timedelta(hours=1)
         
         # Performance-based outcomes: high-performing reps win more
+        # IMPORTANT: Always use string values, never enum objects, to avoid AttributeError issues
         if status == "completed":
             win_prob = 0.75 if is_rep_high_performing else 0.35
             outcome = "won" if random.random() < win_prob else "lost"
         else:
-            outcome = "pending"
+            outcome = "pending"  # String value, not enum
         
         apt = Appointment(
             id=str(uuid4()),
@@ -1048,21 +1049,22 @@ def create_demo_sales_rep_appointments(db: Session, company: Company, sales_rep_
         lead_obj = leads[contact_cards.index(contact_card_obj)] if contact_card_obj in contact_cards else None
         
         # High-performing rep: 70% completed with wins, 20% upcoming, 10% no-show/cancelled
+        # IMPORTANT: Always use string values, never enum objects, to avoid AttributeError issues
         if i < 7:
             # Completed appointments (mostly won)
             scheduled_start = datetime.utcnow() - timedelta(days=random.randint(1, 20), hours=random.randint(9, 17))
             status = "completed"
-            outcome = "won" if random.random() < 0.75 else "lost"  # 75% win rate (high-performing)
+            outcome = "won" if random.random() < 0.75 else "lost"  # 75% win rate (high-performing) - string value
         elif i < 9:
             # Upcoming appointments
             scheduled_start = datetime.utcnow() + timedelta(days=random.randint(1, 7), hours=random.randint(9, 17))
             status = "scheduled"
-            outcome = "pending"
+            outcome = "pending"  # String value, not enum
         else:
             # Past no-show or cancelled
             scheduled_start = datetime.utcnow() - timedelta(days=random.randint(1, 14), hours=random.randint(9, 17))
             status = random.choice(["no_show", "cancelled"])
-            outcome = "lost" if status == "no_show" else "pending"
+            outcome = "lost" if status == "no_show" else "pending"  # String values, not enums
         
         scheduled_end = scheduled_start + timedelta(hours=1)
         
