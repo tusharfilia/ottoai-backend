@@ -494,8 +494,12 @@ async def handle_call_completed(
         call_record.updated_at = datetime.utcnow()
         db.commit()
         
-        # Check for human takeover before processing (only for answered calls with recordings)
+        # Check for human takeover - stop AI automation if CSR answered a call
+        # that was previously missed and queued for AI automation
+        # Note: This is a quick check that returns early if no queue entries exist,
+        # so it's safe to call for all answered calls
         if is_answered:
+            from app.services.missed_call_queue_service import MissedCallQueueService
             missed_call_service = MissedCallQueueService()
             await missed_call_service.check_and_stop_ai_automation(
                 phone=call_record.phone_number,
