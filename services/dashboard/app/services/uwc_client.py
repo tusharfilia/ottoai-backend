@@ -494,7 +494,7 @@ class UWCClient:
                     f"(status={response.status_code}, response={response.text})"
                 )
                 # P0 FIX: Record Shunya API error metric
-                from app.obs.metrics import metrics
+                # Note: metrics is already imported at top of file
                 error_type = "client_error" if response.status_code < 500 else "server_error"
                 metrics.record_shunya_api_error(endpoint=endpoint, error_type=error_type)
                 raise UWCClientError(
