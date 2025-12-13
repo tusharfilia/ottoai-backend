@@ -163,7 +163,10 @@ class UWCClient:
     
     def is_available(self) -> bool:
         """Check if UWC is properly configured and available."""
-        return self.base_url is not None and self.api_key is not None
+        # UWC is available if we have base_url AND (JWT secret OR API key)
+        # JWT is preferred, but API key is supported for backward compatibility
+        has_auth = self.jwt_secret is not None or self.api_key is not None
+        return self.base_url is not None and has_auth
     
     def _generate_signature(self, payload: dict, timestamp: str) -> str:
         """
