@@ -445,16 +445,22 @@ class PostCallAnalysisService:
     async def _emit_analysis_event(self, call: Dict[str, Any], analysis_result: Dict[str, Any]):
         """Emit analysis event for real-time updates."""
         try:
+            # Get tenant_id/company_id (support both for compatibility)
+            tenant_id = call.get('tenant_id') or call.get('company_id')
+            if not tenant_id:
+                logger.warning(f"Cannot emit analysis event: missing tenant_id/company_id for call {call.get('call_id')}")
+                return
+            
             success = emit(
                 event_name="call.analysis.completed",
                 payload={
                     "call_id": call['call_id'],
-                    "company_id": call['company_id'],
-                    "sales_rep_id": call['sales_rep_id'],
+                    "company_id": tenant_id,  # Use tenant_id as company_id
+                    "sales_rep_id": call.get('sales_rep_id'),
                     "analysis_result": analysis_result
                 },
-                tenant_id=call['company_id'],
-                user_id=call['sales_rep_id'],
+                tenant_id=tenant_id,
+                user_id=call.get('sales_rep_id'),
                 severity="info"
             )
             
@@ -992,16 +998,22 @@ class PostCallAnalysisService:
     async def _emit_analysis_event(self, call: Dict[str, Any], analysis_result: Dict[str, Any]):
         """Emit analysis event for real-time updates."""
         try:
+            # Get tenant_id/company_id (support both for compatibility)
+            tenant_id = call.get('tenant_id') or call.get('company_id')
+            if not tenant_id:
+                logger.warning(f"Cannot emit analysis event: missing tenant_id/company_id for call {call.get('call_id')}")
+                return
+            
             success = emit(
                 event_name="call.analysis.completed",
                 payload={
                     "call_id": call['call_id'],
-                    "company_id": call['company_id'],
-                    "sales_rep_id": call['sales_rep_id'],
+                    "company_id": tenant_id,  # Use tenant_id as company_id
+                    "sales_rep_id": call.get('sales_rep_id'),
                     "analysis_result": analysis_result
                 },
-                tenant_id=call['company_id'],
-                user_id=call['sales_rep_id'],
+                tenant_id=tenant_id,
+                user_id=call.get('sales_rep_id'),
                 severity="info"
             )
             

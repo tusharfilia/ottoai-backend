@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models import call, company
 from app.models.contact_card import ContactCard
 from app.models.lead import Lead, LeadSource, LeadStatus
+from app.models.user import User
 from app.models.enums import CallType
 from app.services.twilio_service import TwilioService
 from app.services.uwc_client import get_uwc_client
@@ -417,6 +418,13 @@ async def handle_call_completed(
             phone_number=customer_phone,
         )
 
+        # Find a CSR user for this company to set as owner_id
+        # This ensures calls appear in the CSR dashboard
+        csr_user = db.query(User).filter_by(
+            company_id=company_record.id,
+            role="csr"
+        ).first()
+        
         if not call_record:
             # Create new call record for missed call or if it doesn't exist
             logger.info(f"Creating new call record for phone {customer_phone}, company {company_record.id}")
@@ -444,7 +452,8 @@ async def handle_call_completed(
                 created_at=created_at,
                 missed_call=not is_answered,
                 status="missed" if not is_answered else "completed",
-                call_type=CallType.CSR_CALL.value  # Set call type for CSR filtering
+                call_type=CallType.CSR_CALL.value,  # Set call type for CSR filtering
+                owner_id=csr_user.id if csr_user else None  # Set owner_id for CSR dashboard filtering
             )
             db.add(call_record)
             db.commit()
@@ -456,6 +465,9 @@ async def handle_call_completed(
             # Ensure call_type is set if not already set
             if not call_record.call_type:
                 call_record.call_type = CallType.CSR_CALL.value
+            # Set owner_id if not already set (for calls created before this fix)
+            if not call_record.owner_id and csr_user:
+                call_record.owner_id = csr_user.id
             db.commit()
 
         # Check if this was a missed call
