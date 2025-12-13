@@ -189,20 +189,52 @@ class UWCClient:
         
         return signature
     
-    def _generate_jwt(self, company_id: str) -> str:
-        """Generate short-lived HS256 JWT for UWC per OpenAPI (HTTP Bearer)."""
+    def _generate_jwt(
+        self, 
+        company_id: str, 
+        user_id: Optional[str] = None, 
+        role: Optional[str] = None
+    ) -> str:
+        """
+        Generate short-lived HS256 JWT for UWC per Shunya contract.
+        
+        Matches Shunya's expected format:
+        - user_id: User ID (optional, for user-scoped requests)
+        - company_id: Company/Tenant ID (required)
+        - role: User role (optional, e.g., "sales_rep", "customer_rep", "sales_manager", "admin")
+        - type: "access" (per Shunya contract)
+        - exp, iat: Standard JWT claims
+        
+        Args:
+            company_id: Tenant/company ID (required)
+            user_id: User ID (optional, for authenticated user requests)
+            role: User role (optional, for role-based access)
+        
+        Returns:
+            JWT token string
+        """
         if not self.jwt_secret:
             logger.warning("UWC_JWT_SECRET not configured; falling back to API key if present")
             return ""
         iat = int(time.time())
         exp = iat + 60 * 5  # 5 minutes TTL
+        
+        # Build claims matching Shunya's expected format
         claims = {
             "company_id": company_id,
             "iat": iat,
             "exp": exp,
-            "iss": "otto-backend",
-            "aud": "uwc"
+            "type": "access"  # Per Shunya contract
         }
+        
+        # Add user_id if provided (per Shunya contract)
+        if user_id:
+            claims["user_id"] = user_id
+        
+        # Add role if provided (per Shunya contract)
+        if role:
+            claims["role"] = role
+        
         token = jwt.encode(claims, self.jwt_secret, algorithm="HS256")
         # PyJWT returns str in v2+
         return token
@@ -212,7 +244,9 @@ class UWCClient:
         company_id: str,
         request_id: str,
         payload: Optional[dict] = None,
-        target_role: Optional[str] = None
+        target_role: Optional[str] = None,
+        user_id: Optional[str] = None,
+        role: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Generate request headers for UWC API calls.
@@ -223,12 +257,14 @@ class UWCClient:
             payload: Optional request payload for signature generation
             target_role: Optional target role for Shunya (e.g., "sales_rep", "customer_rep", "sales_manager", "admin")
                          If provided, adds X-Target-Role header
+            user_id: Optional user ID for JWT claims (per Shunya contract)
+            role: Optional user role for JWT claims (per Shunya contract)
         
         Returns:
             Dictionary of HTTP headers
         """
         timestamp = datetime.utcnow().isoformat() + "Z"
-        bearer = self._generate_jwt(company_id)
+        bearer = self._generate_jwt(company_id, user_id=user_id, role=role)
         auth_header = f"Bearer {bearer}" if bearer else (f"Bearer {self.api_key}" if self.api_key else "")
         headers = {
             "Authorization": auth_header,
@@ -259,7 +295,9 @@ class UWCClient:
         payload: Optional[dict] = None,
         retry_count: int = 0,
         target_role: Optional[str] = None,
-        target_role_query: Optional[str] = None
+        target_role_query: Optional[str] = None,
+        user_id: Optional[str] = None,
+        role: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Make HTTP request to UWC API with retry logic.
@@ -273,6 +311,8 @@ class UWCClient:
             retry_count: Current retry attempt number
             target_role: Optional target role for X-Target-Role header (e.g., "sales_rep", "customer_rep")
             target_role_query: Optional target role for ?target_role= query parameter (for SOP/compliance endpoints)
+            user_id: Optional user ID for JWT claims (per Shunya contract)
+            role: Optional user role for JWT claims (per Shunya contract)
         
         Returns:
             Response JSON as dictionary
@@ -294,7 +334,14 @@ class UWCClient:
             separator = "&" if "?" in endpoint else "?"
             url = f"{url}{separator}target_role={target_role_query}"
         
-        headers = self._get_headers(company_id, request_id, payload, target_role=target_role)
+        headers = self._get_headers(
+            company_id, 
+            request_id, 
+            payload, 
+            target_role=target_role,
+            user_id=user_id,
+            role=role
+        )
         # Idempotency for mutating requests
         if method in ("POST", "PUT", "DELETE"):
             headers.setdefault("Idempotency-Key", request_id)
@@ -730,7 +777,9 @@ class UWCClient:
         conversation_id: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         scope: Optional[Dict[str, Any]] = None,
-        target_role: Optional[str] = None
+        target_role: Optional[str] = None,
+        user_id: Optional[str] = None,
+        role: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Query Ask Otto using Shunya's canonical endpoint.
@@ -787,7 +836,9 @@ class UWCClient:
             company_id,
             request_id,
             payload,
-            target_role=target_role
+            target_role=target_role,
+            user_id=user_id,
+            role=role
         )
     
     async def get_followup_recommendations(

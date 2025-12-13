@@ -174,7 +174,9 @@ async def query_ask_otto(
                     conversation_id=None,  # TODO: Support conversation_id from frontend if needed
                     context=ask_otto_context,
                     scope=None,  # TODO: Support scope from frontend if needed
-                    target_role=target_role  # CRITICAL: Always set for proper role scoping
+                    target_role=target_role,  # CRITICAL: Always set for proper role scoping
+                    user_id=user_id,
+                    role=user_role
                 )
                 
                 # Transform Shunya's canonical response to Otto's RAGQueryResponse format

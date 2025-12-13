@@ -54,7 +54,8 @@ class Settings:
         # Default to Shunya mock for local development if not provided
         self.UWC_BASE_URL = os.getenv("UWC_BASE_URL") or "https://otto.shunyalabs.ai"
         self.UWC_API_KEY = os.getenv("UWC_API_KEY", "")
-        self.UWC_JWT_SECRET = os.getenv("UWC_JWT_SECRET", "")
+        # Support both UWC_JWT_SECRET and JWT_SECRET_KEY (Shunya's script uses JWT_SECRET_KEY)
+        self.UWC_JWT_SECRET = os.getenv("UWC_JWT_SECRET") or os.getenv("JWT_SECRET_KEY", "")
         self.UWC_HMAC_SECRET = os.getenv("UWC_HMAC_SECRET", "")
         self.UWC_VERSION = os.getenv("UWC_VERSION", "v1")
         self.USE_UWC_STAGING = os.getenv("USE_UWC_STAGING", "false").lower() in ("true", "1", "yes")
